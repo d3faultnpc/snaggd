@@ -1,0 +1,27 @@
+# User data — never commit
+data/
+.env
+HH_Auto
+HH_Auto/
+
+# Historical archive — contains personal data from dev iterations
+_docs/
+
+# Runtime artifacts
+debug_screenshots/
+logs/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Python environment
+venv/
+.venv/
+*.egg-info/
+
+# Leftovers from legacy paths (belt + suspenders)
+hh_cookies.json
+llm_cache.json
+applied_log.json
+pending_actions.json

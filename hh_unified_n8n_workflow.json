@@ -1,0 +1,561 @@
+{
+  "meta": { "instanceId": "unified-hh-auto-pipeline-v1" },
+  "name": "HH Auto — Unified Pipeline (Apply → Chat → Debug)",
+  "nodes": [
+
+    {
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * 1-5" }] }
+      },
+      "id": "u001", "name": "Schedule: Daily Session",
+      "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2,
+      "position": [200, 400]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nlet log = [];\ntry { log = JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')); } catch(e) {}\nconst state = { session_start: new Date().toISOString(), baseline_count: log.length };\nfs.writeFileSync('/tmp/hh_session_state.json', JSON.stringify(state), 'utf8');\nconst appliedUrls = new Set(log.map(e => e.url));\nreturn [{ json: { appliedUrls: [...appliedUrls], totalApplied: log.length } }];"
+      },
+      "id": "u002", "name": "Load Log + Record Session Start",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [420, 400]
+    },
+
+    {
+      "parameters": {
+        "url": "https://hh.ru/search/vacancy?resume=4da3559eff060a62370039ed1f687833517255&from=resumelist",
+        "sendHeaders": true,
+        "headerParameters": { "parameters": [
+          { "name": "Cookie", "value": "={{ $env.HH_COOKIE }}" },
+          { "name": "User-Agent", "value": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" }
+        ]},
+        "options": { "response": { "response": { "responseFormat": "text" } } }
+      },
+      "id": "u003", "name": "Fetch HH Search Page",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2,
+      "position": [640, 400]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const html = $input.first().json.data;\nconst appliedUrls = new Set($('Load Log + Record Session Start').first().json.appliedUrls);\nconst MAX = parseInt($env.HH_MAX_PER_SESSION || '5');\nconst matches = [...html.matchAll(/href=\"(\\/vacancy\\/(\\d+)[^\"]*)\"/g)];\nconst seen = new Set(); const result = [];\nfor (const m of matches) {\n  const url = 'https://hh.ru' + m[1]; const id = m[2];\n  if (seen.has(id) || appliedUrls.has(url) || result.length >= MAX) continue;\n  seen.add(id);\n  const snip = html.slice(m.index, m.index + 400);\n  const tM = snip.match(/data-qa=\"serp-item__title\"[^>]*>([^<]+)</);\n  const cM = snip.match(/data-qa=\"vacancy-serp__vacancy-employer\"[^>]*>([^<]+)</);\n  result.push({ url, vacancy_id: id, title: tM?.[1]?.trim() ?? `Vacancy ${id}`, company: cM?.[1]?.trim() ?? '', index: result.length + 1 });\n}\nconsole.log(`Candidates after dedup: ${result.length}`);\nreturn result.map(v => ({ json: v }));"
+      },
+      "id": "u004", "name": "Parse & Filter Vacancies",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [860, 400]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const STOP = ['gambling','казино','casino','ставки','букмекер','adult','dating','знакомств','forex','трейдинг','нфт','nft','млм','mlm','микрозайм','мфо','junior','джуниор'];\nconst fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nconst now = new Date().toISOString();\nconst passed = [], stopped = [];\nfor (const item of $input.all()) {\n  const t = (item.json.title + ' ' + item.json.company).toLowerCase();\n  const hit = STOP.find(w => t.includes(w));\n  if (hit) stopped.push({ ...item.json, status: 'skipped_stop_word', reason: `stop_word:${hit}`, date: now, score: null, cover_letter: false, scenario: 'pre_filter' });\n  else passed.push(item.json);\n}\nif (stopped.length) {\n  let log = []; try { log = JSON.parse(fs.readFileSync(LOG_PATH, 'utf8')); } catch(e) {}\n  log.push(...stopped);\n  fs.writeFileSync(LOG_PATH, JSON.stringify(log, null, 2), 'utf8');\n}\nconsole.log(`Passed: ${passed.length}, Stopped: ${stopped.length}`);\nreturn passed.map(v => ({ json: v }));"
+      },
+      "id": "u005", "name": "Stop Words Filter",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [1080, 400]
+    },
+
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "u006", "name": "Apply: Each Vacancy",
+      "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3,
+      "position": [1300, 400]
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time,random\nfrom browser import HHBrowser\nu='{{ $json.url }}';t='{{ $json.title }}'\nb=HHBrowser()\ntry:\n  b.start()\n  if not b.open_vacancy(u): print(json.dumps({'ok':False,'url':u,'title':t,'vacancy_text':''}));sys.exit()\n  time.sleep(random.uniform(3,6))\n  print(json.dumps({'ok':True,'url':u,'title':t,'vacancy_text':(b.get_vacancy_text() or '')[:4000]}))\nfinally: b.close()\n\""
+      },
+      "id": "u007", "name": "Open Vacancy + Get Text",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [1520, 400]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout?.trim();\ntry { return [{ json: JSON.parse(raw) }]; }\ncatch(e) { return [{ json: { ok: false, url: '', title: '', vacancy_text: '' } }]; }"
+      },
+      "id": "u008", "name": "Parse Vacancy Text",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [1740, 400]
+    },
+
+    {
+      "parameters": {
+        "resource": "chat", "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o-mini", "mode": "id" },
+        "messages": { "values": [
+          { "role": "system", "content": "Rate vacancy vs candidate. Profile: Senior PM, 5+ yrs fintech, B2B2C platform, digital goods, admin systems, AML/antifraud. No junior roles.\nReturn ONLY JSON: {\"score\":0-100,\"reasoning\":\"1-2 sentences\",\"signals\":[\"tags\"],\"red_flags\":[\"reasons\"]}" },
+          { "role": "user", "content": "=Vacancy:\n{{ $json.vacancy_text }}" }
+        ]},
+        "simplify": true
+      },
+      "id": "u009", "name": "Score vs Resume",
+      "type": "n8n-nodes-base.openAi", "typeVersion": 1,
+      "position": [1960, 400],
+      "credentials": { "openAiApi": { "id": "1", "name": "OpenAI API" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const vd = $('Parse Vacancy Text').item.json;\nconst raw = $input.first().json.message?.content || '{}';\nlet sc = {};\ntry { sc = JSON.parse(raw.replace(/```json?|```/g,'').trim()); } catch(e) { sc = {score:50,reasoning:'parse error',signals:[],red_flags:[]}; }\nreturn [{ json: { ...vd, score: sc.score||0, score_reasoning: sc.reasoning||'', score_signals: sc.signals||[], score_red_flags: sc.red_flags||[] } }];"
+      },
+      "id": "u010", "name": "Parse Score",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2180, 400]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "leftValue": "={{ $json.score }}", "rightValue": 65, "operator": { "type": "number", "operation": "gte" } },
+            { "leftValue": "={{ $json.ok }}", "rightValue": true, "operator": { "type": "boolean", "operation": "true" } }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "u011", "name": "Score Gate ≥ 65%",
+      "type": "n8n-nodes-base.if", "typeVersion": 2,
+      "position": [2400, 400]
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time,random\nfrom config import CONFIG,SELECTORS\nfrom form_detector import FormDetector\nfrom browser import HHBrowser\nu='{{ $json.url }}';t='{{ $json.title }}'\nb=HHBrowser()\ntry:\n  b.start()\n  if not b.open_vacancy(u): print(json.dumps({'form_type':'skipped_error','url':u,'title':t}));sys.exit()\n  time.sleep(random.uniform(15,25))\n  p=b.get_current_page()\n  if not b.click_apply_button(): print(json.dumps({'form_type':'skipped_no_button','url':u,'title':t}));sys.exit()\n  time.sleep(2)\n  el=p.query_selector('[data-qa=\\\"vacancy-response-success-standard-notification\\\"]')\n  if el and el.is_visible(): print(json.dumps({'form_type':'applied_immediate','url':u,'title':t}));sys.exit()\n  d=FormDetector(); fi=d.detect(p)\n  print(json.dumps({'form_type':fi.form_type.value,'url':u,'title':t}))\nfinally: b.close()\n\""
+      },
+      "id": "u012", "name": "Click Apply + Detect Form",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [2620, 240]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout?.trim();\ntry { return [{ json: JSON.parse(raw) }]; }\ncatch(e) { return [{ json: { form_type: 'skipped_error', url: '', title: '' } }]; }"
+      },
+      "id": "u013", "name": "Parse Form Info",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2840, 240]
+    },
+
+    {
+      "parameters": {
+        "rules": { "rules": [
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.form_type }}", "rightValue": "applied_immediate", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Immediate" },
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.form_type }}", "rightValue": "cover_only", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Cover Only" },
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.form_type }}", "rightValue": "hh_modal_step1", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "HH Modal" },
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.form_type }}", "rightValue": "employer_questions", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Employer Questions" }
+        ]},
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "u014", "name": "Route by Form Type",
+      "type": "n8n-nodes-base.switch", "typeVersion": 3.2,
+      "position": [3060, 240]
+    },
+
+    {
+      "parameters": {
+        "resource": "chat", "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o", "mode": "id" },
+        "messages": { "values": [
+          { "role": "system", "content": "Ты — Захар Кашицын, Senior PM, 5+ лет финтех (Cifra, B2B2C, цифровые товары, admin-системы, AML). Сопроводительное на русском, 300–500 символов, 1–2 факта из опыта, без клише." },
+          { "role": "user", "content": "=Вакансия:\n{{ $('Parse Score').item.json.vacancy_text }}\n\nНапиши сопроводительное." }
+        ]},
+        "simplify": true
+      },
+      "id": "u015", "name": "Generate Cover Letter",
+      "type": "n8n-nodes-base.openAi", "typeVersion": 1,
+      "position": [3280, 140],
+      "credentials": { "openAiApi": { "id": "1", "name": "OpenAI API" } }
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time\nfrom form_handlers import FormHandlers\nfrom form_detector import FormDetector\nfrom hr_matcher import HRMatcher\nfrom browser import HHBrowser\nu='{{ $('Parse Form Info').item.json.url }}'\nt='{{ $('Parse Form Info').item.json.title }}'\ncv='{{ $('Generate Cover Letter').item.json.message.content }}'\nb=HHBrowser()\ntry:\n  b.start(); b.open_vacancy(u); b.click_apply_button(); time.sleep(1.5)\n  p=b.get_current_page()\n  fi=FormDetector().detect(p)\n  r=FormHandlers().get_handler(fi.form_type).process(p,cv,HRMatcher())\n  print(json.dumps({'status':r.status,'reason':r.reason,'url':u,'title':t}))\nfinally: b.close()\n\""
+      },
+      "id": "u016", "name": "Fill & Submit Form",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [3500, 140]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout?.trim();\nlet r = {}; try { r = JSON.parse(raw); } catch(e) { r = { status: 'skipped_error', reason: raw }; }\nconst fi = $('Parse Form Info').item.json;\nconst sc = $('Parse Score').item.json;\nreturn [{ json: { status: r.status||'applied', url: r.url||fi.url, title: r.title||fi.title, date: new Date().toISOString(), cover_letter: true, scenario: fi.form_type, score: sc.score, score_reasoning: sc.score_reasoning, signals: sc.score_signals } }];"
+      },
+      "id": "u017", "name": "Build Applied Entry",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3720, 140]
+    },
+
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "i1", "name": "status", "value": "applied_immediate", "type": "string" },
+          { "id": "i2", "name": "url", "value": "={{ $json.url }}", "type": "string" },
+          { "id": "i3", "name": "title", "value": "={{ $json.title }}", "type": "string" },
+          { "id": "i4", "name": "date", "value": "={{ new Date().toISOString() }}", "type": "string" },
+          { "id": "i5", "name": "cover_letter", "value": false, "type": "boolean" },
+          { "id": "i6", "name": "scenario", "value": "immediate", "type": "string" },
+          { "id": "i7", "name": "score", "value": "={{ $('Parse Score').item.json.score }}", "type": "number" },
+          { "id": "i8", "name": "signals", "value": "={{ $('Parse Score').item.json.score_signals }}", "type": "array" }
+        ]},
+        "options": {}
+      },
+      "id": "u018", "name": "Build Immediate Entry",
+      "type": "n8n-nodes-base.set", "typeVersion": 3.4,
+      "position": [3280, 320]
+    },
+
+    {
+      "parameters": {
+        "assignments": { "assignments": [
+          { "id": "s1", "name": "status", "value": "={{ $json.form_type ? 'skipped_' + $json.form_type : 'skipped_low_score' }}", "type": "string" },
+          { "id": "s2", "name": "url", "value": "={{ $json.url }}", "type": "string" },
+          { "id": "s3", "name": "title", "value": "={{ $json.title }}", "type": "string" },
+          { "id": "s4", "name": "date", "value": "={{ new Date().toISOString() }}", "type": "string" },
+          { "id": "s5", "name": "cover_letter", "value": false, "type": "boolean" },
+          { "id": "s6", "name": "scenario", "value": "skip", "type": "string" },
+          { "id": "s7", "name": "score", "value": "={{ $json.score ?? null }}", "type": "number" },
+          { "id": "s8", "name": "score_reasoning", "value": "={{ $json.score_reasoning ?? '' }}", "type": "string" }
+        ]},
+        "options": {}
+      },
+      "id": "u019", "name": "Build Skip Entry",
+      "type": "n8n-nodes-base.set", "typeVersion": 3.4,
+      "position": [2620, 580]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nlet log = []; try { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\nconst entries = $input.all().map(i => i.json);\nlog.push(...entries);\nfs.writeFileSync(LOG_PATH, JSON.stringify(log,null,2),'utf8');\nreturn [{ json: { appended: entries.length, total: log.length } }];"
+      },
+      "id": "u020", "name": "Append to Applied Log",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3920, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Triggered by Apply Split 'done' output\nconst fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nconst STATE_PATH = '/tmp/hh_session_state.json';\nlet log = [], state = { baseline_count: 0, session_start: '' };\ntry { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\ntry { state = JSON.parse(fs.readFileSync(STATE_PATH,'utf8')); } catch(e) {}\nconst session = log.slice(state.baseline_count);\nconst applyErrors = session.filter(e => e.status?.includes('skipped_error') || e.status?.includes('skipped_hh_modal') || e.status?.includes('skipped_no')).length;\nconsole.log(`Apply session: ${session.length} entries, ${applyErrors} errors`);\nreturn [{ json: { apply_errors: applyErrors, apply_total: session.length, baseline_count: state.baseline_count } }];"
+      },
+      "id": "u021", "name": "Count Apply Errors",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [1300, 700]
+    },
+
+    {
+      "parameters": {
+        "command": "cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time\nfrom playwright.sync_api import sync_playwright\nfrom config import CONFIG\nwith sync_playwright() as pw:\n  b=pw.chromium.launch(headless=True)\n  ctx=b.new_context()\n  with open(CONFIG.cookies_path) as f: ctx.add_cookies(json.load(f))\n  p=ctx.new_page()\n  p.goto('https://hh.ru/my/negotiations',timeout=30000,wait_until='domcontentloaded')\n  time.sleep(3)\n  chats=[]\n  for item in p.query_selector_all('[data-qa=\\\"negotiations-list-item\\\"]'):\n    try:\n      unread=item.query_selector('[class*=\\\"unread\\\"]')\n      if not unread or not unread.is_visible(): continue\n      lnk=item.query_selector('[data-qa=\\\"negotiations-vacancy-title\\\"],a[href*=\\\"vacancy\\\"]')\n      if not lnk: continue\n      href=lnk.get_attribute('href') or ''\n      emp_el=item.query_selector('[data-qa=\\\"negotiations-vacancy-employer\\\"]')\n      chats.append({'chat_url':'https://hh.ru'+href if not href.startswith('http') else href,'vacancy_title':lnk.inner_text().strip(),'employer':emp_el.inner_text().strip() if emp_el else ''})\n    except: pass\n  print(json.dumps({'chats':chats,'total_unread':len(chats)}))\n  b.close()\n\""
+      },
+      "id": "u022", "name": "Fetch HH Negotiations",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [1520, 700]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout?.trim();\ntry { return [{ json: JSON.parse(raw) }]; }\ncatch(e) { return [{ json: { chats: [], total_unread: 0 } }]; }"
+      },
+      "id": "u023", "name": "Parse Negotiations",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [1740, 700]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [{ "leftValue": "={{ $json.total_unread }}", "rightValue": 0, "operator": { "type": "number", "operation": "gt" } }],
+          "combinator": "and"
+        }
+      },
+      "id": "u024", "name": "Any Unread?",
+      "type": "n8n-nodes-base.if", "typeVersion": 2,
+      "position": [1960, 700]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "return $input.first().json.chats.map(c => ({ json: c }));"
+      },
+      "id": "u025", "name": "Unpack Chats",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2180, 600]
+    },
+
+    {
+      "parameters": { "batchSize": 1, "options": {} },
+      "id": "u026", "name": "Chat: Each Conversation",
+      "type": "n8n-nodes-base.splitInBatches", "typeVersion": 3,
+      "position": [2400, 600]
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time\nfrom playwright.sync_api import sync_playwright\nfrom config import CONFIG\ncu='{{ $json.chat_url }}';vt='{{ $json.vacancy_title }}';em='{{ $json.employer }}'\nwith sync_playwright() as pw:\n  b=pw.chromium.launch(headless=True)\n  ctx=b.new_context()\n  with open(CONFIG.cookies_path) as f: ctx.add_cookies(json.load(f))\n  p=ctx.new_page()\n  p.goto(cu,timeout=30000,wait_until='domcontentloaded')\n  time.sleep(3)\n  msgs=[]\n  for sel in ['[data-qa*=\\\"chatik\\\"][data-qa*=\\\"message\\\"]','[class*=\\\"ChatMessage\\\"]','[class*=\\\"chat-message\\\"]']:\n    els=p.query_selector_all(sel)\n    if els: break\n  for el in els[-12:]:\n    try:\n      txt=el.inner_text().strip()\n      cls=el.get_attribute('class') or ''\n      if txt and len(txt)>2: msgs.append({'text':txt[:500],'from_me':'applicant' in cls.lower() or 'outgoing' in cls.lower()})\n    except: pass\n  emp=[m for m in msgs if not m['from_me']]\n  print(json.dumps({'chat_url':cu,'vacancy_title':vt,'employer':em,'messages':msgs,'last_employer_message':emp[-1]['text'] if emp else ''}))\n  b.close()\n\""
+      },
+      "id": "u027", "name": "Read Chat Thread",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [2620, 600]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json.stdout?.trim();\ntry { return [{ json: JSON.parse(raw) }]; }\ncatch(e) { return [{ json: { chat_url:'', vacancy_title:'', employer:'', messages:[], last_employer_message:'' } }]; }"
+      },
+      "id": "u028", "name": "Parse Chat Content",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2840, 600]
+    },
+
+    {
+      "parameters": {
+        "resource": "chat", "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o", "mode": "id" },
+        "messages": { "values": [
+          { "role": "system", "content": "Classify recruiter message for candidate (Senior PM, fintech). Return ONLY JSON:\n{\"type\":\"interview_invite\"|\"question\"|\"rejection\"|\"other\",\"summary\":\"1 sentence\",\"interview_details\":\"date/format or null\",\"draft_reply\":\"reply text if type=question, else null\"}\nDraft reply rules: concise (1-3 sentences), professional. Salary question → 'Готов обсудить на встрече'. Availability → 'Готов обсудить сроки'." },
+          { "role": "user", "content": "=Vacancy: {{ $json.vacancy_title }}\nEmployer: {{ $json.employer }}\n\nLast employer message:\n{{ $json.last_employer_message }}\n\nContext (last 5 messages):\n{{ $json.messages.slice(-5).map(m => (m.from_me?'Me: ':'Recruiter: ') + m.text).join('\\n') }}" }
+        ]},
+        "simplify": true
+      },
+      "id": "u029", "name": "Classify + Draft Reply",
+      "type": "n8n-nodes-base.openAi", "typeVersion": 1,
+      "position": [3060, 600],
+      "credentials": { "openAiApi": { "id": "1", "name": "OpenAI API" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const cd = $('Parse Chat Content').item.json;\nconst raw = $input.first().json.message?.content || '{}';\nlet ai = {};\ntry { ai = JSON.parse(raw.replace(/```json?|```/g,'').trim()); } catch(e) { ai = { type:'other', summary:'parse error', interview_details:null, draft_reply:null }; }\nreturn [{ json: { ...cd, msg_type: ai.type, msg_summary: ai.summary, interview_details: ai.interview_details, draft_reply: ai.draft_reply } }];"
+      },
+      "id": "u030", "name": "Parse AI Classification",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3280, 600]
+    },
+
+    {
+      "parameters": {
+        "rules": { "rules": [
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.msg_type }}", "rightValue": "interview_invite", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Interview Invite" },
+          { "conditions": { "conditions": [{ "leftValue": "={{ $json.msg_type }}", "rightValue": "question", "operator": { "type": "string", "operation": "equals" } }], "combinator": "and" }, "renameOutput": true, "outputKey": "Question" }
+        ]},
+        "options": { "fallbackOutput": "extra" }
+      },
+      "id": "u031", "name": "Route by Message Type",
+      "type": "n8n-nodes-base.switch", "typeVersion": 3.2,
+      "position": [3500, 600]
+    },
+
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "method": "POST",
+        "sendBody": true, "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, parse_mode: 'Markdown', text: '*🎯 Приглашение на собеседование!*\\n\\n*Компания:* ' + $json.employer + '\\n*Вакансия:* ' + $json.vacancy_title + '\\n*Детали:* ' + ($json.interview_details || 'см. чат') + '\\n*Ссылка:* ' + $json.chat_url }) }}"
+      },
+      "id": "u032", "name": "Telegram: Interview Alert",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2,
+      "position": [3720, 480]
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; python3 -c \"\nimport json,sys,time\nfrom playwright.sync_api import sync_playwright\nfrom config import CONFIG\ncu='{{ $json.chat_url }}';reply='{{ $json.draft_reply }}'\nif not reply or reply=='null': print(json.dumps({'sent':False}));sys.exit()\nwith sync_playwright() as pw:\n  b=pw.chromium.launch(headless=True)\n  ctx=b.new_context()\n  with open(CONFIG.cookies_path) as f: ctx.add_cookies(json.load(f))\n  p=ctx.new_page()\n  p.goto(cu,timeout=30000,wait_until='domcontentloaded')\n  time.sleep(3)\n  inp=None\n  for sel in ['[data-qa=\\\"chatik-new-message-text\\\"]','div[contenteditable=\\\"true\\\"]','textarea']:\n    el=p.query_selector(sel)\n    if el and el.is_visible(): inp=el;break\n  if not inp: print(json.dumps({'sent':False,'reason':'no input'}));sys.exit()\n  inp.type(reply,delay=15);time.sleep(1)\n  btn=p.query_selector('button:has-text(\\\"Отправить\\\")')\n  btn.click() if (btn and btn.is_visible()) else inp.press('Enter')\n  time.sleep(2)\n  print(json.dumps({'sent':True}))\n  b.close()\n\""
+      },
+      "id": "u033", "name": "Send Reply",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [3720, 680]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nlet log = []; try { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\nconst item = $input.first().json;\nconst vacUrl = item.chat_url || item.vacancy_url || '';\nconst idx = log.findIndex(e => e.url && vacUrl.includes(e.url.split('/').pop()?.split('?')[0]));\nconst update = { chat_checked: new Date().toISOString(), chat_summary: item.msg_summary||'', last_msg_type: item.msg_type||'other' };\nif (item.msg_type==='interview_invite') { update.interview_invited=true; update.interview_details=item.interview_details||''; update.status_chat='invited'; }\nif (item.msg_type==='rejection') update.status_chat='rejected';\nif (item.msg_type==='question') update.status_chat='replied';\nif (idx>=0) log[idx]={...log[idx],...update};\nelse log.push({url:item.chat_url||'',title:item.vacancy_title||'',date:new Date().toISOString(),...update});\nfs.writeFileSync(LOG_PATH, JSON.stringify(log,null,2),'utf8');\nreturn [{ json: { updated:true, type:item.msg_type, title:item.vacancy_title } }];"
+      },
+      "id": "u034", "name": "Update Applied Log (Chat)",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3920, 600]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Triggered by Chat Split 'done' OR Any Unread? = NO\nconst fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nconst STATE_PATH = '/tmp/hh_session_state.json';\nlet log = [], state = { baseline_count: 0 };\ntry { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\ntry { state = JSON.parse(fs.readFileSync(STATE_PATH,'utf8')); } catch(e) {}\nconst session = log.slice(state.baseline_count);\nconst errors = session.filter(e =>\n  e.status?.includes('skipped_error') ||\n  e.status?.includes('skipped_hh_modal') ||\n  e.status?.includes('skipped_no') ||\n  e.status?.includes('chat_error')\n);\nconst applied = session.filter(e => e.status?.startsWith('applied')).length;\nconsole.log(`Session total: ${session.length}, errors: ${errors.length}, applied: ${applied}`);\nreturn [{ json: { total_errors: errors.length, total_applied: applied, session_total: session.length, error_breakdown: errors.reduce((a,e)=>{a[e.status]=(a[e.status]||0)+1;return a},{}), baseline_count: state.baseline_count } }];"
+      },
+      "id": "u035", "name": "Count Total Errors",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2400, 860]
+    },
+
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            { "leftValue": "={{ $json.total_errors }}", "rightValue": 3, "operator": { "type": "number", "operation": "gte" } }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "u036", "name": "Error Gate: ≥ 3 Failures",
+      "type": "n8n-nodes-base.if", "typeVersion": 2,
+      "position": [2620, 860]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nconst STATE_PATH = '/tmp/hh_session_state.json';\nlet log = [], state = { baseline_count: 0 };\ntry { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\ntry { state = JSON.parse(fs.readFileSync(STATE_PATH,'utf8')); } catch(e) {}\n// Find the most recent skipped_error URL to inspect\nconst session = log.slice(state.baseline_count);\nconst errorEntry = session.find(e => e.status==='skipped_error' && e.url);\nreturn [{ json: { inspect_url: errorEntry?.url || null, error_data: $input.first().json } }];"
+      },
+      "id": "u037", "name": "Get Failed URL",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2840, 760]
+    },
+
+    {
+      "parameters": {
+        "command": "=cd /Users/kashitcyn/hh-auto-test && source venv/bin/activate 2>/dev/null; mkdir -p snapshots; python3 browser_inspector.py --url '{{ $json.inspect_url }}' --auto-click 2>&1"
+      },
+      "id": "u038", "name": "Run Browser Inspector",
+      "type": "n8n-nodes-base.executeCommand", "typeVersion": 1,
+      "position": [3060, 760]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs'), path = require('path');\nconst DIR = '/Users/kashitcyn/hh-auto-test/snapshots';\nlet folders = [];\ntry { folders = fs.readdirSync(DIR).filter(f => fs.statSync(path.join(DIR,f)).isDirectory()).sort().reverse(); } catch(e) {}\nif (!folders.length) return [{ json: { error: 'no snapshots', data_qa: [], modal_html_preview: '' } }];\nconst latest = path.join(DIR, folders[0]);\nlet data_qa = [], modal_html = '';\ntry { data_qa = fs.readFileSync(path.join(latest,'data_qa.txt'),'utf8').split('\\n').filter(Boolean); } catch(e) {}\ntry { modal_html = fs.readFileSync(path.join(latest,'modal.html'),'utf8').slice(0,6000); } catch(e) {}\nreturn [{ json: { snapshot_folder: folders[0], data_qa, modal_html_preview: modal_html } }];"
+      },
+      "id": "u039", "name": "Read Inspector Snapshot",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3280, 760]
+    },
+
+    {
+      "parameters": {
+        "resource": "chat", "operation": "complete",
+        "modelId": { "__rl": true, "value": "gpt-4o", "mode": "id" },
+        "messages": { "values": [
+          { "role": "system", "content": "HH.ru automation DOM expert. Known working selectors: vacancy-response-submit-popup (disabled initially), vacancy-response-popup-form-letter-input, vacancy-response-letter-submit, vacancy-response-success-standard-notification, vacancy-response-link-view-topic, form-helper-error, employer-asking-for-test.\nReturn ONLY JSON: {\"diagnosis\":\"what changed\",\"missing_selectors\":[],\"new_selectors\":[],\"form_type_detected\":\"type\",\"suggested_fix\":\"specific action\",\"severity\":\"critical|warning|info\"}" },
+          { "role": "user", "content": "=Snapshot: {{ $json.snapshot_folder }}\n\ndata-qa attrs ({{ $json.data_qa.length }}):\n{{ $json.data_qa.join('\\n') }}\n\nModal HTML preview:\n{{ $json.modal_html_preview.slice(0,2500) }}" }
+        ]},
+        "simplify": true
+      },
+      "id": "u040", "name": "Analyze DOM Changes",
+      "type": "n8n-nodes-base.openAi", "typeVersion": 1,
+      "position": [3500, 760],
+      "credentials": { "openAiApi": { "id": "1", "name": "OpenAI API" } }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const snap = $('Read Inspector Snapshot').item.json;\nconst errData = $('Count Total Errors').item.json;\nconst raw = $input.first().json.message?.content || '{}';\nlet a = {}; try { a = JSON.parse(raw.replace(/```json?|```/g,'').trim()); } catch(e) { a = {diagnosis:'parse error',severity:'warning',suggested_fix:'',missing_selectors:[],new_selectors:[]}; }\nconst fs = require('fs');\nconst report = { generated_at: new Date().toISOString(), session_errors: errData.total_errors, breakdown: errData.error_breakdown, snapshot: snap.snapshot_folder, analysis: a };\nfs.writeFileSync('/Users/kashitcyn/hh-auto-test/debug_screenshots/last_report.json', JSON.stringify(report,null,2),'utf8');\nconst emoji = a.severity==='critical'?'🚨':a.severity==='warning'?'⚠️':'ℹ️';\nconst tg = `${emoji} *HH Debug Report*\\n\\n*Errors this session:* ${errData.total_errors}\\n*Severity:* ${a.severity}\\n\\n*Diagnosis:*\\n${a.diagnosis}\\n\\n*Fix:*\\n${a.suggested_fix}\\n\\n*Missing:* ${(a.missing_selectors||[]).join(', ')||'none'}\\n*New:* ${(a.new_selectors||[]).join(', ')||'none'}`;\nreturn [{ json: { tg_text: tg, severity: a.severity, report } }];"
+      },
+      "id": "u041", "name": "Build Debug Report",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [3720, 760]
+    },
+
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "method": "POST", "sendBody": true, "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: $env.TELEGRAM_CHAT_ID, parse_mode: 'Markdown', text: $json.tg_text }) }}"
+      },
+      "id": "u042", "name": "Telegram: Debug Alert",
+      "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2,
+      "position": [3920, 760]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst LOG_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/applied_log.json';\nconst PROFILE_PATH = '/Users/kashitcyn/.openclaw/workspace/HH_Auto/market_profile.json';\nlet log = []; try { log = JSON.parse(fs.readFileSync(LOG_PATH,'utf8')); } catch(e) {}\nconst sigFreq = {}, statusFreq = {};\nconst scores = log.filter(e => e.score != null).map(e => e.score);\nconst invited = log.filter(e => e.interview_invited);\nfor (const e of log) {\n  for (const s of (e.signals||[])) sigFreq[s]=(sigFreq[s]||0)+1;\n  const st=e.status||'unknown'; statusFreq[st]=(statusFreq[st]||0)+1;\n}\nconst avg = n => n.length ? Math.round(n.reduce((a,b)=>a+b,0)/n.length) : null;\nconst profile = { last_updated: new Date().toISOString(), total_analyzed: log.length, status_breakdown: statusFreq, signal_frequency: Object.fromEntries(Object.entries(sigFreq).sort((a,b)=>b[1]-a[1])), avg_score_all: avg(scores), avg_score_applied: avg(log.filter(e=>e.score!=null&&e.status?.startsWith('applied')).map(e=>e.score)), interview_invite_rate: log.length?`${((invited.length/log.length)*100).toFixed(1)}%`:'0%', interviews: invited.map(e=>({title:e.title,url:e.url,score:e.score,date:e.date})) };\nfs.writeFileSync(PROFILE_PATH, JSON.stringify(profile,null,2),'utf8');\nconsole.log('Session complete. Market profile updated.');\nreturn [{ json: profile }];"
+      },
+      "id": "u043", "name": "Update Market Profile",
+      "type": "n8n-nodes-base.code", "typeVersion": 2,
+      "position": [2840, 1000]
+    }
+
+  ],
+
+  "connections": {
+    "Schedule: Daily Session": { "main": [[{ "node": "Load Log + Record Session Start", "type": "main", "index": 0 }]] },
+    "Load Log + Record Session Start": { "main": [[{ "node": "Fetch HH Search Page", "type": "main", "index": 0 }]] },
+    "Fetch HH Search Page": { "main": [[{ "node": "Parse & Filter Vacancies", "type": "main", "index": 0 }]] },
+    "Parse & Filter Vacancies": { "main": [[{ "node": "Stop Words Filter", "type": "main", "index": 0 }]] },
+    "Stop Words Filter": { "main": [[{ "node": "Apply: Each Vacancy", "type": "main", "index": 0 }]] },
+    "Apply: Each Vacancy": {
+      "main": [
+        [{ "node": "Open Vacancy + Get Text", "type": "main", "index": 0 }],
+        [{ "node": "Count Apply Errors", "type": "main", "index": 0 }]
+      ]
+    },
+    "Open Vacancy + Get Text": { "main": [[{ "node": "Parse Vacancy Text", "type": "main", "index": 0 }]] },
+    "Parse Vacancy Text": { "main": [[{ "node": "Score vs Resume", "type": "main", "index": 0 }]] },
+    "Score vs Resume": { "main": [[{ "node": "Parse Score", "type": "main", "index": 0 }]] },
+    "Parse Score": { "main": [[{ "node": "Score Gate ≥ 65%", "type": "main", "index": 0 }]] },
+    "Score Gate ≥ 65%": {
+      "main": [
+        [{ "node": "Click Apply + Detect Form", "type": "main", "index": 0 }],
+        [{ "node": "Build Skip Entry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Click Apply + Detect Form": { "main": [[{ "node": "Parse Form Info", "type": "main", "index": 0 }]] },
+    "Parse Form Info": { "main": [[{ "node": "Route by Form Type", "type": "main", "index": 0 }]] },
+    "Route by Form Type": {
+      "main": [
+        [{ "node": "Build Immediate Entry", "type": "main", "index": 0 }],
+        [{ "node": "Generate Cover Letter", "type": "main", "index": 0 }],
+        [{ "node": "Generate Cover Letter", "type": "main", "index": 0 }],
+        [{ "node": "Generate Cover Letter", "type": "main", "index": 0 }],
+        [{ "node": "Build Skip Entry", "type": "main", "index": 0 }]
+      ]
+    },
+    "Generate Cover Letter": { "main": [[{ "node": "Fill & Submit Form", "type": "main", "index": 0 }]] },
+    "Fill & Submit Form": { "main": [[{ "node": "Build Applied Entry", "type": "main", "index": 0 }]] },
+    "Build Applied Entry": { "main": [[{ "node": "Append to Applied Log", "type": "main", "index": 0 }]] },
+    "Build Immediate Entry": { "main": [[{ "node": "Append to Applied Log", "type": "main", "index": 0 }]] },
+    "Build Skip Entry": { "main": [[{ "node": "Append to Applied Log", "type": "main", "index": 0 }]] },
+
+    "Count Apply Errors": { "main": [[{ "node": "Fetch HH Negotiations", "type": "main", "index": 0 }]] },
+    "Fetch HH Negotiations": { "main": [[{ "node": "Parse Negotiations", "type": "main", "index": 0 }]] },
+    "Parse Negotiations": { "main": [[{ "node": "Any Unread?", "type": "main", "index": 0 }]] },
+    "Any Unread?": {
+      "main": [
+        [{ "node": "Unpack Chats", "type": "main", "index": 0 }],
+        [{ "node": "Count Total Errors", "type": "main", "index": 0 }]
+      ]
+    },
+    "Unpack Chats": { "main": [[{ "node": "Chat: Each Conversation", "type": "main", "index": 0 }]] },
+    "Chat: Each Conversation": {
+      "main": [
+        [{ "node": "Read Chat Thread", "type": "main", "index": 0 }],
+        [{ "node": "Count Total Errors", "type": "main", "index": 0 }]
+      ]
+    },
+    "Read Chat Thread": { "main": [[{ "node": "Parse Chat Content", "type": "main", "index": 0 }]] },
+    "Parse Chat Content": { "main": [[{ "node": "Classify + Draft Reply", "type": "main", "index": 0 }]] },
+    "Classify + Draft Reply": { "main": [[{ "node": "Parse AI Classification", "type": "main", "index": 0 }]] },
+    "Parse AI Classification": { "main": [[{ "node": "Route by Message Type", "type": "main", "index": 0 }]] },
+    "Route by Message Type": {
+      "main": [
+        [{ "node": "Telegram: Interview Alert", "type": "main", "index": 0 }],
+        [{ "node": "Send Reply", "type": "main", "index": 0 }],
+        [{ "node": "Update Applied Log (Chat)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Telegram: Interview Alert": { "main": [[{ "node": "Update Applied Log (Chat)", "type": "main", "index": 0 }]] },
+    "Send Reply": { "main": [[{ "node": "Update Applied Log (Chat)", "type": "main", "index": 0 }]] },
+
+    "Count Total Errors": { "main": [[{ "node": "Error Gate: ≥ 3 Failures", "type": "main", "index": 0 }]] },
+    "Error Gate: ≥ 3 Failures": {
+      "main": [
+        [{ "node": "Get Failed URL", "type": "main", "index": 0 }],
+        [{ "node": "Update Market Profile", "type": "main", "index": 0 }]
+      ]
+    },
+    "Get Failed URL": { "main": [[{ "node": "Run Browser Inspector", "type": "main", "index": 0 }]] },
+    "Run Browser Inspector": { "main": [[{ "node": "Read Inspector Snapshot", "type": "main", "index": 0 }]] },
+    "Read Inspector Snapshot": { "main": [[{ "node": "Analyze DOM Changes", "type": "main", "index": 0 }]] },
+    "Analyze DOM Changes": { "main": [[{ "node": "Build Debug Report", "type": "main", "index": 0 }]] },
+    "Build Debug Report": { "main": [[{ "node": "Telegram: Debug Alert", "type": "main", "index": 0 }]] },
+    "Telegram: Debug Alert": { "main": [[{ "node": "Update Market Profile", "type": "main", "index": 0 }]] }
+  },
+
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "versionId": "unified-hh-auto-v1-final"
+}
