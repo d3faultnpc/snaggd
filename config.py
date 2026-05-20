@@ -2,6 +2,12 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv optional — env vars can be set externally
+
 # Project root = directory containing this file
 BASE_DIR = Path(__file__).parent
 
