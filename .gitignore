@@ -4,6 +4,9 @@ data/
 HH_Auto
 HH_Auto/
 
+# Internal dev journal (not for public repo)
+DEVLOG.md
+
 # Historical archive — contains personal data from dev iterations
 _docs/
 
