@@ -1,11 +1,12 @@
 """
 Resume parser: PDF / DOCX / image / markdown → ResumeData → resume_facts.md
 
-Pattern borrowed from Health-concierge/server/src/process-attachment.ts:
-  - pdfminer extracts text from selectable PDFs (no LLM tokens)
-  - multimodal image_url (base64) for scanned PDFs and images — Gemini reads both natively
-  - LLM structures extracted text into JSON (json_repair as fallback)
-  - OpenRouter as the unified gateway (RESUME_PARSE_MODEL env var)
+Pattern from Health-concierge/server/src/process-attachment.ts (the live path, not pdf-parse):
+  - PDF + images → base64 image_url → Gemini reads both natively (no local extraction)
+  - DOCX → python-docx text → LLM text mode (no image representation available)
+  - MD/TXT → LLM text mode
+  - json_repair as fallback for malformed LLM JSON output
+  - OpenRouter as unified gateway (RESUME_PARSE_MODEL / LLM_MODEL env vars)
 """
 
 import base64
@@ -81,14 +82,10 @@ class ResumeParser:
             return self._extract_with_llm(path.read_text(encoding="utf-8"), path.name)
 
         if ext == ".docx":
+            # DOCX has no image representation — extract text, send as text
             return self._extract_with_llm(self._extract_docx_text(path), path.name)
 
-        if mime == "application/pdf":
-            raw = self._extract_pdf_text(path)
-            if len(raw.strip()) > 200:
-                return self._extract_with_llm(raw, path.name)
-            # Scanned PDF — fall through to multimodal
-
+        # PDF and images: always multimodal — Gemini reads layout/structure natively
         return self._extract_multimodal(path, mime)
 
     def from_wizard(self, answers: dict) -> ResumeData:
@@ -176,13 +173,6 @@ class ResumeParser:
         return "\n".join(lines)
 
     # ── Extraction methods ────────────────────────────────────────────────────
-
-    def _extract_pdf_text(self, path: Path) -> str:
-        try:
-            import pdfminer.high_level
-            return pdfminer.high_level.extract_text(str(path)) or ""
-        except Exception:
-            return ""
 
     def _extract_docx_text(self, path: Path) -> str:
         try:
