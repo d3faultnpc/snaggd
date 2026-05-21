@@ -4,6 +4,13 @@ from typing import Tuple, List, Optional
 from pathlib import Path
 from config import CONFIG
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception as _e:
+    _agent = None
+    print(f"   ⚠️ LLMAgent не инициализирован: {_e} — используется шаблонный fallback")
+
 class LLMCover:
     """Генератор сопроводительных писем с кэшированием"""
 
@@ -12,6 +19,7 @@ class LLMCover:
         self.cache = self._load_cache()
         self.templates = self._load_templates()
         self.resume_facts = self._load_resume_facts()
+        self.last_score: int = 0  # match score from last generate() call
         
     def generate(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         """
@@ -125,10 +133,13 @@ class LLMCover:
             return ""
     
     def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        """Генерирует сопроводительное через LLM pipeline"""
-        # TODO: Интеграция с LLM через OpenClaw
-        # Пока что используем fallback на шаблоны
-        raise Exception("LLM интеграция не реализована")
+        if _agent is None:
+            raise RuntimeError("LLMAgent not available")
+        cover = _agent.generate_cover(vacancy_text)
+        score_data = _agent.score_vacancy(vacancy_text)
+        self.last_score = score_data.get("score", 0)
+        signals = score_data.get("signals", [])
+        return cover, "llm", signals
     
     def _generate_with_templates(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         """Генерирует сопроводительное через шаблоны"""

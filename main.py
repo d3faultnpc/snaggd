@@ -130,7 +130,8 @@ def process_vacancy(browser, detector, handlers, llm_cover, hr_matcher,
         # Генерируем сопроводительное только если форма нужна
         print("   🔹 Генерирую сопроводительное...")
         cover_letter, template_name, signals = llm_cover.generate(vacancy_text)
-        print(f"   📊 Шаблон: {template_name}, сигналы: {', '.join(signals) if signals else 'нет'}")
+        match_score = llm_cover.last_score
+        print(f"   📊 Шаблон: {template_name}, score: {match_score}, сигналы: {', '.join(signals) if signals else 'нет'}")
 
         # Обрабатываем форму
         handler = handlers.get_handler(form_info.form_type)
@@ -146,6 +147,7 @@ def process_vacancy(browser, detector, handlers, llm_cover, hr_matcher,
             'details': {
                 'form_type': form_info.form_type.value,
                 'template_name': template_name,
+                'match_score': match_score,
                 'signals': signals,
                 **(result.details or {})
             }

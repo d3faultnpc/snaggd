@@ -1,6 +1,12 @@
 from typing import Dict, List
 from config import CONFIG
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception:
+    _agent = None
+
 class HRMatcher:
     """Матчер HR-вопросов без использования LLM"""
     
@@ -23,7 +29,14 @@ class HRMatcher:
         if best_match:
             return best_match
         
-        # 3. Категориальный fallback
+        # 3. LLM fallback — answers from profile context
+        if _agent is not None:
+            try:
+                return _agent.answer_question(question)
+            except Exception:
+                pass
+
+        # 4. Static fallback if LLM unavailable
         return self._get_default_answer(question_lower)
     
     def _load_questions(self) -> Dict[str, str]:
