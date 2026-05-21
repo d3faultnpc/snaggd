@@ -28,3 +28,4 @@ hh_cookies.json
 llm_cache.json
 applied_log.json
 pending_actions.json
+.claude/
