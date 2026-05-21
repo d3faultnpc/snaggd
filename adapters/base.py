@@ -11,12 +11,10 @@ class SiteAdapter(ABC):
     all abstract methods. See adapters/hh/adapter.py for a reference impl.
     """
 
-    @property
     @abstractmethod
     def name(self) -> str:
         """Human-readable site name, e.g. 'hh.ru'."""
 
-    @property
     @abstractmethod
     def auth_method(self) -> str:
         """Auth type: 'cookie' | 'oauth' | 'login'."""

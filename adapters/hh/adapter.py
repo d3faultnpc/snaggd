@@ -14,8 +14,11 @@ from utils.helpers import random_delay
 class HHAdapter(SiteAdapter):
     """HH.ru adapter: Playwright-only (HH API closed Dec 2025)."""
 
-    name = "hh.ru"
-    auth_method = "cookie"
+    def name(self) -> str:
+        return "hh.ru"
+
+    def auth_method(self) -> str:
+        return "cookie"
 
     def __init__(self):
         self.browser = HHBrowser()
@@ -95,7 +98,8 @@ class HHAdapter(SiteAdapter):
                 return {
                     'status': f'skipped_{form_info.form_type.value}',
                     'reason': f'Форма пропущена: {form_info.form_type.value}',
-                    'scenario': 'skip'
+                    'scenario': 'skip',
+                    'details': {'form_type': form_info.form_type.value}
                 }
 
             print("   🔹 Генерирую сопроводительное...")

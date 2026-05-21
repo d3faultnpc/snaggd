@@ -64,6 +64,10 @@ def main():
     skip_count = 0
 
     try:
+        if not adapter.verify():
+            print("❌ Pre-flight check failed — fix errors above before starting")
+            return 1
+
         if not adapter.start():
             print("❌ Failed to launch browser")
             return 1
