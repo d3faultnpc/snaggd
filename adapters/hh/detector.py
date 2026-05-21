@@ -1,5 +1,5 @@
 from typing import Optional
-from form_handlers.base import FormType, FormInfo
+from .handlers.base import FormType, FormInfo
 from config import SELECTORS, FORM_KEYWORDS
 
 class FormDetector:
