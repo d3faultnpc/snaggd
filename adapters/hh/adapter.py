@@ -159,14 +159,6 @@ class HHAdapter(SiteAdapter):
 
         except Exception as e:
             err = str(e)
-            # Detect browser/network drop (VPN disconnect, page closed externally)
-            is_network_drop = any(kw in err for kw in (
-                "Target page, context or browser has been closed",
-                "net::ERR_", "Connection refused", "Browser has been disconnected",
-            ))
-            if is_network_drop:
-                print(f"   ⚠️ Network/browser disconnect: {err}")
-                raise  # Propagate to main loop — session cannot continue
             if debug and session_dir:
                 try:
                     self._debug_snapshot(self.browser.get_current_page(), session_dir, "error")
