@@ -125,11 +125,8 @@ class LLMAgent:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _load_profile(self, filename: str) -> str:
-        for base in (CONFIG.workspace_dir, CONFIG.data_dir):
-            path = Path(base) / filename
-            if path.exists():
-                return path.read_text(encoding="utf-8").strip()
-        return ""
+        path = Path(CONFIG.data_dir) / filename
+        return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
     def _load_prompt(self, filename: str) -> str:
         path = _PROMPTS_DIR / filename

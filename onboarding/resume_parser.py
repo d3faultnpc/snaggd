@@ -1,12 +1,11 @@
 """
 Resume parser: PDF / DOCX / image / markdown → ResumeData → resume_facts.md
 
-Pattern from Health-concierge/server/src/process-attachment.ts (the live path, not pdf-parse):
-  - PDF + images → base64 image_url → Gemini reads both natively (no local extraction)
-  - DOCX → python-docx text → LLM text mode (no image representation available)
-  - MD/TXT → LLM text mode
-  - json_repair as fallback for malformed LLM JSON output
-  - OpenRouter as unified gateway (RESUME_PARSE_MODEL / LLM_MODEL env vars)
+- PDF + images → base64 image_url → Gemini reads both natively (no local extraction)
+- DOCX → python-docx text → LLM text mode (no image representation available)
+- MD/TXT → LLM text mode
+- json_repair as fallback for malformed LLM JSON output
+- OpenRouter as unified gateway (RESUME_PARSE_MODEL / LLM_MODEL env vars)
 """
 
 import base64

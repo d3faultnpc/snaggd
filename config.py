@@ -14,18 +14,11 @@ BASE_DIR = Path(__file__).parent
 # User data dir: override via DATA_DIR env var, default to ./data
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 
-# Workspace dir: legacy symlink (HH_Auto/) or DATA_DIR
-# TODO: migrate fully to DATA_DIR after onboarding is implemented
-_workspace_legacy = BASE_DIR / "HH_Auto"
-WORKSPACE_DIR = _workspace_legacy if _workspace_legacy.exists() else DATA_DIR
-
-
 @dataclass
 class Config:
     # Paths — all derived from BASE_DIR / DATA_DIR, no hardcoded usernames
     base_dir: Path = field(default_factory=lambda: BASE_DIR)
     data_dir: Path = field(default_factory=lambda: DATA_DIR)
-    workspace_dir: Path = field(default_factory=lambda: WORKSPACE_DIR)
     applied_log_path: Path = field(default_factory=lambda: DATA_DIR / "applied_log.json")
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
     cookies_path: Path = field(default_factory=lambda: DATA_DIR / "hh_cookies.json")

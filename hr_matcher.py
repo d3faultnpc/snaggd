@@ -43,7 +43,7 @@ class HRMatcher:
         return ""
 
     def _load_questions(self) -> Dict[str, str]:
-        questions_path = CONFIG.workspace_dir / "hr_questions.md"
+        questions_path = CONFIG.data_dir / "hr_questions.md"
         try:
             content = questions_path.read_text(encoding="utf-8")
             questions = {}
