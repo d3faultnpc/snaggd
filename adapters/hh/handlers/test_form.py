@@ -14,7 +14,7 @@ class TestFormHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.TEST_FORM
 
-    def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
+    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
         # 1. Click "Apply without answering questions"
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
