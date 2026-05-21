@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 class FormType(Enum):
-    """Типы форм отклика на HH"""
+    """HH application form types."""
     HH_MODAL_STEP1 = "hh_modal_step1"
     HH_MODAL_STEP2 = "hh_modal_step2" 
     COVER_ONLY = "cover_only"
@@ -16,7 +16,7 @@ class FormType(Enum):
 
 @dataclass
 class FormInfo:
-    """Информация о детектированной форме"""
+    """Detected form metadata."""
     form_type: FormType
     input_count: int
     has_salary_field: bool = False
@@ -41,35 +41,35 @@ class FormInfo:
 
 @dataclass
 class ProcessResult:
-    """Результат обработки формы"""
+    """Form processing result."""
     success: bool
     status: str  # applied, skipped_salary, skipped_error, etc.
     reason: str
-    scenario: str = "unknown"  # A, B, C для логирования
+    scenario: str = "unknown"  # A, B, C for logging
     details: Optional[dict] = None
 
 class BaseHandler(ABC):
-    """Базовый класс для обработчиков форм"""
-    
+    """Base class for form handlers."""
+
     @abstractmethod
     def can_handle(self, form_type: FormType) -> bool:
-        """Может ли обработчик работать с данным типом формы"""
+        """Returns True if this handler can process the given form type."""
         pass
-    
+
     @abstractmethod
     def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        """Обработать форму"""
+        """Process the form."""
         pass
-    
+
     def _wait_and_random_delay(self, page, min_ms: int = 2000, max_ms: int = 5000) -> None:
-        """Человеческая задержка"""
+        """Human-like random delay."""
         import random
         import time
         delay = random.randint(min_ms, max_ms)
         time.sleep(delay / 1000.0)
-    
+
     def _find_element_by_selectors(self, page, selectors: list, visible_only: bool = True):
-        """Найти элемент по списку селекторов"""
+        """Finds the first element matching any selector in the list."""
         for selector in selectors:
             try:
                 element = page.query_selector(selector)

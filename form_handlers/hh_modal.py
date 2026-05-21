@@ -4,27 +4,27 @@ from config import SELECTORS, FORM_KEYWORDS
 
 class HHModalHandler(BaseHandler):
     """
-    Обработчик HH модалок с навигацией.
+    Handler for HH modals with navigation.
 
-    Сценарии:
-      A. Форма с textarea → заполняем → "Отправить" → успех
-      B. После "Отправить": ошибка "Отклик уже просмотрен" → кликаем "Чат"
-      C. Нет textarea → просто кликаем навигационную кнопку
+    Scenarios:
+      A. Form with textarea → fill → "Submit" → success
+      B. After "Submit": error "Application already viewed" → click "Chat"
+      C. No textarea → just click the navigation button
     """
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.HH_MODAL_STEP1, FormType.HH_MODAL_STEP2]
 
     def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        # 1. Ищем и заполняем textarea сопроводительного
+        # 1. Find and fill the cover letter textarea
         textarea = self._find_cover_textarea(page)
         filled = False
 
         if textarea:
             print("   🔹 Заполняю сопроводительное письмо...")
             try:
-                # type() триггерит React input/change события per-keystroke
-                # (textarea disabled пока пуста — нужны события чтобы кнопка стала активной)
+                # type() fires React input/change events per-keystroke;
+                # textarea stays disabled while empty — events are needed to enable the submit button
                 textarea.type(cover_letter, delay=10)
                 filled = True
                 print("   ✅ Сопроводительное заполнено")
@@ -34,7 +34,7 @@ class HHModalHandler(BaseHandler):
         else:
             print("   ⚠️ Поле сопроводительного не найдено")
 
-        # 2. Кликаем кнопку отправки (ждём пока станет enabled если была disabled)
+        # 2. Click the submit button (wait for it to become enabled after filling)
         nav_button = self._find_nav_button(page)
         if not nav_button:
             return ProcessResult(
@@ -50,12 +50,12 @@ class HHModalHandler(BaseHandler):
         nav_button.click()
         self._wait_and_random_delay(page, 2000, 4000)
 
-        # 3. Пост-отправная проверка edge case
+        # 3. Post-submit edge case check
         edge_result = self._check_post_submit_edge_case(page)
         if edge_result:
             return edge_result
 
-        # 4. Успех
+        # 4. Success
         if filled:
             return ProcessResult(
                 success=True,
@@ -77,12 +77,12 @@ class HHModalHandler(BaseHandler):
     # ------------------------------------------------------------------
 
     def _find_cover_textarea(self, page):
-        """Ищет textarea для сопроводительного по верифицированным селекторам."""
+        """Finds cover letter textarea using verified selectors."""
         selectors = [
-            # Попап-модал (верифицирован 2026-04-06)
+            # Popup modal (verified 2026-04-06)
             f'[data-qa="vacancy-response-popup-form-letter-input"] textarea',
             SELECTORS['popup_letter_input'],
-            # Инлайн-форма (верифицирована 2026-04-05)
+            # Inline form (verified 2026-04-05)
             '[data-qa="vacancy-response-letter-informer"] textarea',
             '[data-qa="textarea-native-wrapper"] textarea',
             'textarea[data-qa*="response"]',
@@ -92,7 +92,7 @@ class HHModalHandler(BaseHandler):
             try:
                 el = page.query_selector(selector)
                 if el and el.is_visible():
-                    # Убеждаемся что это не поле зарплаты
+                    # Exclude salary fields
                     if not self._is_salary_field(el):
                         return el
             except Exception:
@@ -100,7 +100,7 @@ class HHModalHandler(BaseHandler):
         return None
 
     def _is_salary_field(self, element) -> bool:
-        """Проверяет, является ли поле полем зарплаты."""
+        """Returns True if the element is a salary field."""
         try:
             placeholder = (element.get_attribute('placeholder') or "").lower()
             salary_keywords = ['зарплат', 'salary', 'ожидани', 'доход', 'желаем']
@@ -109,30 +109,29 @@ class HHModalHandler(BaseHandler):
             return False
 
     def _find_nav_button(self, page):
-        """Ищет навигационную кнопку ('Отправить', 'Откликнуться', 'Далее' и т.д.).
+        """Finds the navigation button ('Submit', 'Apply', 'Next', etc.).
 
-        Попап-кнопка изначально disabled — ждём enabled (до 5с) после заполнения формы.
+        Popup button starts disabled — wait up to 5 s for it to become enabled after form fill.
         """
         import time
 
-        # Верифицированные data-qa (инлайн и попап)
+        # Verified data-qa selectors (inline and popup)
         for selector in [SELECTORS['letter_submit'], SELECTORS['popup_submit']]:
             try:
-                # Ждём пока кнопка станет enabled (до 5 секунд)
                 try:
                     page.wait_for_selector(
                         f"{selector}:not([disabled])",
                         timeout=5000
                     )
                 except Exception:
-                    pass  # Timeout — возможно кнопка и так enabled
+                    pass  # Timeout — button may already be enabled
                 btn = page.query_selector(selector)
                 if btn and btn.is_visible() and not btn.is_disabled():
                     return btn
             except Exception:
                 pass
 
-        # Fallback по тексту (включая "Откликнуться" в попапе)
+        # Fallback by text (including "Откликнуться" in popup)
         nav_keywords = FORM_KEYWORDS['navigation'] + ['откликнуться']
         buttons = page.query_selector_all('button, a[role="button"]')
         for btn in buttons:
@@ -148,10 +147,9 @@ class HHModalHandler(BaseHandler):
 
     def _check_post_submit_edge_case(self, page) -> ProcessResult | None:
         """
-        Проверяет edge case после клика "Отправить":
-        'Отклик уже просмотрен работодателем.' → кликаем 'Чат'.
+        Checks post-submit edge case: 'Application already viewed by employer' → click 'Chat'.
 
-        Селекторы верифицированы 2026-04-05 через debug снимки.
+        Selectors verified 2026-04-05 via debug snapshots.
         """
         try:
             error_el = page.query_selector(SELECTORS['form_error'])
@@ -161,7 +159,7 @@ class HHModalHandler(BaseHandler):
             error_text = error_el.inner_text().strip()
             print(f"   ⚠️ Обнаружена ошибка формы: '{error_text}'")
 
-            # Ошибка "введите сопроводительное" — textarea не заполнена
+            # "Please fill in cover letter" — textarea was not filled
             if 'введите' in error_text.lower() or 'заполните' in error_text.lower():
                 return ProcessResult(
                     success=False,

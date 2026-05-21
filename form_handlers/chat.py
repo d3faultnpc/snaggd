@@ -4,26 +4,26 @@ from config import SELECTORS
 
 class ChatHandler(BaseHandler):
     """
-    Обработчик авточтения (Сбер и др.) — отклик через chatik.
+    Handler for auto-read employers (Sber etc.) — applies via chatik.
 
-    Сценарий:
-      Работодатель включил автопросмотр откликов. После клика
-      'Откликнуться' форма сразу показывает ошибку + кнопку чата.
-      Нужно: кликнуть чат → в chatik добавить сопроводительное → отправить.
+    Scenario:
+      Employer has auto-view enabled. After clicking 'Apply' the form
+      immediately shows an error + chat button.
+      Flow: click chat → add cover letter in chatik → send.
 
-    Верифицированные селекторы (2026-04-06):
-      vacancy-response-link-view-topic — ссылка "Перейти в чат"
+    Verified selectors (2026-04-06):
+      vacancy-response-link-view-topic — "Go to chat" link
 
-    НЕ верифицированные (из tz, требуют живой тестовой сессии):
-      chatik-chat-message-applicant-action — ссылка "+Добавить сопроводительное"
-      chatik-new-message-text — поле ввода сообщения
+    Not verified (from spec, require a live test session):
+      chatik-chat-message-applicant-action — "+Add cover letter" link
+      chatik-new-message-text — message input field
     """
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.CHAT_INTERFACE
 
     def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        # 1. Кликаем "Перейти в чат"
+        # 1. Click "Go to chat"
         chat_link = page.query_selector(SELECTORS['chat_link'])
         if not chat_link or not chat_link.is_visible():
             return ProcessResult(
@@ -37,14 +37,14 @@ class ChatHandler(BaseHandler):
         chat_link.click()
         self._wait_and_random_delay(page, 3000, 5000)
 
-        # 2. Ищем ссылку "+Добавить сопроводительное" в chatik
+        # 2. Look for "+Add cover letter" link in chatik
         add_cover = page.query_selector(SELECTORS['chatik_add_cover'])
         if add_cover and add_cover.is_visible():
             print("   🔹 Кликаю '+Добавить сопроводительное'...")
             add_cover.click()
             self._wait_and_random_delay(page, 2000, 3000)
 
-        # 3. Ищем поле ввода — сначала верифицированный data-qa, затем fallback
+        # 3. Find input field — verified data-qa first, then fallback
         chat_input = None
         for selector in [
             SELECTORS['chatik_input'],
@@ -81,15 +81,13 @@ class ChatHandler(BaseHandler):
                 scenario="chat_fill_error"
             )
 
-        # 4. Отправляем — Enter или кнопка отправки
+        # 4. Send — try submit button first, fallback to Enter
         try:
-            # Сначала пробуем кнопку отправки
             send_btn = page.query_selector('button:has-text("Отправить")')
             if send_btn and send_btn.is_visible():
                 print("   🔹 Кликаю 'Отправить' в chatik...")
                 send_btn.click()
             else:
-                # Fallback: Enter в поле ввода
                 print("   🔹 Отправляю через Enter...")
                 chat_input.press("Enter")
 

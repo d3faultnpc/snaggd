@@ -13,29 +13,26 @@ class HHBrowser:
         self.vacancy_page: Optional[Page] = None
         
     def start(self) -> bool:
-        """Запускает браузер и загружает HH"""
+        """Launches browser and loads HH."""
         try:
             self.playwright = sync_playwright().start()
             self.browser = self.playwright.chromium.launch(headless=CONFIG.headless)
             self.context = self.browser.new_context()
-            
-            # Загружаем cookies
+
             self._load_cookies()
-            
+
             self.page = self.context.new_page()
-            
+
             print("🔹 Открываем HH.ru...")
             self.page.goto(
                 CONFIG.hh_search_url,
                 timeout=CONFIG.page_load_timeout,
                 wait_until="domcontentloaded"
             )
-            
-            # Ждём первоначальную загрузку
+
             print(f"⏳ Ждём {CONFIG.initial_wait/1000} сек (загрузка + модалки)...")
             self.page.wait_for_timeout(CONFIG.initial_wait)
-            
-            # Закрываем cookie модалку
+
             self._close_cookie_modal()
             
             return True
@@ -45,7 +42,7 @@ class HHBrowser:
             return False
     
     def _load_cookies(self) -> None:
-        """Загружает cookies из файла"""
+        """Loads cookies from file."""
         try:
             with open(CONFIG.cookies_path, "r", encoding="utf-8") as f:
                 cookies = json.load(f)
@@ -55,31 +52,28 @@ class HHBrowser:
             print(f"⚠️ Ошибка загрузки cookies: {e}")
     
     def _close_cookie_modal(self) -> None:
-        """Закрывает модалку с согласием на cookies"""
+        """Closes the cookie consent modal."""
         try:
             cookie_btn = self.page.wait_for_selector(
-                SELECTORS['cookie_accept'], 
+                SELECTORS['cookie_accept'],
                 timeout=CONFIG.modal_wait
             )
             if cookie_btn:
                 cookie_btn.click()
                 print("   ✅ Кнопка 'Понятно' нажата")
-                
-                # Ждём исчезновения модалки
                 self.page.wait_for_selector(
-                    SELECTORS['cookie_accept'], 
-                    state='hidden', 
+                    SELECTORS['cookie_accept'],
+                    state='hidden',
                     timeout=CONFIG.modal_wait
                 )
                 print("   ✅ Cookie модалка закрыта")
         except:
             print("   ⚠️ Cookie модалка не найдена или уже закрыта")
-        
-        # Дополнительная пауза
+
         self.page.wait_for_timeout(3000)
     
     def get_vacancy_urls(self) -> List[tuple]:
-        """Получает список URL вакансий с заголовками"""
+        """Returns list of vacancy URLs with titles."""
         try:
             vacancy_elements = self.page.query_selector_all(SELECTORS['vacancy_title'])
             vacancies = []
@@ -106,13 +100,11 @@ class HHBrowser:
             return []
     
     def open_vacancy(self, url: str) -> bool:
-        """Открывает вакансию в новой вкладке"""
+        """Opens a vacancy in a new tab."""
         try:
             self.vacancy_page = self.context.new_page()
             self.vacancy_page.goto(url, timeout=CONFIG.page_load_timeout, wait_until="domcontentloaded")
             self.vacancy_page.bring_to_front()
-            
-            # Ждём загрузки заголовка вакансии
             self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
             print("   ✅ Вакансия загружена")
             
@@ -123,7 +115,7 @@ class HHBrowser:
             return False
     
     def get_vacancy_text(self) -> Optional[str]:
-        """Извлекает текст описания вакансии"""
+        """Extracts vacancy description text."""
         try:
             desc_element = self.vacancy_page.query_selector(SELECTORS['vacancy_description'])
             if desc_element:
@@ -139,9 +131,8 @@ class HHBrowser:
             return None
     
     def click_apply_button(self) -> bool:
-        """Кликает кнопку 'Откликнуться'"""
+        """Clicks the 'Apply' button."""
         try:
-            # Ищем кнопку по списку селекторов
             apply_button = None
             for selector in SELECTORS['apply_button']:
                 button = self.vacancy_page.query_selector(selector)
@@ -149,8 +140,8 @@ class HHBrowser:
                     apply_button = button
                     print(f"   ✅ Найдена кнопка 'Откликнуться': {selector}")
                     break
-            
-            # Fallback поиск по тексту
+
+            # Fallback: search by button text
             if not apply_button:
                 all_buttons = self.vacancy_page.query_selector_all('button, a')
                 for btn in all_buttons:
@@ -162,17 +153,16 @@ class HHBrowser:
                             break
                     except:
                         continue
-            
+
             if not apply_button:
                 print("   ❌ Кнопка 'Откликнуться' не найдена")
                 return False
-            
-            # Кликаем
+
             apply_button.click()
             print("   ✅ Кнопка 'Откликнуться' нажата")
-            
-            # Ждём появления формы
-            time.sleep(3 + 4)  # 3-7 секунд человеческая пауза
+
+            # Human-like pause for the form to appear
+            time.sleep(3 + 4)
             
             return True
             
@@ -181,29 +171,27 @@ class HHBrowser:
             return False
     
     def close_vacancy(self) -> None:
-        """Закрывает вкладку с вакансией"""
+        """Closes the vacancy tab."""
         if self.vacancy_page:
             self.vacancy_page.close()
             self.vacancy_page = None
-            
-            # Возвращаемся на основную страницу
             self.page.bring_to_front()
             time.sleep(3)
     
     def close(self) -> None:
-        """Закрывает браузер"""
+        """Closes the browser."""
         if self.browser:
             self.browser.close()
         if self.playwright:
             self.playwright.stop()
     
     def wait_for_timeout(self, ms: int) -> None:
-        """Ждёт указанное время"""
+        """Waits for the given duration in milliseconds."""
         if self.vacancy_page:
             self.vacancy_page.wait_for_timeout(ms)
         elif self.page:
             self.page.wait_for_timeout(ms)
     
     def get_current_page(self):
-        """Возвращает текущую активную страницу"""
+        """Returns the currently active page."""
         return self.vacancy_page if self.vacancy_page else self.page

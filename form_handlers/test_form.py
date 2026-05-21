@@ -4,20 +4,18 @@ from config import SELECTORS
 
 class TestFormHandler(BaseHandler):
     """
-    Обработчик формы с тестовым заданием работодателя.
+    Handler for employer test/question forms.
 
-    Сценарий:
-      Работодатель добавил тест/вопросы к отклику.
-      Стратегия: кликаем 'Откликнуться без ответа на вопросы'
-      (vacancy-response-link-no-questions), после чего открывается
-      стандартная форма с cover letter и кнопкой submit.
+    Strategy: click 'Apply without answering questions'
+    (vacancy-response-link-no-questions), which opens the standard
+    form with a cover letter field and submit button.
     """
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.TEST_FORM
 
     def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        # 1. Кликаем "Откликнуться без ответа на вопросы"
+        # 1. Click "Apply without answering questions"
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
             if not no_q_link or not no_q_link.is_visible():
@@ -39,7 +37,7 @@ class TestFormHandler(BaseHandler):
                 scenario="test_form_error"
             )
 
-        # 2. После клика может появиться тогл cover letter — раскрываем
+        # 2. A cover letter toggle may appear after the click — expand it
         try:
             toggle = page.query_selector(SELECTORS['letter_toggle'])
             if toggle and toggle.is_visible():
@@ -49,7 +47,7 @@ class TestFormHandler(BaseHandler):
         except Exception:
             pass
 
-        # 3. Заполняем cover letter
+        # 3. Fill cover letter
         textarea = self._find_element_by_selectors(page, [
             f'[data-qa="vacancy-response-popup-form-letter-input"] textarea',
             SELECTORS['popup_letter_input'],
@@ -69,7 +67,7 @@ class TestFormHandler(BaseHandler):
             except Exception as e:
                 print(f"   ⚠️ Ошибка заполнения: {e}")
 
-        # 4. Ждём enabled кнопку и кликаем
+        # 4. Wait for the submit button to become enabled, then click
         for selector in [SELECTORS['popup_submit'], SELECTORS['letter_submit']]:
             try:
                 page.wait_for_selector(f"{selector}:not([disabled])", timeout=5000)

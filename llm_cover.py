@@ -12,7 +12,7 @@ except Exception as _e:
     print(f"   ⚠️ LLMAgent не инициализирован: {_e} — используется шаблонный fallback")
 
 class LLMCover:
-    """Генератор сопроводительных писем с кэшированием"""
+    """Cover letter generator with caching."""
 
     def __init__(self):
         self.cache_file = Path(CONFIG.cache_file)
@@ -25,40 +25,36 @@ class LLMCover:
         
     def generate(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         """
-        Генерирует сопроводительное письмо
-        Возвращает: (cover_letter, template_name, signals)
+        Generates a cover letter.
+        Returns: (cover_letter, template_name, signals)
         """
-        # Ограничиваем размер входного текста
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
-        
-        # Проверяем кэш
+
         if text_hash in self.cache:
             print("   📋 Использую кэшированное сопроводительное")
             return self.cache[text_hash]
-        
+
         try:
-            # Пытаемся сгенерировать через LLM
             result = self._generate_with_llm(text_for_processing)
             print("   🤖 Сгенерировано через LLM")
         except Exception as e:
             print(f"   ⚠️ Ошибка LLM: {e}")
-            # Fallback на шаблоны
+            # Fallback to template generation
             result = self._generate_with_templates(text_for_processing)
             print("   📝 Использован шаблон (fallback)")
-        
-        # Сохраняем в кэш
+
         self.cache[text_hash] = result
         self._save_cache()
-        
+
         return result
     
     def _hash_text(self, text: str) -> str:
-        """Создаёт hash для текста вакансии"""
+        """Creates an MD5 hash for vacancy text (used as cache key)."""
         return hashlib.md5(text.encode('utf-8')).hexdigest()[:16]
     
     def _load_cache(self) -> dict:
-        """Загружает кэш из файла"""
+        """Loads cache from file."""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
@@ -70,11 +66,10 @@ class LLMCover:
         return {}
     
     def _save_cache(self) -> None:
-        """Сохраняет кэш в файл"""
+        """Saves cache to file."""
         try:
-            # Ограничиваем размер кэша
+            # Evict oldest entries when cache exceeds limit (simple FIFO)
             if len(self.cache) > CONFIG.cache_size:
-                # Удаляем старые записи (простая FIFO стратегия)
                 keys_to_remove = list(self.cache.keys())[:-CONFIG.cache_size]
                 for key in keys_to_remove:
                     del self.cache[key]
@@ -149,22 +144,21 @@ class LLMCover:
         return cover, "llm", signals
     
     def _generate_with_templates(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        """Генерирует сопроводительное через шаблоны"""
+        """Generates cover letter via templates."""
         signals = self._parse_vacancy_signals(vacancy_text)
         template_name = self._select_template(signals)
-        
+
         if template_name in self.templates:
             cover_letter = self.templates[template_name]['text']
         else:
-            # Fallback на default шаблон
-            cover_letter = self.templates.get('default', {}).get('text', 
+            cover_letter = self.templates.get('default', {}).get('text',
                 "Добрый день.\n\nЗаинтересован в данной позиции.\n\nБуду рад обсудить детали.")
             template_name = 'default'
-        
+
         return cover_letter, template_name, signals
-    
+
     def _parse_vacancy_signals(self, vacancy_text: str) -> List[str]:
-        """Извлекает сигналы из текста вакансии"""
+        """Extracts keyword signals from vacancy text."""
         text_lower = vacancy_text.lower()
         signals = []
         
@@ -191,7 +185,7 @@ class LLMCover:
         return signals
     
     def _select_template(self, signals: List[str]) -> str:
-        """Выбирает лучший шаблон по сигналам"""
+        """Selects the best-matching template by signals."""
         best_template = 'default'
         best_score = 0
         
