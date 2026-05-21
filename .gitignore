@@ -18,6 +18,9 @@ __pycache__/
 *.pyo
 .DS_Store
 
+# Test sandbox (mimics user data dir for subagent / local testing)
+sandbox/
+
 # Python environment
 venv/
 .venv/
