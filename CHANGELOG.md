@@ -5,6 +5,60 @@
 
 ---
 
+## 2026-05-21 — Phase 1: LLM stack + adapter pattern + wizard (сессии 2-4)
+
+### Что добавлено
+
+**LLM стек (core/llm_agent.py)**
+- `LLMAgent`: OpenRouter gateway, единый клиент для всех AI вызовов
+- `generate_cover()` / `score_vacancy()` / `fill_form()` / `answer_question()`
+- System prompt: resume_facts.md + job_preferences.md + tone_of_voice.md, кешируется на сессию
+- `prompts/`: cover_letter.md, match_scoring.md, form_fill.md
+- `form_handlers/questions.py`: batch LLM fill (все поля → один вызов → заполнить)
+- `hr_matcher.py`: удалён keyword index, LLM primary, hr_questions.md как опциональный банк
+
+**Adapter pattern (adapters/)**
+- `adapters/base.py`: SiteAdapter ABC (6 абстрактных методов)
+- `adapters/hh/`: HHAdapter + browser + detector + handlers (git mv, история сохранена)
+- `main.py`: тонкий оркестратор — HHAdapter + Logger, вся HH логика в адаптере
+- `adapters/hh/adapter.py`: verify() → start() → get_vacancies() → process_vacancy()
+
+**Multi-URL search**
+- `data/search_urls.txt`: один URL на строку (вместо одного HH_SEARCH_URL в .env)
+- `browser.py`: get_vacancy_urls() итерирует все URL, дедуплицирует
+- Поддержка нескольких ролей/направлений резюме в одной сессии
+
+**Onboarding wizard (onboarding/wizard.py)**
+- Block D → A → B → C (D первым — устанавливает LLM_API_KEY до парсинга резюме)
+- Block A: PDF/DOCX/MD/PNG → LLM → resume_facts.md + ручной ввод как fallback
+- Block B: цикл "добавить ещё URL?", пишет search_urls.txt, job_preferences.md
+- Block C: tone_of_voice.md (formality, length, language, sample)
+- Block D: .env patch (LLM_API_KEY, MODEL, HEADLESS, MAX_VACANCIES)
+- `--block a/b/c/d`: запуск одного блока
+
+**Resume parser (onboarding/resume_parser.py)**
+- Multimodal: PDF/images → Gemini base64 image_url (нет локального извлечения)
+- DOCX → python-docx text, MD/TXT → text mode
+- ResumeData dataclass, completeness score (tier1/2/3), HINT/EMPTY маркеры
+- json_repair fallback для битого LLM JSON
+
+**Прочее**
+- `main.py`: stop_keywords title filter из job_preferences.md
+- `sandbox/`: gitignored test environment (DATA_DIR=sandbox/data)
+- `venv/`: пересоздан (был артефактом /hh-auto/venv)
+- `.env.example`: убран HH_SEARCH_URL, добавлена ссылка на search_urls.txt
+- Dead code удалён из llm_cover.py: template system (~100 строк), self.resume_facts
+
+### Статус
+✅ Все импорты чистые  
+✅ Парсер резюме: 100% completeness на реальном PDF  
+✅ ABC enforcement работает (BadAdapter → TypeError)  
+⚠️ Интеграционный тест (browser + HH live) не запускался в этих сессиях  
+⚠️ stop_companies фильтр требует скрейпинга имени работодателя (не реализован)  
+⚠️ HH_Auto → data/ миграция не сделана (workspace_dir legacy ещё жив)
+
+---
+
 ## 2026-04-06 (цикл 5) — QuestionsHandler: добавлен submit после заполнения анкеты
 
 ### Проблема
