@@ -6,9 +6,9 @@ from config import CONFIG
 
 class LLMCover:
     """Генератор сопроводительных писем с кэшированием"""
-    
+
     def __init__(self):
-        self.cache_file = CONFIG.hh_auto_dir / CONFIG.cache_file
+        self.cache_file = Path(CONFIG.cache_file)
         self.cache = self._load_cache()
         self.templates = self._load_templates()
         self.resume_facts = self._load_resume_facts()
