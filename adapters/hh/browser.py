@@ -22,7 +22,7 @@ class HHBrowser:
             self.page = self.context.new_page()
             return True
         except Exception as e:
-            print(f"❌ Ошибка запуска браузера: {e}")
+            print(f"❌ Browser launch error: {e}")
             return False
     
     def _load_cookies(self) -> None:
@@ -31,9 +31,9 @@ class HHBrowser:
             with open(CONFIG.cookies_path, "r", encoding="utf-8") as f:
                 cookies = json.load(f)
             self.context.add_cookies(cookies)
-            print(f"✅ Загружены cookies из {CONFIG.cookies_path}")
+            print(f"✅ Cookies loaded from {CONFIG.cookies_path}")
         except Exception as e:
-            print(f"⚠️ Ошибка загрузки cookies: {e}")
+            print(f"⚠️ Cookies load error: {e}")
     
     def _close_cookie_modal(self) -> None:
         """Closes the cookie consent modal."""
@@ -44,15 +44,15 @@ class HHBrowser:
             )
             if cookie_btn:
                 cookie_btn.click()
-                print("   ✅ Кнопка 'Понятно' нажата")
+                print("   ✅ Cookie consent button clicked")
                 self.page.wait_for_selector(
                     SELECTORS['cookie_accept'],
                     state='hidden',
                     timeout=CONFIG.modal_wait
                 )
-                print("   ✅ Cookie модалка закрыта")
+                print("   ✅ Cookie modal closed")
         except:
-            print("   ⚠️ Cookie модалка не найдена или уже закрыта")
+            print("   ⚠️ Cookie modal not found or already closed")
 
         self.page.wait_for_timeout(3000)
     
@@ -71,13 +71,13 @@ class HHBrowser:
             try:
                 self.page.goto(search_url, timeout=CONFIG.page_load_timeout,
                                wait_until="domcontentloaded")
-                print(f"⏳ Ждём {CONFIG.initial_wait/1000} сек (загрузка + модалки)...")
+                print(f"⏳ Waiting {CONFIG.initial_wait/1000}s (page load + modals)...")
                 self.page.wait_for_timeout(CONFIG.initial_wait)
                 if i == 0:
                     self._close_cookie_modal()
                 all_vacancies.extend(self._scrape_vacancies())
             except Exception as e:
-                print(f"   ❌ Ошибка загрузки поиска #{i+1}: {e}")
+                print(f"   ❌ Error loading search #{i+1}: {e}")
                 continue
 
         # Deduplicate by URL, reassign sequential index
@@ -87,7 +87,7 @@ class HHBrowser:
                 seen.add(url)
                 result.append((url, title, len(result) + 1))
 
-        print(f"✅ Итого вакансий: {len(result)} (из {len(all_vacancies)} по {len(search_urls)} поискам)")
+        print(f"✅ Total vacancies: {len(result)} (from {len(all_vacancies)} across {len(search_urls)} searches)")
         return result
 
     def _load_search_urls(self) -> List[str]:
@@ -117,10 +117,10 @@ class HHBrowser:
                     title = el.inner_text().strip()
                     vacancies.append((url, title, i + 1))
                 except Exception as e:
-                    print(f"   ⚠️ Ошибка вакансии #{i+1}: {e}")
+                    print(f"   ⚠️ Vacancy #{i+1} error: {e}")
             return vacancies
         except Exception as e:
-            print(f"   ❌ Ошибка скрейпинга: {e}")
+            print(f"   ❌ Scraping error: {e}")
             return []
     
     def open_vacancy(self, url: str) -> bool:
@@ -130,12 +130,12 @@ class HHBrowser:
             self.vacancy_page.goto(url, timeout=CONFIG.page_load_timeout, wait_until="domcontentloaded")
             self.vacancy_page.bring_to_front()
             self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
-            print("   ✅ Вакансия загружена")
-            
+            print("   ✅ Vacancy loaded")
+
             return True
-            
+
         except Exception as e:
-            print(f"   ❌ Ошибка открытия вакансии: {e}")
+            print(f"   ❌ Error opening vacancy: {e}")
             return False
     
     def get_vacancy_text(self) -> Optional[str]:
@@ -144,14 +144,14 @@ class HHBrowser:
             desc_element = self.vacancy_page.query_selector(SELECTORS['vacancy_description'])
             if desc_element:
                 text = desc_element.inner_text()
-                print(f"   ✅ Извлечено {len(text)} символов описания")
+                print(f"   ✅ Extracted {len(text)} characters of description")
                 return text
             else:
-                print("   ⚠️ Описание вакансии не найдено")
+                print("   ⚠️ Vacancy description not found")
                 return None
-                
+
         except Exception as e:
-            print(f"   ❌ Ошибка извлечения текста: {e}")
+            print(f"   ❌ Text extraction error: {e}")
             return None
     
     def click_apply_button(self) -> bool:
@@ -162,7 +162,7 @@ class HHBrowser:
                 button = self.vacancy_page.query_selector(selector)
                 if button and button.is_visible():
                     apply_button = button
-                    print(f"   ✅ Найдена кнопка 'Откликнуться': {selector}")
+                    print(f"   ✅ Found 'Apply' button: {selector}")
                     break
 
             # Fallback: search by button text
@@ -173,17 +173,17 @@ class HHBrowser:
                         text = btn.inner_text().strip().lower()
                         if 'отклик' in text and btn.is_visible():
                             apply_button = btn
-                            print(f"   ✅ Найдена кнопка по тексту: '{btn.inner_text().strip()}'")
+                            print(f"   ✅ Found button by text: '{btn.inner_text().strip()}'")
                             break
                     except:
                         continue
 
             if not apply_button:
-                print("   ❌ Кнопка 'Откликнуться' не найдена")
+                print("   ❌ 'Apply' button not found")
                 return False
 
             apply_button.click()
-            print("   ✅ Кнопка 'Откликнуться' нажата")
+            print("   ✅ 'Apply' button clicked")
 
             # Human-like pause for the form to appear
             time.sleep(3 + 4)
@@ -191,7 +191,7 @@ class HHBrowser:
             return True
             
         except Exception as e:
-            print(f"   ❌ Ошибка клика кнопки 'Откликнуться': {e}")
+            print(f"   ❌ Error clicking 'Apply' button: {e}")
             return False
     
     def close_vacancy(self) -> None:

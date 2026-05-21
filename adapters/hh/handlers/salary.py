@@ -11,6 +11,6 @@ class SalaryHandler(BaseHandler):
         return ProcessResult(
             success=False,
             status="skipped_salary_form",
-            reason="Форма содержит поле зарплатных ожиданий",
+            reason="Form contains a salary expectations field",
             scenario="skip_salary"
         )

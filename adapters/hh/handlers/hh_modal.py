@@ -21,18 +21,18 @@ class HHModalHandler(BaseHandler):
         filled = False
 
         if textarea:
-            print("   🔹 Заполняю сопроводительное письмо...")
+            print("   🔹 Filling cover letter...")
             try:
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
                 textarea.type(cover_letter, delay=10)
                 filled = True
-                print("   ✅ Сопроводительное заполнено")
+                print("   ✅ Cover letter filled")
                 self._wait_and_random_delay(page, 2000, 3000)
             except Exception as e:
-                print(f"   ⚠️ Ошибка заполнения textarea: {e}")
+                print(f"   ⚠️ Textarea fill error: {e}")
         else:
-            print("   ⚠️ Поле сопроводительного не найдено")
+            print("   ⚠️ Cover letter field not found")
 
         # 2. Click the submit button (wait for it to become enabled after filling)
         nav_button = self._find_nav_button(page)
@@ -40,12 +40,12 @@ class HHModalHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_hh_modal",
-                reason="Не найдены навигационные кнопки в HH модалке",
+                reason="Navigation buttons not found in HH modal",
                 scenario="hh_modal_error"
             )
 
         button_text = nav_button.inner_text().strip()
-        print(f"   🔹 Кликаю: '{button_text}'")
+        print(f"   🔹 Clicking: '{button_text}'")
         nav_button.scroll_into_view_if_needed()
         nav_button.click()
         self._wait_and_random_delay(page, 2000, 4000)
@@ -60,14 +60,14 @@ class HHModalHandler(BaseHandler):
             return ProcessResult(
                 success=True,
                 status="applied",
-                reason=f"Сопроводительное отправлено, кнопка: '{button_text}'",
+                reason=f"Cover letter submitted, button: '{button_text}'",
                 scenario="hh_modal_with_cover",
                 details={'button_text': button_text}
             )
         return ProcessResult(
             success=True,
             status="hh_modal_navigation",
-            reason=f"Навигация в HH модалке: '{button_text}'",
+            reason=f"HH modal navigation: '{button_text}'",
             scenario="hh_modal_no_cover",
             details={'button_text': button_text}
         )
@@ -157,31 +157,31 @@ class HHModalHandler(BaseHandler):
                 return None
 
             error_text = error_el.inner_text().strip()
-            print(f"   ⚠️ Обнаружена ошибка формы: '{error_text}'")
+            print(f"   ⚠️ Form error detected: '{error_text}'")
 
             # "Please fill in cover letter" — textarea was not filled
             if 'введите' in error_text.lower() or 'заполните' in error_text.lower():
                 return ProcessResult(
                     success=False,
                     status="skipped_no_cover_filled",
-                    reason=f"Сопроводительное не заполнено: {error_text}",
+                    reason=f"Cover letter not filled: {error_text}",
                     scenario="hh_modal_cover_required"
                 )
 
             if 'просмотрен' not in error_text.lower() and 'уже' not in error_text.lower():
                 return None
 
-            print("   🔍 Edge case: отклик уже просмотрен — ищу кнопку 'Чат'...")
+            print("   🔍 Edge case: application already viewed — looking for 'Chat' button...")
 
             chat_link = page.query_selector(SELECTORS['chat_link'])
             if chat_link and chat_link.is_visible():
-                print("   🔹 Кликаю 'Чат'...")
+                print("   🔹 Clicking 'Chat'...")
                 chat_link.click()
                 self._wait_and_random_delay(page, 2000, 3000)
                 return ProcessResult(
                     success=True,
                     status="chat_redirect",
-                    reason=f"Edge case: {error_text} → переход в чат",
+                    reason=f"Edge case: {error_text} → redirected to chat",
                     scenario="edge_case_chat",
                     details={'error_text': error_text}
                 )
@@ -189,11 +189,11 @@ class HHModalHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_edge_case_no_chat",
-                reason=f"Edge case: {error_text}, кнопка чата не найдена",
+                reason=f"Edge case: {error_text}, chat button not found",
                 scenario="edge_case_no_chat",
                 details={'error_text': error_text}
             )
 
         except Exception as e:
-            print(f"   ⚠️ Ошибка проверки edge case: {e}")
+            print(f"   ⚠️ Edge case check error: {e}")
             return None

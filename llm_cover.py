@@ -9,7 +9,7 @@ try:
     _agent = LLMAgent()
 except Exception as _e:
     _agent = None
-    print(f"   ⚠️ LLMAgent не инициализирован: {_e} — используется шаблонный fallback")
+    print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
 
 class LLMCover:
     """Cover letter generator with caching."""
@@ -30,16 +30,16 @@ class LLMCover:
         text_hash = self._hash_text(text_for_processing)
 
         if text_hash in self.cache:
-            print("   📋 Использую кэшированное сопроводительное")
+            print("   📋 Using cached cover letter")
             return self.cache[text_hash]
 
         try:
             result = self._generate_with_llm(text_for_processing)
-            print("   🤖 Сгенерировано через LLM")
+            print("   🤖 Generated via LLM")
         except Exception as e:
-            print(f"   ⚠️ Ошибка LLM: {e}")
+            print(f"   ⚠️ LLM error: {e}")
             result = self._fallback_cover()
-            print("   📝 LLM недоступен — статичный fallback")
+            print("   📝 LLM unavailable — using static fallback")
 
         self.cache[text_hash] = result
         self._save_cache()
@@ -56,10 +56,10 @@ class LLMCover:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
-                print(f"   📋 Загружен кэш: {len(cache)} записей")
+                print(f"   📋 Cache loaded: {len(cache)} entries")
                 return cache
         except Exception as e:
-            print(f"   ⚠️ Ошибка загрузки кэша: {e}")
+            print(f"   ⚠️ Cache load error: {e}")
         return {}
     
     def _save_cache(self) -> None:
@@ -74,7 +74,7 @@ class LLMCover:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"   ⚠️ Ошибка сохранения кэша: {e}")
+            print(f"   ⚠️ Cache save error: {e}")
     
     def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         if _agent is None:
@@ -90,7 +90,7 @@ class LLMCover:
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:
         """Static fallback when LLM is unavailable — returns a minimal cover letter."""
         return (
-            "Добрый день.\n\nЗаинтересован в данной позиции. Буду рад обсудить детали.",
+            "Hello.\n\nI am interested in this position and would be happy to discuss the details.",
             "static_fallback",
             []
         )

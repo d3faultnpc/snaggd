@@ -51,6 +51,8 @@ def main():
     parser = argparse.ArgumentParser(description="HH Auto")
     parser.add_argument("--debug", action="store_true",
                         help="Debug mode: screenshots + HTML dumps at each step")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Score and evaluate vacancies, do NOT submit applications")
     parser.add_argument("--max", type=int, default=None,
                         help="Max vacancies per session (overrides config)")
     args = parser.parse_args()
@@ -58,6 +60,7 @@ def main():
     if args.max:
         CONFIG.max_vacancies_per_session = args.max
 
+    dry_run = args.dry_run
     debug = args.debug
     session_dir_base = None
 
@@ -67,8 +70,11 @@ def main():
         session_dir_base.mkdir(parents=True, exist_ok=True)
         print(f"🐛 DEBUG mode — snapshots in: {session_dir_base}")
 
+    if dry_run:
+        print("🔍 DRY-RUN mode — scoring only, no applications will be submitted")
+
     print("🦾 HH Auto")
-    print(f"📊 Limits: {CONFIG.max_vacancies_per_session} vacancies, {CONFIG.max_skips} skips")
+    print(f"📊 Limits: max={CONFIG.max_vacancies_per_session} vacancies, min_score={CONFIG.min_score}")
 
     logger = Logger()
     adapter = HHAdapter()
@@ -139,7 +145,7 @@ def main():
 
             result = adapter.process_vacancy(
                 url, title, index, llm_cover, hr_matcher,
-                debug=debug, session_dir=vac_debug_dir
+                debug=debug, session_dir=vac_debug_dir, dry_run=dry_run
             )
 
             logger.log_result(
@@ -167,23 +173,37 @@ def main():
     finally:
         adapter.close()
 
-        successful, skipped = logger.count_session_results(applied_log, initial_log_count)
         new_entries = applied_log[initial_log_count:]
+        successful, skipped = logger.count_session_results(applied_log, initial_log_count)
 
-        print(f"\n{'='*50}")
-        print("SESSION SUMMARY")
-        print(f"Processed: {processed_count}/{CONFIG.max_vacancies_per_session}")
-        print(f"Successful applications: {successful}")
-        print(f"Skipped: {skipped}")
-        print(f"New log entries: {len(new_entries)}")
+        # Score stats
+        scores = [e.get("match_score") for e in new_entries if isinstance(e.get("match_score"), (int, float))]
+        avg_score = round(sum(scores) / len(scores)) if scores else None
+
+        # Skip breakdown
+        skip_reasons: dict = {}
+        for e in new_entries:
+            st = e.get("status", "")
+            if "skipped" in st:
+                skip_reasons[st] = skip_reasons.get(st, 0) + 1
+
+        print(f"\n{'─'*52}")
+        if dry_run:
+            print("DRY-RUN COMPLETE")
+        else:
+            print("SESSION COMPLETE")
+        print(f"  Applied:     {successful}")
+        print(f"  Skipped:     {skipped}" + (f"  {skip_reasons}" if skip_reasons else ""))
+        print(f"  Avg score:   {avg_score if avg_score is not None else 'n/a'}")
+        print(f"  Log entries: {len(new_entries)}")
+        if not dry_run:
+            print(f"  Log file:    {CONFIG.applied_log_path}")
+        print(f"{'─'*52}")
 
         logger.log_session_summary(processed_count, successful, skipped, new_entries)
 
-        print(f"📄 applied_log: {CONFIG.applied_log_path}")
-        print(f"📄 daily log: {logger.daily_log_path}")
-
         if debug and session_dir_base:
-            print(f"\n🐛 Debug snapshots: {session_dir_base}")
+            print(f"🐛 Debug snapshots: {session_dir_base}")
 
     return 0
 

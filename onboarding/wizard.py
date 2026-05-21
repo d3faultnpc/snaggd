@@ -35,7 +35,7 @@ def ask(prompt: str, default: str = "") -> str:
 
 
 def ask_list(prompt: str) -> list:
-    print(f"{prompt} (одна строка = один пункт, пустая строка — завершить):")
+    print(f"{prompt} (one item per line, empty line to finish):")
     items = []
     while True:
         line = input("  > ").strip()
@@ -136,7 +136,7 @@ def block_b() -> bool:
     while True:
         print(f"\n── Search #{len(searches) + 1} ──")
         role   = ask("Target role (e.g. Product Manager)")
-        city   = ask("City (e.g. Москва, remote)", "Москва")
+        city   = ask("City (e.g. Moscow, remote)", "Moscow")
         salary = ask("Minimum salary, RUB (press Enter to skip)")
         remote = ask("Work format: office / remote / hybrid", "hybrid")
 
@@ -220,6 +220,7 @@ def block_d() -> bool:
     model   = ask("LLM model", "google/gemini-2.5-flash-lite")
     headless = ask("Run browser headless? yes / no", "no")
     max_v   = ask("Max vacancies per session", "10")
+    min_score = ask("Minimum match score to apply (0–100, skip below this)", "60")
 
     patches = {
         "LLM_PROVIDER": "openrouter",
@@ -227,6 +228,7 @@ def block_d() -> bool:
         "LLM_MODEL":    model,
         "HEADLESS":     "true" if headless.lower().startswith("y") else "false",
         "MAX_VACANCIES": max_v,
+        "MIN_SCORE":    min_score,
     }
     for k, v in patches.items():
         if v:

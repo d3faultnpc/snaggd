@@ -16,7 +16,7 @@ class CoverOnlyHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_no_textarea",
-                reason="Не найдено поле для сопроводительного письма",
+                reason="Cover letter field not found",
                 scenario="cover_error"
             )
 
@@ -25,14 +25,14 @@ class CoverOnlyHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_salary_form",
-                reason="Обнаружено поле зарплатных ожиданий вместо сопроводительного",
+                reason="Salary expectations field detected instead of cover letter",
                 scenario="salary_detection"
             )
 
         try:
-            print("   🔹 Заполняю сопроводительное письмо...")
+            print("   🔹 Filling cover letter...")
             textarea.fill(cover_letter)
-            print("   ✅ Сопроводительное письмо заполнено")
+            print("   ✅ Cover letter filled")
 
             self._wait_and_random_delay(page, 2000, 3000)
 
@@ -42,29 +42,29 @@ class CoverOnlyHandler(BaseHandler):
                 return ProcessResult(
                     success=False,
                     status="skipped_no_send_button",
-                    reason="Не найдена кнопка отправки",
+                    reason="Submit button not found",
                     scenario="cover_error"
                 )
 
-            print("   🔹 Отправляю отклик...")
+            print("   🔹 Submitting application...")
             send_button.click()
 
             self._wait_and_random_delay(page, 3000, 5000)
-            print("   ✅ Отклик отправлен!")
-            
+            print("   ✅ Application submitted!")
+
             return ProcessResult(
                 success=True,
                 status="applied",
-                reason="Сопроводительное письмо отправлено",
+                reason="Cover letter submitted",
                 scenario="cover_only",
                 details={'cover_length': len(cover_letter)}
             )
-            
+
         except Exception as e:
             return ProcessResult(
                 success=False,
                 status="skipped_error",
-                reason=f"Ошибка при заполнении формы: {str(e)}",
+                reason=f"Form fill error: {str(e)}",
                 scenario="cover_error"
             )
     

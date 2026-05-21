@@ -1,1 +1,1 @@
-# Утилиты для HH Auto
+# Utilities for HH Auto
