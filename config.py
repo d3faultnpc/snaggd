@@ -42,8 +42,9 @@ class Config:
     initial_wait: int = 25000
     modal_wait: int = 5000
 
-    # HH search URL — set via .env or --search-url flag
-    hh_search_url: str = os.getenv("HH_SEARCH_URL", "")
+    # HH search URLs — one per line in data/search_urls.txt
+    # Supports multiple searches (different roles / resume directions)
+    search_urls_path: Path = field(default_factory=lambda: DATA_DIR / "search_urls.txt")
 
     # LLM settings
     llm_max_input_chars: int = 3000

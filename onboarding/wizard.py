@@ -119,36 +119,55 @@ def block_a(resume_path: Path | None = None) -> bool:
 
 def block_b() -> bool:
     section("Block B — Job preferences")
-    print("This shapes the search URL and helps the agent score vacancies.\n")
+    print("This shapes the search URLs and helps the agent score vacancies.")
+    print("You can add multiple searches — different roles or resume directions.\n")
 
-    role    = ask("Target role (e.g. Product Manager)")
-    city    = ask("City (e.g. Москва, remote)", "Москва")
-    salary  = ask("Minimum salary, RUB (press Enter to skip)")
-    remote  = ask("Work format: office / remote / hybrid", "hybrid")
+    from onboarding.url_builder import build_hh_url
+
     stop_co = ask_list("Stop-companies (companies you don't want to apply to)")
     stop_kw = ask_list("Stop-keywords in vacancy titles (e.g. junior, intern)")
 
+    # Collect one or more search URLs
+    searches = []  # list of dicts with role/city/salary/remote/url
+    while True:
+        print(f"\n── Search #{len(searches) + 1} ──")
+        role   = ask("Target role (e.g. Product Manager)")
+        city   = ask("City (e.g. Москва, remote)", "Москва")
+        salary = ask("Minimum salary, RUB (press Enter to skip)")
+        remote = ask("Work format: office / remote / hybrid", "hybrid")
+
+        url = build_hh_url(role=role, city=city, salary=salary, remote=remote)
+        searches.append({"role": role, "city": city, "salary": salary,
+                         "remote": remote, "url": url})
+        print(f"✓  URL: {url}")
+
+        another = ask("\nAdd another search URL? yes / no", "no")
+        if not another.lower().startswith("y"):
+            break
+
+    # Save search URLs (one per line)
+    urls_out = CONFIG.search_urls_path
+    urls_out.write_text("\n".join(s["url"] for s in searches) + "\n", encoding="utf-8")
+    print(f"\n✓  {len(searches)} search URL(s) saved → {urls_out}")
+
+    # Save preferences (used by LLM for vacancy scoring)
+    roles = ", ".join(s["role"] for s in searches)
+    salary_min = next((s["salary"] for s in searches if s["salary"]), "not set")
+    work_format = searches[0]["remote"]
     lines = [
         "# job_preferences.md",
-        f"role: {role}",
-        f"city: {city}",
-        f"salary_min: {salary or 'not set'}",
-        f"work_format: {remote}",
+        f"roles: {roles}",
+        f"salary_min: {salary_min}",
+        f"work_format: {work_format}",
     ]
     if stop_co:
         lines += ["stop_companies:"] + [f"  - {c}" for c in stop_co]
     if stop_kw:
         lines += ["stop_keywords:"] + [f"  - {k}" for k in stop_kw]
 
-    out = CONFIG.data_dir / "job_preferences.md"
-    out.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n✓  Saved → {out}")
-
-    # Build HH search URL
-    from onboarding.url_builder import build_hh_url
-    url = build_hh_url(role=role, city=city, salary=salary, remote=remote)
-    _patch_env("HH_SEARCH_URL", url)
-    print(f"✓  HH_SEARCH_URL updated in .env")
+    prefs_out = CONFIG.data_dir / "job_preferences.md"
+    prefs_out.write_text("\n".join(lines), encoding="utf-8")
+    print(f"✓  Preferences saved → {prefs_out}")
     return True
 
 

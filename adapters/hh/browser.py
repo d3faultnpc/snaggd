@@ -13,30 +13,14 @@ class HHBrowser:
         self.vacancy_page: Optional[Page] = None
         
     def start(self) -> bool:
-        """Launches browser and loads HH."""
+        """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
         try:
             self.playwright = sync_playwright().start()
             self.browser = self.playwright.chromium.launch(headless=CONFIG.headless)
             self.context = self.browser.new_context()
-
             self._load_cookies()
-
             self.page = self.context.new_page()
-
-            print("🔹 Открываем HH.ru...")
-            self.page.goto(
-                CONFIG.hh_search_url,
-                timeout=CONFIG.page_load_timeout,
-                wait_until="domcontentloaded"
-            )
-
-            print(f"⏳ Ждём {CONFIG.initial_wait/1000} сек (загрузка + модалки)...")
-            self.page.wait_for_timeout(CONFIG.initial_wait)
-
-            self._close_cookie_modal()
-            
             return True
-            
         except Exception as e:
             print(f"❌ Ошибка запуска браузера: {e}")
             return False
@@ -73,30 +57,70 @@ class HHBrowser:
         self.page.wait_for_timeout(3000)
     
     def get_vacancy_urls(self) -> List[tuple]:
-        """Returns list of vacancy URLs with titles."""
+        """Visits all search URLs, returns deduplicated list of (url, title, index)."""
+        search_urls = self._load_search_urls()
+        if not search_urls:
+            print("❌ No search URLs configured (run onboarding/wizard.py --block b)")
+            return []
+
+        seen: set = set()
+        all_vacancies: list = []
+
+        for i, search_url in enumerate(search_urls):
+            print(f"🔹 Search {i+1}/{len(search_urls)}: {search_url[:80]}...")
+            try:
+                self.page.goto(search_url, timeout=CONFIG.page_load_timeout,
+                               wait_until="domcontentloaded")
+                print(f"⏳ Ждём {CONFIG.initial_wait/1000} сек (загрузка + модалки)...")
+                self.page.wait_for_timeout(CONFIG.initial_wait)
+                if i == 0:
+                    self._close_cookie_modal()
+                all_vacancies.extend(self._scrape_vacancies())
+            except Exception as e:
+                print(f"   ❌ Ошибка загрузки поиска #{i+1}: {e}")
+                continue
+
+        # Deduplicate by URL, reassign sequential index
+        result = []
+        for url, title, _ in all_vacancies:
+            if url not in seen:
+                seen.add(url)
+                result.append((url, title, len(result) + 1))
+
+        print(f"✅ Итого вакансий: {len(result)} (из {len(all_vacancies)} по {len(search_urls)} поискам)")
+        return result
+
+    def _load_search_urls(self) -> List[str]:
+        """Reads search URLs from data/search_urls.txt, one per line."""
+        path = CONFIG.search_urls_path
+        if path.exists():
+            return [u.strip() for u in path.read_text(encoding="utf-8").splitlines()
+                    if u.strip() and not u.startswith('#')]
+        # Backward-compat: old HH_SEARCH_URL env var
+        import os
+        fallback = os.getenv("HH_SEARCH_URL", "")
+        if fallback:
+            print("   ⚠️ search_urls.txt not found — using HH_SEARCH_URL from .env (legacy)")
+            return [fallback]
+        return []
+
+    def _scrape_vacancies(self) -> List[tuple]:
+        """Scrapes vacancy links from the current search results page."""
         try:
-            vacancy_elements = self.page.query_selector_all(SELECTORS['vacancy_title'])
+            elements = self.page.query_selector_all(SELECTORS['vacancy_title'])
             vacancies = []
-            
-            for i, element in enumerate(vacancy_elements):
+            for i, el in enumerate(elements):
                 try:
-                    url = element.get_attribute('href')
-                    title = element.inner_text().strip()
-                    
+                    url = el.get_attribute('href') or ""
                     if not url.startswith('http'):
                         url = 'https://hh.ru' + url
-                    
-                    vacancies.append((url, title, i+1))
-                    
+                    title = el.inner_text().strip()
+                    vacancies.append((url, title, i + 1))
                 except Exception as e:
-                    print(f"   ⚠️ Ошибка получения вакансии #{i+1}: {e}")
-                    continue
-            
-            print(f"✅ Найдено {len(vacancies)} вакансий")
+                    print(f"   ⚠️ Ошибка вакансии #{i+1}: {e}")
             return vacancies
-            
         except Exception as e:
-            print(f"❌ Ошибка получения списка вакансий: {e}")
+            print(f"   ❌ Ошибка скрейпинга: {e}")
             return []
     
     def open_vacancy(self, url: str) -> bool:

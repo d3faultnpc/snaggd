@@ -28,14 +28,19 @@ class HHAdapter(SiteAdapter):
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
     def verify(self) -> bool:
-        """Check cookies file exists and search URL is configured."""
+        """Check cookies exist and at least one search URL is configured."""
+        import os
         cookies_ok = Path(CONFIG.cookies_path).exists()
-        url_ok = bool(CONFIG.hh_search_url)
+        urls_ok = (CONFIG.search_urls_path.exists() and
+                   bool(CONFIG.search_urls_path.read_text(encoding="utf-8").strip()))
+        # Backward-compat: old HH_SEARCH_URL env var counts as configured
+        if not urls_ok:
+            urls_ok = bool(os.getenv("HH_SEARCH_URL", ""))
         if not cookies_ok:
             print(f"   ❌ Cookies not found: {CONFIG.cookies_path}")
-        if not url_ok:
-            print("   ❌ HH_SEARCH_URL not set")
-        return cookies_ok and url_ok
+        if not urls_ok:
+            print(f"   ❌ No search URLs configured — run: python onboarding/wizard.py --block b")
+        return cookies_ok and urls_ok
 
     def start(self) -> bool:
         return self.browser.start()

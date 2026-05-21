@@ -30,14 +30,10 @@ def main():
                         help="Debug mode: screenshots + HTML dumps at each step")
     parser.add_argument("--max", type=int, default=None,
                         help="Max vacancies per session (overrides config)")
-    parser.add_argument("--search-url", type=str, default=None,
-                        help="Vacancy search URL (overrides config)")
     args = parser.parse_args()
 
     if args.max:
         CONFIG.max_vacancies_per_session = args.max
-    if args.search_url:
-        CONFIG.hh_search_url = args.search_url
 
     debug = args.debug
     session_dir_base = None
