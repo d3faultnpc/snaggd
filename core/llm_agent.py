@@ -61,6 +61,30 @@ class LLMAgent:
         raw = (resp.choices[0].message.content or "{}").strip()
         return self._parse_json(raw, fallback={"score": 50, "matched_skills": [], "gaps": [], "signals": []})
 
+    def fill_form(self, vacancy_text: str, fields: list[dict]) -> dict[str, str]:
+        """
+        Fill all form fields in one call.
+        fields: [{"idx": 0, "label": "...", "type": "text"}, ...]
+        Returns: {"0": "answer", "1": "answer", ...}
+        """
+        prompt_template = self._load_prompt("form_fill.md")
+        import json as _json
+        prompt = (
+            prompt_template
+            .replace("{{FIELDS}}", _json.dumps(fields, ensure_ascii=False))
+            .replace("{{VACANCY}}", vacancy_text[:2000])
+        )
+        resp = self.client.chat.completions.create(
+            model=self.model,
+            max_tokens=800,
+            messages=[
+                {"role": "system", "content": self._system()},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "{}").strip()
+        return self._parse_json(raw, fallback={})
+
     def answer_question(self, question: str) -> str:
         resp = self.client.chat.completions.create(
             model=self.model,

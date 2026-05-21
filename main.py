@@ -135,7 +135,8 @@ def process_vacancy(browser, detector, handlers, llm_cover, hr_matcher,
 
         # Обрабатываем форму
         handler = handlers.get_handler(form_info.form_type)
-        result = handler.process(current_page, cover_letter, hr_matcher)
+        result = handler.process(current_page, cover_letter, hr_matcher,
+                                vacancy_text=vacancy_text)
 
         if debug and session_dir:
             debug_snapshot(current_page, session_dir, f"03_after_handler_{result.status}")
