@@ -57,8 +57,8 @@ class BaseHandler(ABC):
         pass
 
     @abstractmethod
-    def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        """Process the form."""
+    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+        """Process the form. kwargs may include vacancy_text (used by QuestionsHandler)."""
         pass
 
     def _wait_and_random_delay(self, page, min_ms: int = 2000, max_ms: int = 5000) -> None:
