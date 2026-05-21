@@ -149,6 +149,8 @@ def process_vacancy(browser, detector, handlers, llm_cover, hr_matcher,
                 'form_type': form_info.form_type.value,
                 'template_name': template_name,
                 'match_score': match_score,
+                'matched_skills': llm_cover.last_matched_skills,
+                'gaps': llm_cover.last_gaps,
                 'signals': signals,
                 **(result.details or {})
             }
