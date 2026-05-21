@@ -276,9 +276,10 @@ def main():
     if args.block:
         blocks[args.block]()
     else:
-        for name, fn in blocks.items():
+        # D first — sets LLM_API_KEY needed by Block A to parse resume
+        for name in ["d", "a", "b", "c"]:
             try:
-                fn()
+                blocks[name]()
             except KeyboardInterrupt:
                 print(f"\n⏹  Block {name.upper()} skipped")
                 continue

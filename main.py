@@ -24,6 +24,29 @@ from hr_matcher import HRMatcher
 DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent / "debug_screenshots"))
 
 
+def _load_stop_filters() -> tuple[list, list]:
+    """Parse stop_keywords and stop_companies from data/job_preferences.md."""
+    prefs = CONFIG.data_dir / "job_preferences.md"
+    stop_kw, stop_co = [], []
+    if not prefs.exists():
+        return stop_kw, stop_co
+    current = None
+    for line in prefs.read_text(encoding="utf-8").splitlines():
+        if line.startswith("stop_keywords:"):
+            current = "kw"
+        elif line.startswith("stop_companies:"):
+            current = "co"
+        elif line.startswith("  - "):
+            val = line[4:].strip().lower()
+            if current == "kw":
+                stop_kw.append(val)
+            elif current == "co":
+                stop_co.append(val)
+        elif line.strip() and not line.startswith(" ") and not line.startswith("#"):
+            current = None
+    return stop_kw, stop_co
+
+
 def main():
     parser = argparse.ArgumentParser(description="HH Auto")
     parser.add_argument("--debug", action="store_true",
@@ -56,6 +79,12 @@ def main():
     initial_log_count = len(applied_log)
     print(f"📄 Loaded applied_log: {initial_log_count} entries")
 
+    stop_keywords, stop_companies = _load_stop_filters()
+    if stop_keywords:
+        print(f"🚫 Stop keywords: {', '.join(stop_keywords)}")
+    if stop_companies:
+        print(f"🚫 Stop companies: {', '.join(stop_companies)}")
+
     processed_count = 0
     skip_count = 0
 
@@ -87,6 +116,13 @@ def main():
             existing_status = logger.is_processed(url, applied_log)
             if existing_status:
                 print(f"⏭ Vacancy #{index} already processed ({existing_status})")
+                skip_count += 1
+                continue
+
+            title_lower = title.lower()
+            if any(kw in title_lower for kw in stop_keywords):
+                matched = next(kw for kw in stop_keywords if kw in title_lower)
+                print(f"🚫 Vacancy #{index} skipped — stop keyword '{matched}': {title}")
                 skip_count += 1
                 continue
 
