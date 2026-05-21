@@ -94,11 +94,16 @@ def block_a(resume_path: Path | None = None) -> bool:
 
     if data is None:
         print("\nManual entry — answer what you know, press Enter to skip.")
-        from onboarding.resume_parser import ResumeData as RD
+        def _parse_years(val: str):
+            try:
+                return int(val) or None
+            except ValueError:
+                return None
+
         data = ResumeParser(None).from_wizard({
             "name":             ask("Full name"),
             "role":             ask("Target job title"),
-            "experience_years": int(ask("Years of experience", "0") or 0) or None,
+            "experience_years": _parse_years(ask("Years of experience", "0")),
             "current_company":  ask("Current company"),
             "domain":           ask("Industry / domain (e.g. fintech, e-commerce)"),
             "skills":           ask_list("Professional skills"),
@@ -109,8 +114,7 @@ def block_a(resume_path: Path | None = None) -> bool:
         })
 
     out = CONFIG.data_dir / "resume_facts.md"
-    parser_instance = ResumeParser(_llm_client())
-    out.write_text(parser_instance.to_md(data), encoding="utf-8")
+    out.write_text(ResumeParser(None).to_md(data), encoding="utf-8")
     print(f"\n✓  Saved → {out}")
     return True
 
