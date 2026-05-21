@@ -1,3 +1,6 @@
+# TODO: DEAD CODE — remove when LLM_API_KEY is always guaranteed.
+# QuestionsHandler no longer uses this; only called as fallback if _agent is None.
+# hr_questions.md is also dead UX — users don't know what questions to prewrite.
 from typing import Dict
 from config import CONFIG
 

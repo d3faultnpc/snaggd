@@ -83,7 +83,9 @@ class LLMCover:
             print(f"   ⚠️ Ошибка сохранения кэша: {e}")
     
     def _load_templates(self) -> dict:
-        """Загружает шаблоны сопроводительных из MD файла"""
+        # TODO: DEAD CODE — only reached when _agent is None (no LLM_API_KEY).
+        # cover_templates.md + keyword-based template selection is dead UX.
+        # Remove together with _generate_with_templates, _parse_vacancy_signals, _select_template.
         templates_path = CONFIG.workspace_dir / "cover_templates.md"
         try:
             with open(templates_path, "r", encoding="utf-8") as f:
@@ -123,7 +125,8 @@ class LLMCover:
             return {'default': {'tags': [], 'text': 'Добрый день.\n\nЯ продуктовый менеджер с опытом более 5 лет.\n\nБуду рад обсудить возможности.'}}
     
     def _load_resume_facts(self) -> str:
-        """Загружает факты из резюме"""
+        # TODO: DEAD CODE — LLMAgent loads profile itself via _build_system_prompt().
+        # self.resume_facts is never read after __init__.
         resume_path = CONFIG.workspace_dir / "resume_facts.md"
         try:
             with open(resume_path, "r", encoding="utf-8") as f:
