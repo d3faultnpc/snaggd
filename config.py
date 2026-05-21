@@ -25,6 +25,7 @@ class Config:
 
     # Processing limits
     max_vacancies_per_session: int = int(os.getenv("MAX_VACANCIES", "3"))
+    min_score: int = int(os.getenv("MIN_SCORE", "60"))
     max_skips: int = 10
     max_questions_per_form: int = 5
 

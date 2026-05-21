@@ -147,7 +147,7 @@ class FormDetector:
             return FormType.SALARY_FORM
 
         # 3. Chat — only via verified data-qa, NOT button text
-        #    (floating "Чаты" widget causes false positives when matching text)
+        #    (floating "Chats" widget causes false positives when matching text)
         if info.has_chat_link:
             return FormType.CHAT_INTERFACE
 

@@ -20,7 +20,7 @@ class QuestionsHandler(BaseHandler):
         if not inputs:
             return ProcessResult(
                 success=False, status="skipped_no_inputs",
-                reason="Не найдены поля для заполнения", scenario="questions_error"
+                reason="No input fields found", scenario="questions_error"
             )
 
         # ── Step 1: collect visible fields ───────────────────────────────────
@@ -39,7 +39,7 @@ class QuestionsHandler(BaseHandler):
         if not fields:
             return ProcessResult(
                 success=False, status="skipped_no_inputs",
-                reason="Все поля невидимы или без лейблов", scenario="questions_error"
+                reason="All fields are hidden or have no labels", scenario="questions_error"
             )
 
         # ── Step 2: one LLM call for all fields ──────────────────────────────
@@ -48,7 +48,7 @@ class QuestionsHandler(BaseHandler):
             try:
                 answers = _agent.fill_form(vacancy_text, fields)
             except Exception as e:
-                print(f"   ⚠️ LLM fill_form ошибка: {e}")
+                print(f"   ⚠️ LLM fill_form error: {e}")
         elif hr_matcher is not None:
             # fallback: legacy per-question matching if LLM unavailable
             for f in fields:
@@ -56,11 +56,11 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 3: fill each field ───────────────────────────────────────────
         filled_count = 0
-        print(f"   🔹 Заполняю анкету ({len(elements)} полей)...")
+        print(f"   🔹 Filling questionnaire ({len(elements)} fields)...")
         for idx, inp, label in elements:
             answer = answers.get(str(idx), "")
             if not answer:
-                print(f"   ⏭ Поле {idx+1}: нет ответа — {label[:50]}")
+                print(f"   ⏭ Field {idx+1}: no answer — {label[:50]}")
                 continue
             try:
                 if inp.get_attribute("type") == "radio":
@@ -68,12 +68,12 @@ class QuestionsHandler(BaseHandler):
                 else:
                     inp.type(answer[:500], delay=10)
                 filled_count += 1
-                print(f"   ✅ Поле {idx+1}: {label[:50]}")
+                print(f"   ✅ Field {idx+1}: {label[:50]}")
                 page.wait_for_timeout(800)
             except Exception as e:
-                print(f"   ⚠️ Ошибка поля {idx+1}: {e}")
+                print(f"   ⚠️ Field {idx+1} error: {e}")
 
-        print(f"   ✅ Заполнено {filled_count}/{len(elements)} полей")
+        print(f"   ✅ Filled {filled_count}/{len(elements)} fields")
         self._wait_and_random_delay(page, 2000, 4000)
         return self._submit(page, filled_count, len(elements))
 
@@ -103,7 +103,7 @@ class QuestionsHandler(BaseHandler):
                     self._wait_and_random_delay(page, 2000, 3000)
                     return ProcessResult(
                         success=True, status="applied",
-                        reason=f"Анкета отправлена ({filled_count} полей), кнопка: '{label}'",
+                        reason=f"Questionnaire submitted ({filled_count} fields), button: '{label}'",
                         scenario="questions_submitted",
                         details={"filled_count": filled_count, "total_fields": total},
                     )
@@ -119,7 +119,7 @@ class QuestionsHandler(BaseHandler):
                     self._wait_and_random_delay(page, 2000, 3000)
                     return ProcessResult(
                         success=True, status="applied",
-                        reason=f"Анкета отправлена fallback ({filled_count} полей)",
+                        reason=f"Questionnaire submitted via fallback ({filled_count} fields)",
                         scenario="questions_submitted_fallback",
                         details={"filled_count": filled_count},
                     )
@@ -128,7 +128,7 @@ class QuestionsHandler(BaseHandler):
 
         return ProcessResult(
             success=False, status="skipped_no_submit",
-            reason=f"Заполнено {filled_count} полей, кнопка не найдена",
+            reason=f"Filled {filled_count} fields, submit button not found",
             scenario="questions_no_submit",
             details={"filled_count": filled_count, "total_fields": total},
         )

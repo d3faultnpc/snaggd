@@ -29,18 +29,18 @@ class ChatHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_no_chat_button",
-                reason="Кнопка чата не найдена (vacancy-response-link-view-topic)",
+                reason="Chat button not found (vacancy-response-link-view-topic)",
                 scenario="chat_error"
             )
 
-        print("   🔹 Кликаю 'Перейти в чат'...")
+        print("   🔹 Clicking 'Go to chat'...")
         chat_link.click()
         self._wait_and_random_delay(page, 3000, 5000)
 
         # 2. Look for "+Add cover letter" link in chatik
         add_cover = page.query_selector(SELECTORS['chatik_add_cover'])
         if add_cover and add_cover.is_visible():
-            print("   🔹 Кликаю '+Добавить сопроводительное'...")
+            print("   🔹 Clicking '+Add cover letter'...")
             add_cover.click()
             self._wait_and_random_delay(page, 2000, 3000)
 
@@ -60,24 +60,24 @@ class ChatHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_no_chat_input",
-                reason="Поле ввода в chatik не найдено",
+                reason="Chat input field not found",
                 scenario="chat_no_input"
             )
 
-        print("   🔹 Заполняю сопроводительное в chatik...")
+        print("   🔹 Typing cover letter into chatik...")
         try:
             tag = chat_input.evaluate('el => el.tagName.toLowerCase()')
             if tag == 'div':
                 chat_input.type(cover_letter, delay=10)
             else:
                 chat_input.type(cover_letter, delay=10)
-            print("   ✅ Сообщение заполнено")
+            print("   ✅ Message typed")
             self._wait_and_random_delay(page, 2000, 3000)
         except Exception as e:
             return ProcessResult(
                 success=False,
                 status="skipped_chat_fill_error",
-                reason=f"Ошибка заполнения chatik: {e}",
+                reason=f"Chatik fill error: {e}",
                 scenario="chat_fill_error"
             )
 
@@ -85,19 +85,19 @@ class ChatHandler(BaseHandler):
         try:
             send_btn = page.query_selector('button:has-text("Отправить")')
             if send_btn and send_btn.is_visible():
-                print("   🔹 Кликаю 'Отправить' в chatik...")
+                print("   🔹 Clicking 'Send' in chatik...")
                 send_btn.click()
             else:
-                print("   🔹 Отправляю через Enter...")
+                print("   🔹 Sending via Enter...")
                 chat_input.press("Enter")
 
             self._wait_and_random_delay(page, 3000, 4000)
-            print("   ✅ Сопроводительное отправлено через chatik!")
+            print("   ✅ Cover letter sent via chatik!")
 
             return ProcessResult(
                 success=True,
                 status="applied_via_chat",
-                reason="Авточтение: сопроводительное отправлено через chatik",
+                reason="Auto-read employer: cover letter sent via chatik",
                 scenario="chat_cover_sent",
                 details={'cover_length': len(cover_letter)}
             )
@@ -105,6 +105,6 @@ class ChatHandler(BaseHandler):
             return ProcessResult(
                 success=False,
                 status="skipped_chat_send_error",
-                reason=f"Ошибка отправки в chatik: {e}",
+                reason=f"Chatik send error: {e}",
                 scenario="chat_send_error"
             )

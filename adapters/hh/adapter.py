@@ -53,25 +53,57 @@ class HHAdapter(SiteAdapter):
 
     def process_vacancy(self, url: str, title: str, index: int,
                         llm_cover, hr_matcher,
-                        debug: bool = False, session_dir=None) -> dict:
-        """Process one vacancy: open → extract text → click Apply → detect form → fill → submit."""
+                        debug: bool = False, session_dir=None, dry_run: bool = False) -> dict:
+        """Process one vacancy: open → score → (skip if low score / dry-run) → click Apply → fill → submit."""
         try:
             if not self.browser.open_vacancy(url):
-                return {'status': 'skipped_open_error', 'reason': 'Ошибка открытия вакансии'}
+                return {'status': 'skipped_open_error', 'reason': 'Failed to open vacancy'}
 
             delay = random_delay(15000, 25000)
-            print(f"   ⏳ Пауза {delay/1000:.1f}с (чтение вакансии)")
+            print(f"   ⏳ Pause {delay/1000:.1f}s (reading vacancy)")
 
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "01_vacancy_page")
 
             vacancy_text = self.browser.get_vacancy_text()
             if not vacancy_text:
-                return {'status': 'skipped_no_text', 'reason': 'Не удалось извлечь текст вакансии'}
+                return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text'}
 
-            print("   🔹 Кликаю 'Откликнуться'...")
+            # Score and generate cover BEFORE clicking apply — enables dry-run and score gating
+            print("   🔹 Scoring vacancy...")
+            cover_letter, template_name, signals = llm_cover.generate(vacancy_text)
+            match_score = llm_cover.last_score
+            print(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}")
+
+            score_details = {
+                'match_score': match_score,
+                'matched_skills': llm_cover.last_matched_skills,
+                'gaps': llm_cover.last_gaps,
+                'signals': signals,
+                'template_name': template_name,
+            }
+
+            if dry_run:
+                print(f"   🔍 Dry-run: score={match_score}, skills={llm_cover.last_matched_skills}")
+                return {
+                    'status': 'dry_run',
+                    'reason': f'Dry-run — score: {match_score}',
+                    'scenario': 'dry_run',
+                    'details': score_details
+                }
+
+            if match_score is not None and match_score < CONFIG.min_score:
+                print(f"   ⏭ Score {match_score} < min {CONFIG.min_score} — skipping")
+                return {
+                    'status': 'skipped_score',
+                    'reason': f'Score {match_score} below threshold {CONFIG.min_score}',
+                    'scenario': 'skip',
+                    'details': score_details
+                }
+
+            print("   🔹 Clicking 'Apply'...")
             if not self.browser.click_apply_button():
-                return {'status': 'skipped_no_apply_button', 'reason': 'Кнопка откликнуться не найдена'}
+                return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
 
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_after_apply_click")
@@ -82,35 +114,30 @@ class HHAdapter(SiteAdapter):
             try:
                 success_notif = current_page.query_selector(SELECTORS['immediate_success'])
                 if success_notif and success_notif.is_visible():
-                    print("   ✅ Отклик отправлен мгновенно (без формы)")
+                    print("   ✅ Application submitted instantly (no form)")
                     return {
                         'status': 'applied_immediate',
-                        'reason': 'Резюме отправлено без формы',
+                        'reason': 'Resume submitted without a form',
                         'scenario': 'immediate',
-                        'details': {}
+                        'details': score_details
                     }
             except Exception:
                 pass
 
-            print("   🔹 Анализирую форму отклика...")
+            print("   🔹 Analysing application form...")
             form_info = self.detector.detect(current_page)
-            print(f"   📋 Тип формы: {form_info.form_type.value}")
-            print(f"   📊 Полей: {form_info.input_count}, ЗП: {form_info.has_salary_field}")
+            print(f"   📋 Form type: {form_info.form_type.value}")
+            print(f"   📊 Fields: {form_info.input_count}, Salary: {form_info.has_salary_field}")
 
             if form_info.form_type in (FormType.SALARY_FORM, FormType.UNKNOWN):
                 if debug and session_dir:
                     self._debug_snapshot(current_page, session_dir, f"03_skip_{form_info.form_type.value}")
                 return {
                     'status': f'skipped_{form_info.form_type.value}',
-                    'reason': f'Форма пропущена: {form_info.form_type.value}',
+                    'reason': f'Form skipped: {form_info.form_type.value}',
                     'scenario': 'skip',
-                    'details': {'form_type': form_info.form_type.value}
+                    'details': {'form_type': form_info.form_type.value, **score_details}
                 }
-
-            print("   🔹 Генерирую сопроводительное...")
-            cover_letter, template_name, signals = llm_cover.generate(vacancy_text)
-            match_score = llm_cover.last_score
-            print(f"   📊 Шаблон: {template_name}, score: {match_score}, сигналы: {', '.join(signals) if signals else 'нет'}")
 
             handler = self.handlers.get_handler(form_info.form_type)
             result = handler.process(current_page, cover_letter, hr_matcher,
@@ -125,11 +152,7 @@ class HHAdapter(SiteAdapter):
                 'scenario': result.scenario,
                 'details': {
                     'form_type': form_info.form_type.value,
-                    'template_name': template_name,
-                    'match_score': match_score,
-                    'matched_skills': llm_cover.last_matched_skills,
-                    'gaps': llm_cover.last_gaps,
-                    'signals': signals,
+                    **score_details,
                     **(result.details or {})
                 }
             }
@@ -142,7 +165,7 @@ class HHAdapter(SiteAdapter):
                     pass
             return {
                 'status': 'skipped_error',
-                'reason': f'Ошибка обработки: {str(e)}',
+                'reason': f'Processing error: {str(e)}',
                 'scenario': 'error'
             }
 
@@ -175,6 +198,6 @@ class HHAdapter(SiteAdapter):
             }""")
             (session_dir / f"{label}_data_qa.txt").write_text("\n".join(data_qa), encoding="utf-8")
 
-            print(f"   📸 [{label}] скриншот + HTML + {len(data_qa)} data-qa → {session_dir.name}/")
+            print(f"   📸 [{label}] screenshot + HTML + {len(data_qa)} data-qa → {session_dir.name}/")
         except Exception as e:
-            print(f"   ⚠️ debug_snapshot [{label}] ошибка: {e}")
+            print(f"   ⚠️ debug_snapshot [{label}] error: {e}")

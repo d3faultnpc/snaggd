@@ -16,7 +16,7 @@ class HRMatcher:
 
     def __init__(self):
         self.questions = self._load_questions()
-        print(f"   📋 Загружено {len(self.questions)} HR-ответов")
+        print(f"   📋 Loaded {len(self.questions)} HR answers")
 
     def find_answer(self, question: str) -> str:
         # 1. User-written answer from hr_questions.md (near-exact text match)
@@ -32,7 +32,7 @@ class HRMatcher:
                 pass
 
         # 3. Static fallback when LLM is unavailable
-        return "Готов рассказать подробнее на собеседовании."
+        return "Happy to discuss further at the interview."
 
     def _find_in_bank(self, question_lower: str) -> str:
         for q_text, answer in self.questions.items():
@@ -61,5 +61,5 @@ class HRMatcher:
                 questions[current_q] = "\n".join(current_a).strip()
             return questions
         except Exception as e:
-            print(f"   ⚠️ Ошибка загрузки hr_questions.md: {e}")
+            print(f"   ⚠️ Error loading hr_questions.md: {e}")
             return {}

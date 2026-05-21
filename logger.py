@@ -52,8 +52,8 @@ class Logger:
     
     def log_session_summary(self, processed_count: int, successful: int, skipped: int, new_entries: List[Dict]) -> None:
         """Writes session summary to the daily log."""
-        self.log_daily(f"\n=== СЕССИЯ {datetime.now().strftime('%Y-%m-%d %H:%M')} ===")
-        self.log_daily(f"Обработано: {processed_count}, Успешно: {successful}, Пропущено: {skipped}")
+        self.log_daily(f"\n=== SESSION {datetime.now().strftime('%Y-%m-%d %H:%M')} ===")
+        self.log_daily(f"Processed: {processed_count}, Successful: {successful}, Skipped: {skipped}")
         
         for entry in new_entries:
             title = entry.get('title', 'N/A')[:50]
@@ -61,8 +61,8 @@ class Logger:
             status = entry.get('status', 'unknown')
             self.log_daily(f"  {status}: {title} - {url}")
         
-        self.log_daily(f"Путь к applied_log.json: {self.applied_log_path}")
-        self.log_daily(f"Путь к дневному логу: {self.daily_log_path}")
+        self.log_daily(f"applied_log.json path: {self.applied_log_path}")
+        self.log_daily(f"Daily log path: {self.daily_log_path}")
     
     def count_session_results(self, applied_log: List[Dict[str, Any]], initial_count: int) -> tuple[int, int]:
         """Counts successful and skipped results for entries added in this session."""
