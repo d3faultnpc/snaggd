@@ -19,7 +19,9 @@ class LLMCover:
         self.cache = self._load_cache()
         self.templates = self._load_templates()
         self.resume_facts = self._load_resume_facts()
-        self.last_score: int = 0  # match score from last generate() call
+        self.last_score: int = 0
+        self.last_matched_skills: list = []
+        self.last_gaps: list = []
         
     def generate(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         """
@@ -141,6 +143,8 @@ class LLMCover:
         cover = _agent.generate_cover(vacancy_text)
         score_data = _agent.score_vacancy(vacancy_text)
         self.last_score = score_data.get("score", 0)
+        self.last_matched_skills = score_data.get("matched_skills", [])
+        self.last_gaps = score_data.get("gaps", [])
         signals = score_data.get("signals", [])
         return cover, "llm", signals
     
