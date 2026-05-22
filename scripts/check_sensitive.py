@@ -44,7 +44,7 @@ ALLOWED_PATTERNS = [
     r'\.gitignore',          # gitignore mentions data paths
     r'CONTEXT\.md',          # architecture docs mention patterns
     r'README\.md',           # readme may have examples
-    r'd3faultnpc@proton\.me',  # deliberately not whitelisting — should not be in code
+    r'CHANGELOG\.md',          # changelog may reference author info
 ]
 
 
