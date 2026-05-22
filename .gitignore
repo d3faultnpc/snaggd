@@ -32,3 +32,4 @@ llm_cache.json
 applied_log.json
 pending_actions.json
 .claude/
+!data/.gitkeep

@@ -13,7 +13,7 @@ Automated job application agent for [HH.ru](https://hh.ru) (the largest job boar
 ### 1. Install dependencies
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/auto-apply-agent.git
+git clone https://github.com/d3faultnpc/auto-apply-agent.git
 cd auto-apply-agent
 python -m venv venv && source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
