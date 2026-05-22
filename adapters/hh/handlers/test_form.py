@@ -4,52 +4,53 @@ from config import SELECTORS
 
 class TestFormHandler(BaseHandler):
     """
-    Обработчик формы с тестовым заданием работодателя.
+    Handler for employer test/question forms.
 
-    Сценарий:
-      Работодатель добавил тест/вопросы к отклику.
-      Стратегия: кликаем 'Откликнуться без ответа на вопросы'
-      (vacancy-response-link-no-questions), после чего открывается
-      стандартная форма с cover letter и кнопкой submit.
+    Strategy: click 'Apply without answering questions'
+    (vacancy-response-link-no-questions), which opens the standard
+    form with a cover letter field and submit button.
     """
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.TEST_FORM
 
-    def process(self, page, cover_letter: str, hr_matcher=None) -> ProcessResult:
-        # 1. Кликаем "Откликнуться без ответа на вопросы"
+    def verify_submission(self, page) -> bool:
+        return self._poll_for_success(page, timeout_s=5)
+
+    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+        # 1. Click "Apply without answering questions"
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
             if not no_q_link or not no_q_link.is_visible():
                 return ProcessResult(
                     success=False,
                     status="skipped_test_form",
-                    reason="Нет ссылки пропустить вопросы — тест обязателен",
+                    reason="No skip-questions link found — test is mandatory",
                     scenario="test_form_required"
                 )
 
-            print("   🔹 Кликаю 'Откликнуться без ответа на вопросы'...")
+            print("   🔹 Clicking 'Apply without answering questions'...")
             no_q_link.click()
             self._wait_and_random_delay(page, 2000, 3000)
         except Exception as e:
             return ProcessResult(
                 success=False,
                 status="skipped_test_form",
-                reason=f"Ошибка клика no-questions: {e}",
+                reason=f"Error clicking no-questions link: {e}",
                 scenario="test_form_error"
             )
 
-        # 2. После клика может появиться тогл cover letter — раскрываем
+        # 2. A cover letter toggle may appear after the click — expand it
         try:
             toggle = page.query_selector(SELECTORS['letter_toggle'])
             if toggle and toggle.is_visible():
-                print("   🔹 Раскрываю поле сопроводительного (toggle)...")
+                print("   🔹 Expanding cover letter field (toggle)...")
                 toggle.click()
                 self._wait_and_random_delay(page, 1000, 2000)
         except Exception:
             pass
 
-        # 3. Заполняем cover letter
+        # 3. Fill cover letter
         textarea = self._find_element_by_selectors(page, [
             f'[data-qa="vacancy-response-popup-form-letter-input"] textarea',
             SELECTORS['popup_letter_input'],
@@ -60,16 +61,16 @@ class TestFormHandler(BaseHandler):
 
         filled = False
         if textarea:
-            print("   🔹 Заполняю сопроводительное письмо...")
+            print("   🔹 Filling cover letter...")
             try:
                 textarea.type(cover_letter, delay=10)
                 filled = True
-                print("   ✅ Сопроводительное заполнено")
+                print("   ✅ Cover letter filled")
                 self._wait_and_random_delay(page, 2000, 3000)
             except Exception as e:
-                print(f"   ⚠️ Ошибка заполнения: {e}")
+                print(f"   ⚠️ Fill error: {e}")
 
-        # 4. Ждём enabled кнопку и кликаем
+        # 4. Wait for the submit button to become enabled, then click
         for selector in [SELECTORS['popup_submit'], SELECTORS['letter_submit']]:
             try:
                 page.wait_for_selector(f"{selector}:not([disabled])", timeout=5000)
@@ -77,7 +78,7 @@ class TestFormHandler(BaseHandler):
                 pass
             btn = page.query_selector(selector)
             if btn and btn.is_visible():
-                print(f"   🔹 Кликаю: '{btn.inner_text().strip()}'")
+                print(f"   🔹 Clicking: '{btn.inner_text().strip()}'")
                 btn.scroll_into_view_if_needed()
                 btn.click()
                 self._wait_and_random_delay(page, 2000, 4000)
@@ -86,19 +87,19 @@ class TestFormHandler(BaseHandler):
                     return ProcessResult(
                         success=True,
                         status="applied",
-                        reason="Тест пропущен, сопроводительное отправлено",
+                        reason="Test skipped, cover letter submitted",
                         scenario="test_form_skipped_cover_sent"
                     )
                 return ProcessResult(
                     success=True,
                     status="applied_no_cover",
-                    reason="Тест пропущен, отклик без сопроводительного",
+                    reason="Test skipped, application submitted without cover letter",
                     scenario="test_form_skipped_no_cover"
                 )
 
         return ProcessResult(
             success=False,
             status="skipped_test_form",
-            reason="Тест пропущен, но кнопка submit не найдена",
+            reason="Test skipped but submit button not found",
             scenario="test_form_no_submit"
         )

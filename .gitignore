@@ -4,6 +4,9 @@ data/
 HH_Auto
 HH_Auto/
 
+# Internal dev journal (not for public repo)
+DEVLOG.md
+
 # Historical archive — contains personal data from dev iterations
 _docs/
 
@@ -15,6 +18,9 @@ __pycache__/
 *.pyo
 .DS_Store
 
+# Test sandbox (mimics user data dir for subagent / local testing)
+sandbox/
+
 # Python environment
 venv/
 .venv/
@@ -25,3 +31,5 @@ hh_cookies.json
 llm_cache.json
 applied_log.json
 pending_actions.json
+.claude/
+!data/.gitkeep

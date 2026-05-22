@@ -9,12 +9,14 @@ Exit 0 = clean. Exit 1 = issues found, do NOT push.
 import re
 import sys
 from pathlib import Path
+from typing import List, Tuple
 
 ROOT = Path(__file__).parent.parent
 
 # Files and dirs to skip entirely
 SKIP_DIRS = {"venv", ".venv", "__pycache__", ".git", "debug_screenshots",
-             "logs", "data", ".claude", "_docs"}  # _docs is gitignored archive
+             "logs", "data", ".claude", "_docs", "sandbox"}
+SKIP_FILES = {".env", "DEVLOG.md"}  # gitignored files — never pushed
 SKIP_EXTENSIONS = {".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico",
                    ".pdf", ".docx", ".zip"}
 
@@ -47,6 +49,8 @@ ALLOWED_PATTERNS = [
 
 
 def should_skip(path: Path) -> bool:
+    if path.name in SKIP_FILES:
+        return True
     for part in path.parts:
         if part in SKIP_DIRS:
             return True
@@ -55,7 +59,7 @@ def should_skip(path: Path) -> bool:
     return False
 
 
-def check_file(path: Path) -> list[tuple[int, str, str]]:
+def check_file(path: Path) -> List[Tuple[int, str, str]]:
     issues = []
     try:
         content = path.read_text(encoding="utf-8", errors="ignore")

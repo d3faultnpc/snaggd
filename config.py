@@ -2,30 +2,30 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).parent / ".env")
+except ImportError:
+    pass  # dotenv optional — env vars can be set externally
+
 # Project root = directory containing this file
 BASE_DIR = Path(__file__).parent
 
 # User data dir: override via DATA_DIR env var, default to ./data
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))
 
-# Workspace dir: legacy symlink (HH_Auto/) or DATA_DIR
-# TODO: migrate fully to DATA_DIR after onboarding is implemented
-_workspace_legacy = BASE_DIR / "HH_Auto"
-WORKSPACE_DIR = _workspace_legacy if _workspace_legacy.exists() else DATA_DIR
-
-
 @dataclass
 class Config:
     # Paths — all derived from BASE_DIR / DATA_DIR, no hardcoded usernames
     base_dir: Path = field(default_factory=lambda: BASE_DIR)
     data_dir: Path = field(default_factory=lambda: DATA_DIR)
-    workspace_dir: Path = field(default_factory=lambda: WORKSPACE_DIR)
     applied_log_path: Path = field(default_factory=lambda: DATA_DIR / "applied_log.json")
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
     cookies_path: Path = field(default_factory=lambda: DATA_DIR / "hh_cookies.json")
 
     # Processing limits
     max_vacancies_per_session: int = int(os.getenv("MAX_VACANCIES", "3"))
+    min_score: int = int(os.getenv("MIN_SCORE", "60"))
     max_skips: int = 10
     max_questions_per_form: int = 5
 
@@ -36,8 +36,9 @@ class Config:
     initial_wait: int = 25000
     modal_wait: int = 5000
 
-    # HH search URL — set via .env or --search-url flag
-    hh_search_url: str = os.getenv("HH_SEARCH_URL", "")
+    # HH search URLs — one per line in data/search_urls.txt
+    # Supports multiple searches (different roles / resume directions)
+    search_urls_path: Path = field(default_factory=lambda: DATA_DIR / "search_urls.txt")
 
     # LLM settings
     llm_max_input_chars: int = 3000

@@ -4,67 +4,76 @@ from typing import Tuple, List, Optional
 from pathlib import Path
 from config import CONFIG
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception as _e:
+    _agent = None
+    print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
+
 class LLMCover:
-    """Генератор сопроводительных писем с кэшированием"""
-    
+    """Cover letter generator with caching."""
+
     def __init__(self):
-        self.cache_file = CONFIG.hh_auto_dir / CONFIG.cache_file
+        self.cache_file = Path(CONFIG.cache_file)
         self.cache = self._load_cache()
-        self.templates = self._load_templates()
-        self.resume_facts = self._load_resume_facts()
+        self.last_score: int = 0
+        self.last_matched_skills: list = []
+        self.last_gaps: list = []
         
     def generate(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         """
-        Генерирует сопроводительное письмо
-        Возвращает: (cover_letter, template_name, signals)
+        Generates a cover letter.
+        Returns: (cover_letter, template_name, signals)
         """
-        # Ограничиваем размер входного текста
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
-        
-        # Проверяем кэш
+
         if text_hash in self.cache:
-            print("   📋 Использую кэшированное сопроводительное")
-            return self.cache[text_hash]
-        
+            print("   📋 Using cached cover letter")
+            entry = self.cache[text_hash]
+            # Restore score fields if cache entry includes them (new format: 6 elements)
+            if len(entry) >= 6:
+                self.last_score = entry[3]
+                self.last_matched_skills = entry[4]
+                self.last_gaps = entry[5]
+            return entry[:3]
+
         try:
-            # Пытаемся сгенерировать через LLM
             result = self._generate_with_llm(text_for_processing)
-            print("   🤖 Сгенерировано через LLM")
+            print("   🤖 Generated via LLM")
         except Exception as e:
-            print(f"   ⚠️ Ошибка LLM: {e}")
-            # Fallback на шаблоны
-            result = self._generate_with_templates(text_for_processing)
-            print("   📝 Использован шаблон (fallback)")
-        
-        # Сохраняем в кэш
-        self.cache[text_hash] = result
+            print(f"   ⚠️ LLM error: {e}")
+            result = self._fallback_cover()
+            print("   📝 LLM unavailable — using static fallback")
+
+        # Store cover + score data together so cache hits restore score correctly
+        self.cache[text_hash] = list(result) + [self.last_score, self.last_matched_skills, self.last_gaps]
         self._save_cache()
-        
+
         return result
     
     def _hash_text(self, text: str) -> str:
-        """Создаёт hash для текста вакансии"""
+        """Creates an MD5 hash for vacancy text (used as cache key)."""
         return hashlib.md5(text.encode('utf-8')).hexdigest()[:16]
     
     def _load_cache(self) -> dict:
-        """Загружает кэш из файла"""
+        """Loads cache from file."""
         try:
             if self.cache_file.exists():
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
-                print(f"   📋 Загружен кэш: {len(cache)} записей")
+                print(f"   📋 Cache loaded: {len(cache)} entries")
                 return cache
         except Exception as e:
-            print(f"   ⚠️ Ошибка загрузки кэша: {e}")
+            print(f"   ⚠️ Cache load error: {e}")
         return {}
     
     def _save_cache(self) -> None:
-        """Сохраняет кэш в файл"""
+        """Saves cache to file."""
         try:
-            # Ограничиваем размер кэша
+            # Evict oldest entries when cache exceeds limit (simple FIFO)
             if len(self.cache) > CONFIG.cache_size:
-                # Удаляем старые записи (простая FIFO стратегия)
                 keys_to_remove = list(self.cache.keys())[:-CONFIG.cache_size]
                 for key in keys_to_remove:
                     del self.cache[key]
@@ -72,117 +81,23 @@ class LLMCover:
             with open(self.cache_file, 'w', encoding='utf-8') as f:
                 json.dump(self.cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"   ⚠️ Ошибка сохранения кэша: {e}")
-    
-    def _load_templates(self) -> dict:
-        """Загружает шаблоны сопроводительных из MD файла"""
-        templates_path = CONFIG.workspace_dir / "cover_templates.md"
-        try:
-            with open(templates_path, "r", encoding="utf-8") as f:
-                content = f.read()
-            
-            templates = {}
-            current_name = None
-            current_tags = []
-            current_text = []
-            
-            for line in content.split('\n'):
-                if line.startswith('## Template:'):
-                    if current_name and current_text:
-                        templates[current_name] = {
-                            'tags': current_tags,
-                            'text': '\n'.join(current_text).strip()
-                        }
-                    current_name = line.split(':')[1].strip()
-                    current_tags = []
-                    current_text = []
-                elif line.startswith('tags:'):
-                    current_tags = [t.strip() for t in line.split(':')[1].split(',')]
-                elif current_name and line.strip() and not line.startswith('---'):
-                    current_text.append(line.strip())
-            
-            if current_name and current_text:
-                templates[current_name] = {
-                    'tags': current_tags,
-                    'text': '\n'.join(current_text).strip()
-                }
-            
-            print(f"   📝 Загружено {len(templates)} шаблонов")
-            return templates
-            
-        except Exception as e:
-            print(f"   ⚠️ Ошибка загрузки шаблонов: {e}")
-            return {'default': {'tags': [], 'text': 'Добрый день.\n\nЯ продуктовый менеджер с опытом более 5 лет.\n\nБуду рад обсудить возможности.'}}
-    
-    def _load_resume_facts(self) -> str:
-        """Загружает факты из резюме"""
-        resume_path = CONFIG.workspace_dir / "resume_facts.md"
-        try:
-            with open(resume_path, "r", encoding="utf-8") as f:
-                return f.read()
-        except Exception as e:
-            print(f"   ⚠️ Ошибка загрузки resume_facts.md: {e}")
-            return ""
+            print(f"   ⚠️ Cache save error: {e}")
     
     def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        """Генерирует сопроводительное через LLM pipeline"""
-        # TODO: Интеграция с LLM через OpenClaw
-        # Пока что используем fallback на шаблоны
-        raise Exception("LLM интеграция не реализована")
+        if _agent is None:
+            raise RuntimeError("LLMAgent not available")
+        cover = _agent.generate_cover(vacancy_text)
+        score_data = _agent.score_vacancy(vacancy_text)
+        self.last_score = score_data.get("score", 0)
+        self.last_matched_skills = score_data.get("matched_skills", [])
+        self.last_gaps = score_data.get("gaps", [])
+        signals = score_data.get("signals", [])
+        return cover, "llm", signals
     
-    def _generate_with_templates(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        """Генерирует сопроводительное через шаблоны"""
-        signals = self._parse_vacancy_signals(vacancy_text)
-        template_name = self._select_template(signals)
-        
-        if template_name in self.templates:
-            cover_letter = self.templates[template_name]['text']
-        else:
-            # Fallback на default шаблон
-            cover_letter = self.templates.get('default', {}).get('text', 
-                "Добрый день.\n\nЗаинтересован в данной позиции.\n\nБуду рад обсудить детали.")
-            template_name = 'default'
-        
-        return cover_letter, template_name, signals
-    
-    def _parse_vacancy_signals(self, vacancy_text: str) -> List[str]:
-        """Извлекает сигналы из текста вакансии"""
-        text_lower = vacancy_text.lower()
-        signals = []
-        
-        # Platform keywords
-        if any(kw in text_lower for kw in ['платформ', 'platform', 'api', 'sdk', 'интеграц', 'partners']):
-            signals.append('platform')
-        
-        # Admin systems keywords  
-        if any(kw in text_lower for kw in ['админ', 'backoffice', 'back-office', 'внутренн', 'internal']):
-            signals.append('admin_systems')
-        
-        # Growth keywords
-        if any(kw in text_lower for kw in ['рост', 'конверс', 'a/b', 'ab тест', 'маркетинг', 'acquisition']):
-            signals.append('growth')
-        
-        # B2B keywords
-        if any(kw in text_lower for kw in ['b2b', 'партнёры', 'корпоратив', 'клиенты']):
-            signals.append('b2b')
-        
-        # B2C keywords
-        if any(kw in text_lower for kw in ['b2c', 'пользовател', 'клиент', 'покупател', 'витрина']):
-            signals.append('b2c')
-        
-        return signals
-    
-    def _select_template(self, signals: List[str]) -> str:
-        """Выбирает лучший шаблон по сигналам"""
-        best_template = 'default'
-        best_score = 0
-        
-        for name, template in self.templates.items():
-            tags = template.get('tags', [])
-            score = sum(1 for s in signals if s in tags or any(s in t for t in tags))
-            
-            if score > best_score:
-                best_score = score
-                best_template = name
-        
-        return best_template
+    def _fallback_cover(self) -> Tuple[str, str, List[str]]:
+        """Static fallback when LLM is unavailable — returns a minimal cover letter."""
+        return (
+            "Hello.\n\nI am interested in this position and would be happy to discuss the details.",
+            "static_fallback",
+            []
+        )

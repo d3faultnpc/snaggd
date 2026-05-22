@@ -1,306 +1,117 @@
 #!/usr/bin/env python3
 """
-HH Auto - модульная версия автоматизации откликов
+HH Auto — autonomous job application agent.
 
-Использование:
-    python main.py                        # обычный режим
-    python main.py --debug                # debug: скриншоты + HTML на каждом шаге
-    python main.py --debug --max 3        # debug на 3 вакансиях
-    python main.py --search-url "https://hh.ru/search/vacancy?..."  # другой поиск
+Usage:
+    python main.py                   # normal run (ACTIVE_SITES=hh by default)
+    python main.py --debug           # debug: screenshots + HTML at each step
+    python main.py --dry-run         # score vacancies, do NOT submit
+    python main.py --max 3           # limit to 3 vacancies
 """
 
 import argparse
 import os
 import sys
-from datetime import datetime
-from pathlib import Path
 
-from config import CONFIG, SELECTORS
 from logger import Logger
-from browser import HHBrowser
-from form_detector import FormDetector
-from form_handlers import FormHandlers
-from llm_cover import LLMCover
-from hr_matcher import HRMatcher
-from utils.helpers import random_delay
-
-DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent / "debug_screenshots"))
 
 
-# ---------------------------------------------------------------------------
-# Debug helpers
-# ---------------------------------------------------------------------------
-
-def debug_snapshot(page, session_dir: Path, label: str) -> None:
-    """Сохраняет скриншот + HTML в папку сессии."""
-    try:
-        session_dir.mkdir(parents=True, exist_ok=True)
-        screenshot_path = session_dir / f"{label}.png"
-        html_path = session_dir / f"{label}.html"
-
-        page.screenshot(path=str(screenshot_path), full_page=False)
-
-        # HTML только модалки или body
-        modal = None
-        for sel in ['[role="dialog"]', '[data-qa*="modal"]', '[data-qa*="response"]', '.HH-Modal']:
-            el = page.query_selector(sel)
-            if el and el.is_visible():
-                modal = el
-                break
-        html_content = modal.inner_html() if modal else page.inner_html('body')
-        html_path.write_text(html_content, encoding="utf-8")
-
-        # data-qa атрибуты
-        data_qa = page.evaluate("""() => {
-            const els = document.querySelectorAll('[data-qa]');
-            const vals = new Set();
-            els.forEach(el => vals.add(el.getAttribute('data-qa')));
-            return Array.from(vals).sort();
-        }""")
-        (session_dir / f"{label}_data_qa.txt").write_text("\n".join(data_qa), encoding="utf-8")
-
-        print(f"   📸 [{label}] скриншот + HTML + {len(data_qa)} data-qa → {session_dir.name}/")
-    except Exception as e:
-        print(f"   ⚠️ debug_snapshot [{label}] ошибка: {e}")
+def load_active_adapters() -> list:
+    """Dynamically load adapters listed in ACTIVE_SITES env (default: hh)."""
+    active = [s.strip() for s in os.getenv("ACTIVE_SITES", "hh").split(",") if s.strip()]
+    adapters = []
+    for site in active:
+        if site == "hh":
+            from adapters.hh import HHAdapter
+            adapters.append(HHAdapter())
+        else:
+            print(f"⚠  Unknown site '{site}' — skipped. Supported: hh")
+    return adapters
 
 
-# ---------------------------------------------------------------------------
-# Core vacancy processing
-# ---------------------------------------------------------------------------
-
-def process_vacancy(browser, detector, handlers, llm_cover, hr_matcher,
-                    url, title, index, debug: bool = False, session_dir: Path = None):
-    """Обрабатывает одну вакансию."""
-
-    try:
-        if not browser.open_vacancy(url):
-            return {'status': 'skipped_open_error', 'reason': 'Ошибка открытия вакансии'}
-
-        delay = random_delay(15000, 25000)
-        print(f"   ⏳ Пауза {delay/1000:.1f}с (чтение вакансии)")
-
-        if debug and session_dir:
-            debug_snapshot(browser.get_current_page(), session_dir, "01_vacancy_page")
-
-        vacancy_text = browser.get_vacancy_text()
-        if not vacancy_text:
-            return {'status': 'skipped_no_text', 'reason': 'Не удалось извлечь текст вакансии'}
-
-        # Кликаем "Откликнуться" — ПЕРЕД генерацией сопроводительного
-        print("   🔹 Кликаю 'Откликнуться'...")
-        if not browser.click_apply_button():
-            return {'status': 'skipped_no_apply_button', 'reason': 'Кнопка откликнуться не найдена'}
-
-        if debug and session_dir:
-            debug_snapshot(browser.get_current_page(), session_dir, "02_after_apply_click")
-
-        # Проверяем мгновенную отправку (без формы)
-        current_page = browser.get_current_page()
-        try:
-            success_notif = current_page.query_selector(SELECTORS['immediate_success'])
-            if success_notif and success_notif.is_visible():
-                print("   ✅ Отклик отправлен мгновенно (без формы)")
-                return {
-                    'status': 'applied_immediate',
-                    'reason': 'Резюме отправлено без формы',
-                    'scenario': 'immediate',
-                    'details': {}
-                }
-        except Exception:
-            pass
-
-        # Детектируем тип формы
-        print("   🔹 Анализирую форму отклика...")
-        form_info = detector.detect(current_page)
-
-        print(f"   📋 Тип формы: {form_info.form_type.value}")
-        print(f"   📊 Полей: {form_info.input_count}, ЗП: {form_info.has_salary_field}")
-
-        # Пропускаем зарплатные и unknown формы — не тратим токены LLM
-        from form_handlers.base import FormType
-        if form_info.form_type in (FormType.SALARY_FORM, FormType.UNKNOWN):  # TEST_FORM обрабатывается хендлером
-            if debug and session_dir:
-                debug_snapshot(current_page, session_dir, f"03_skip_{form_info.form_type.value}")
-            return {
-                'status': f'skipped_{form_info.form_type.value}',
-                'reason': f'Форма пропущена: {form_info.form_type.value}',
-                'scenario': 'skip'
-            }
-
-        # Генерируем сопроводительное только если форма нужна
-        print("   🔹 Генерирую сопроводительное...")
-        cover_letter, template_name, signals = llm_cover.generate(vacancy_text)
-        print(f"   📊 Шаблон: {template_name}, сигналы: {', '.join(signals) if signals else 'нет'}")
-
-        # Обрабатываем форму
-        handler = handlers.get_handler(form_info.form_type)
-        result = handler.process(current_page, cover_letter, hr_matcher)
-
-        if debug and session_dir:
-            debug_snapshot(current_page, session_dir, f"03_after_handler_{result.status}")
-
-        return {
-            'status': result.status,
-            'reason': result.reason,
-            'scenario': result.scenario,
-            'details': {
-                'form_type': form_info.form_type.value,
-                'template_name': template_name,
-                'signals': signals,
-                **(result.details or {})
-            }
-        }
-
-    except Exception as e:
-        if debug and session_dir:
-            try:
-                debug_snapshot(browser.get_current_page(), session_dir, "error")
-            except Exception:
-                pass
-        return {
-            'status': 'skipped_error',
-            'reason': f'Ошибка обработки: {str(e)}',
-            'scenario': 'error'
-        }
-
-    finally:
-        browser.close_vacancy()
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main():
-    parser = argparse.ArgumentParser(description="HH Auto")
-    parser.add_argument("--debug", action="store_true",
-                        help="Режим отладки: скриншоты + HTML дампы на каждом шаге")
-    parser.add_argument("--max", type=int, default=None,
-                        help="Максимум вакансий за сессию (переопределяет config)")
-    parser.add_argument("--search-url", type=str, default=None,
-                        help="URL поиска вакансий (переопределяет config)")
+def main() -> int:
+    parser = argparse.ArgumentParser(description="HH Auto — job application agent")
+    parser.add_argument("--debug",   action="store_true",
+                        help="Debug mode: screenshots + HTML dumps at each step")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Score vacancies only — do NOT submit applications")
+    parser.add_argument("--max",     type=int, default=None,
+                        help="Max vacancies per session (overrides MAX_VACANCIES in .env)")
     args = parser.parse_args()
 
+    from config import CONFIG
     if args.max:
         CONFIG.max_vacancies_per_session = args.max
-    if args.search_url:
-        CONFIG.hh_search_url = args.search_url
 
-    debug = args.debug
-    session_dir = None
+    dry_run = args.dry_run
+    debug   = args.debug
 
+    print("🦾 HH Auto")
+    if dry_run:
+        print("🔍 DRY-RUN — scoring only, no applications submitted")
     if debug:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_dir_base = DEBUG_DIR / f"session_{ts}"
-        session_dir_base.mkdir(parents=True, exist_ok=True)
-        print(f"🐛 DEBUG режим — снимки в: {session_dir_base}")
+        print("🐛 DEBUG — verbose snapshots enabled")
 
-    print("🦾 HH Auto - модульная версия")
-    print(f"📊 Лимиты: {CONFIG.max_vacancies_per_session} вакансий, {CONFIG.max_skips} пропусков")
+    logger  = Logger()
+    adapters = load_active_adapters()
 
-    logger = Logger()
-    browser = HHBrowser()
-    detector = FormDetector()
-    handlers = FormHandlers()
-    llm_cover = LLMCover()
-    hr_matcher = HRMatcher()
-
-    applied_log = logger.load_applied_log()
-    initial_log_count = len(applied_log)
-    print(f"📄 Загружен applied_log: {initial_log_count} записей")
-
-    processed_count = 0
-    skip_count = 0
-
-    try:
-        if not browser.start():
-            print("❌ Не удалось запустить браузер")
-            return 1
-
-        vacancies = browser.get_vacancy_urls()
-        if not vacancies:
-            print("❌ Не найдено вакансий")
-            return 1
-
-        print(f"✅ Найдено {len(vacancies)} вакансий")
-
-        for url, title, index in vacancies:
-            if processed_count >= CONFIG.max_vacancies_per_session:
-                print(f"⏹ Достигнут лимит: {processed_count} вакансий")
-                break
-
-            if skip_count >= CONFIG.max_skips:
-                print(f"⏹ Достигнут лимит пропусков: {skip_count}")
-                break
-
-            existing_status = logger.is_processed(url, applied_log)
-            if existing_status:
-                print(f"⏭ Вакансия #{index} уже обработана ({existing_status})")
-                skip_count += 1
-                continue
-
-            print(f"\n{'='*50}")
-            print(f"ВАКАНСИЯ #{index}: {title}")
-            print(f"URL: {url}")
-            logger.log_daily(f"ВАКАНСИЯ #{index}: {title}")
-            logger.log_daily(f"URL: {url}")
-
-            # Папка для debug снимков этой вакансии
-            vac_debug_dir = None
-            if debug:
-                safe_title = "".join(c for c in title[:30] if c.isalnum() or c in " _-").strip()
-                vac_debug_dir = session_dir_base / f"{index:02d}_{safe_title}"
-
-            result = process_vacancy(
-                browser, detector, handlers, llm_cover, hr_matcher,
-                url, title, index,
-                debug=debug, session_dir=vac_debug_dir
-            )
-
-            logger.log_result(
-                applied_log,
-                url=url,
-                title=title,
-                status=result['status'],
-                reason=result['reason'],
-                scenario=result.get('scenario', 'unknown'),
-                **result.get('details', {})
-            )
-
-            processed_count += 1
-            logger.log_daily(f"Результат: {result['status']} - {result['reason']}")
-            print(f"📊 Статус: {result['status']} - {result['reason']}")
-            print(f"📈 Прогресс: {processed_count}/{CONFIG.max_vacancies_per_session}")
-
-    except KeyboardInterrupt:
-        print("\n⏹ Прервано пользователем")
-
-    except Exception as e:
-        print(f"\n❌ Критическая ошибка: {e}")
+    if not adapters:
+        print("❌ No adapters configured. Set ACTIVE_SITES=hh in .env")
         return 1
 
-    finally:
-        browser.close()
+    all_results = []
 
-        successful, skipped = logger.count_session_results(applied_log, initial_log_count)
-        new_entries = applied_log[initial_log_count:]
+    for adapter in adapters:
+        print(f"\n── [{adapter.name()}] ──────────────────────────────────")
 
-        print(f"\n{'='*50}")
-        print(f"ИТОГИ СЕССИИ")
-        print(f"Обработано: {processed_count}/{CONFIG.max_vacancies_per_session}")
-        print(f"Успешных откликов: {successful}")
-        print(f"Пропущено: {skipped}")
-        print(f"Новых записей: {len(new_entries)}")
+        if not adapter.verify():
+            print(f"❌ [{adapter.name()}] Pre-flight failed — skipping")
+            continue
 
-        logger.log_session_summary(processed_count, successful, skipped, new_entries)
+        if not adapter.start():
+            print(f"❌ [{adapter.name()}] Failed to start — skipping")
+            continue
 
-        print(f"📄 applied_log: {CONFIG.applied_log_path}")
-        print(f"📄 daily log: {logger.daily_log_path}")
+        try:
+            results = adapter.run(logger, dry_run=dry_run, debug=debug)
+            all_results.extend(results)
+        except KeyboardInterrupt:
+            print(f"\n⏹  [{adapter.name()}] Interrupted")
+            break
+        except Exception as e:
+            print(f"\n❌ [{adapter.name()}] Critical error: {e}")
+        finally:
+            adapter.close()
 
-        if debug:
-            print(f"\n🐛 Debug снимки: {session_dir_base}")
-            print(f"   Открой папку и скинь мне скриншоты для анализа")
+    # ── Session summary ───────────────────────────────────────────────────────
+    successful = sum(1 for e in all_results if e.get("status", "").startswith("applied"))
+    skipped    = sum(1 for e in all_results if e.get("status", "").startswith("skipped"))
+    unverified = sum(1 for e in all_results if e.get("status") == "applied_unverified")
+    scores     = [e.get("match_score") for e in all_results
+                  if isinstance(e.get("match_score"), (int, float))]
+    avg_score  = round(sum(scores) / len(scores)) if scores else None
 
+    skip_breakdown: dict = {}
+    for e in all_results:
+        st = e.get("status", "")
+        if st.startswith("skipped"):
+            skip_breakdown[st] = skip_breakdown.get(st, 0) + 1
+
+    print(f"\n{'─'*52}")
+    print("DRY-RUN COMPLETE" if dry_run else "SESSION COMPLETE")
+    print(f"  Applied:     {successful}" + (f" ({unverified} unverified)" if unverified else ""))
+    print(f"  Skipped:     {skipped}" + (f"  {skip_breakdown}" if skip_breakdown else ""))
+    print(f"  Avg score:   {avg_score if avg_score is not None else 'n/a'}")
+    print(f"  Log entries: {len(all_results)}")
+    if not dry_run:
+        from config import CONFIG as _cfg
+        print(f"  Log file:    {_cfg.applied_log_path}")
+    print(f"{'─'*52}")
+
+    if unverified:
+        print(f"⚠️  {unverified} applied_unverified — check debug_screenshots/auto_* for DOM snapshots")
+
+    logger.log_session_summary(len(all_results), successful, skipped, all_results)
     return 0
 
 

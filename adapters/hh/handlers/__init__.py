@@ -18,12 +18,12 @@ class FormHandlers:
         ]
     
     def get_handler(self, form_type: FormType) -> BaseHandler:
-        """Получить подходящий обработчик для типа формы"""
+        """Returns the appropriate handler for the given form type."""
         for handler in self.handlers:
             if handler.can_handle(form_type):
                 return handler
-        
-        # Fallback на CoverOnlyHandler для неизвестных типов
+
+        # Fallback to CoverOnlyHandler for unknown types
         return CoverOnlyHandler()
 
 __all__ = [
