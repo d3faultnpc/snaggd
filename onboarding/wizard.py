@@ -129,10 +129,14 @@ def block_a(resume_path: Path | None = None) -> bool:
 
 # ── Block B: Job preferences → job_preferences.md + .env ─────────────────────
 
-def block_b() -> bool:
+def block_b(append: bool = False) -> bool:
     section("Block B — Job preferences")
     print("This shapes the search URLs and helps the agent score vacancies.")
-    print("You can add multiple searches — different roles or resume directions.\n")
+    print("You can add multiple searches — different roles or resume directions.")
+    if append:
+        print("Mode: APPEND — new URLs will be added to existing search_urls.txt\n")
+    else:
+        print()
 
     from onboarding.url_builder import build_hh_url
 
@@ -150,8 +154,8 @@ def block_b() -> bool:
             print(f"  {i}. {q}")
         print()
 
-    # Collect one or more search URLs
-    searches = []  # list of dicts with role/city/salary/remote/url
+    # Collect one or more search directions
+    searches = []
     while True:
         print(f"\n── Search #{len(searches) + 1} ──")
         default_role = suggested[len(searches)] if len(searches) < len(suggested) else ""
@@ -160,19 +164,33 @@ def block_b() -> bool:
         salary = ask("Minimum salary, RUB (press Enter to skip)")
         remote = ask("Work format: office / remote / hybrid", "hybrid")
 
-        url = build_hh_url(role=role, city=city, salary=salary, remote=remote)
+        print("  Search scope:")
+        print("    1. Title only        — role must appear in vacancy title (precise)")
+        print("    2. Title + body      — role anywhere in description (broad, scorer filters)")
+        scope_choice = ask("  Scope [1/2]", "2")
+        search_scope = "name" if scope_choice.strip() == "1" else "everywhere"
+
+        url = build_hh_url(role=role, city=city, salary=salary,
+                           remote=remote, search_scope=search_scope)
         searches.append({"role": role, "city": city, "salary": salary,
-                         "remote": remote, "url": url})
+                         "remote": remote, "scope": search_scope, "url": url})
         print(f"✓  URL: {url}")
 
-        another = ask("\nAdd another search URL? yes / no", "no")
+        another = ask("\nAdd another search direction? yes / no", "no")
         if not another.lower().startswith("y"):
             break
 
-    # Save search URLs (one per line)
+    # Save search URLs (append or overwrite)
     urls_out = CONFIG.search_urls_path
-    urls_out.write_text("\n".join(s["url"] for s in searches) + "\n", encoding="utf-8")
-    print(f"\n✓  {len(searches)} search URL(s) saved → {urls_out}")
+    new_urls = "\n".join(s["url"] for s in searches) + "\n"
+    if append and urls_out.exists():
+        existing = urls_out.read_text(encoding="utf-8").rstrip("\n")
+        urls_out.write_text(existing + "\n" + new_urls, encoding="utf-8")
+        total = len([l for l in urls_out.read_text(encoding="utf-8").splitlines() if l.strip()])
+        print(f"\n✓  {len(searches)} URL(s) appended → {urls_out} ({total} total)")
+    else:
+        urls_out.write_text(new_urls, encoding="utf-8")
+        print(f"\n✓  {len(searches)} search URL(s) saved → {urls_out}")
 
     # Save preferences (used by LLM for vacancy scoring)
     roles = ", ".join(s["role"] for s in searches)
@@ -282,6 +300,9 @@ def main():
                         help="Path to resume file (skips the file prompt in block A)")
     parser.add_argument("--block", choices=["a", "b", "c", "d"], default=None,
                         help="Run a single block instead of the full wizard")
+    parser.add_argument("--append", action="store_true",
+                        help="Block B: append new search URLs to existing search_urls.txt "
+                             "(instead of overwriting). Use to add a new role direction later.")
     args = parser.parse_args()
 
     print("\n🚀 Auto-apply agent — onboarding")
@@ -290,7 +311,7 @@ def main():
 
     blocks = {
         "a": lambda: block_a(args.resume),
-        "b": block_b,
+        "b": lambda: block_b(append=args.append),
         "c": block_c,
         "d": block_d,
     }

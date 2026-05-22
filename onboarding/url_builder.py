@@ -20,14 +20,21 @@ _SCHEDULE = {
 
 
 def build_hh_url(role: str, city: str = "Москва",
-                 salary: str = "", remote: str = "hybrid") -> str:
+                 salary: str = "", remote: str = "hybrid",
+                 search_scope: str = "everywhere") -> str:
+    """Build HH.ru search URL.
+
+    search_scope:
+      "name"       — vacancy title only (precise, fewer results)
+      "everywhere" — title + description + company (broad, LLM scorer filters precision)
+    """
     city_key = city.lower().strip()
     area = _AREA.get(city_key, "1")
 
     params: dict = {
         "text": role,
         "area": area,
-        "search_field": "name",
+        "search_field": search_scope if search_scope in ("name", "everywhere") else "everywhere",
     }
 
     schedule = _SCHEDULE.get(remote.lower())
