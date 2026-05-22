@@ -84,12 +84,25 @@ class QuestionsHandler(BaseHandler):
 
     def _extract_label(self, inp) -> str:
         try:
-            for xpath in ("xpath=..//label", "xpath=..//..//label", "xpath=..//..//div"):
+            # task-question format: question text is in the parent block, linked via aria-labelledby
+            text = inp.evaluate("""el => {
+                // task-body wraps both the question text (task-question) and the textarea
+                const body = el.closest('[data-qa="task-body"]');
+                if (body) {
+                    const q = body.querySelector('[data-qa="task-question"]');
+                    if (q && q.innerText.trim()) return q.innerText.trim();
+                }
+                return '';
+            }""")
+            if text and text.strip():
+                return text.strip()[:300]
+            # popup/modal format: label tag nearby
+            for xpath in ("xpath=..//label", "xpath=..//..//label"):
                 el = inp.query_selector(xpath)
                 if el:
-                    text = el.inner_text().strip()
-                    if text:
-                        return text[:200]
+                    t = el.inner_text().strip()
+                    if t:
+                        return t[:300]
             return (inp.get_attribute("placeholder") or "")[:200]
         except Exception:
             return ""

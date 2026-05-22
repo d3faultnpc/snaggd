@@ -47,6 +47,13 @@ class FormDetector:
         except Exception:
             info.has_popup_questions = False
 
+        # Employer questions detected as full-page questionnaire (task-question, observed 2026-05-22)
+        try:
+            tq_els = page.query_selector_all('[data-qa="task-question"]')
+            info.has_task_questions = len([e for e in tq_els if e.is_visible()]) > 0
+        except Exception:
+            info.has_task_questions = False
+
         # form-helper-error detection (Sber auto-read pattern, verified 2026-04-06)
         try:
             err_el = page.query_selector(SELECTORS['form_error'])
@@ -124,8 +131,8 @@ class FormDetector:
         if info.has_test_form:
             return FormType.TEST_FORM
 
-        # 0c. Employer questions popup (vacancy-response-question)
-        if info.has_popup_questions:
+        # 0c. Employer questions — popup (vacancy-response-question) or full-page (task-question)
+        if info.has_popup_questions or info.has_task_questions:
             return FormType.EMPLOYER_QUESTIONS
 
         # 0b. Auto-read pattern (Sber etc.): error already visible BEFORE submit + chat button.

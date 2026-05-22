@@ -24,6 +24,7 @@ class FormInfo:
     has_chat_link: bool = False
     has_form_error: bool = False
     has_popup_questions: bool = False
+    has_task_questions: bool = False
     has_test_form: bool = False
     has_progress: bool = False
     progress_step: Optional[int] = None
