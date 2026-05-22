@@ -31,7 +31,7 @@ class CoverOnlyHandler(BaseHandler):
 
         try:
             print("   🔹 Filling cover letter...")
-            textarea.fill(cover_letter)
+            textarea.type(cover_letter, delay=10)
             print("   ✅ Cover letter filled")
 
             self._wait_and_random_delay(page, 2000, 3000)
@@ -68,6 +68,9 @@ class CoverOnlyHandler(BaseHandler):
                 scenario="cover_error"
             )
     
+    def verify_submission(self, page) -> bool:
+        return self._poll_for_success(page, timeout_s=5)
+
     def _is_salary_field(self, element) -> bool:
         """Returns True if the element is a salary expectations field."""
         try:

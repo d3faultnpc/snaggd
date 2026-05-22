@@ -6,6 +6,9 @@ class SalaryHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.SALARY_FORM
 
+    def verify_submission(self, page) -> bool:
+        return True  # never called — process() always returns success=False
+
     def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
         """Always skips salary expectation forms."""
         return ProcessResult(

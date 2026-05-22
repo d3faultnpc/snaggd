@@ -3,208 +3,115 @@
 HH Auto — autonomous job application agent.
 
 Usage:
-    python main.py                        # normal run
-    python main.py --debug                # debug: screenshots + HTML at each step
-    python main.py --debug --max 3        # debug, limit to 3 vacancies
-    python main.py --search-url "https://hh.ru/search/vacancy?..."  # override search URL
+    python main.py                   # normal run (ACTIVE_SITES=hh by default)
+    python main.py --debug           # debug: screenshots + HTML at each step
+    python main.py --dry-run         # score vacancies, do NOT submit
+    python main.py --max 3           # limit to 3 vacancies
 """
 
 import argparse
 import os
 import sys
-from datetime import datetime
-from pathlib import Path
 
-from config import CONFIG
 from logger import Logger
-from adapters.hh import HHAdapter
-from llm_cover import LLMCover
-from hr_matcher import HRMatcher
-
-DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent / "debug_screenshots"))
 
 
-def _load_stop_filters() -> tuple[list, list]:
-    """Parse stop_keywords and stop_companies from data/job_preferences.md."""
-    prefs = CONFIG.data_dir / "job_preferences.md"
-    stop_kw, stop_co = [], []
-    if not prefs.exists():
-        return stop_kw, stop_co
-    current = None
-    for line in prefs.read_text(encoding="utf-8").splitlines():
-        if line.startswith("stop_keywords:"):
-            current = "kw"
-        elif line.startswith("stop_companies:"):
-            current = "co"
-        elif line.startswith("  - "):
-            val = line[4:].strip().lower()
-            if current == "kw":
-                stop_kw.append(val)
-            elif current == "co":
-                stop_co.append(val)
-        elif line.strip() and not line.startswith(" ") and not line.startswith("#"):
-            current = None
-    return stop_kw, stop_co
+def load_active_adapters() -> list:
+    """Dynamically load adapters listed in ACTIVE_SITES env (default: hh)."""
+    active = [s.strip() for s in os.getenv("ACTIVE_SITES", "hh").split(",") if s.strip()]
+    adapters = []
+    for site in active:
+        if site == "hh":
+            from adapters.hh import HHAdapter
+            adapters.append(HHAdapter())
+        else:
+            print(f"⚠  Unknown site '{site}' — skipped. Supported: hh")
+    return adapters
 
 
-def main():
-    parser = argparse.ArgumentParser(description="HH Auto")
-    parser.add_argument("--debug", action="store_true",
+def main() -> int:
+    parser = argparse.ArgumentParser(description="HH Auto — job application agent")
+    parser.add_argument("--debug",   action="store_true",
                         help="Debug mode: screenshots + HTML dumps at each step")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Score and evaluate vacancies, do NOT submit applications")
-    parser.add_argument("--max", type=int, default=None,
-                        help="Max vacancies per session (overrides config)")
+                        help="Score vacancies only — do NOT submit applications")
+    parser.add_argument("--max",     type=int, default=None,
+                        help="Max vacancies per session (overrides MAX_VACANCIES in .env)")
     args = parser.parse_args()
 
+    from config import CONFIG
     if args.max:
         CONFIG.max_vacancies_per_session = args.max
 
     dry_run = args.dry_run
-    debug = args.debug
-    session_dir_base = None
-
-    if debug:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        session_dir_base = DEBUG_DIR / f"session_{ts}"
-        session_dir_base.mkdir(parents=True, exist_ok=True)
-        print(f"🐛 DEBUG mode — snapshots in: {session_dir_base}")
-
-    if dry_run:
-        print("🔍 DRY-RUN mode — scoring only, no applications will be submitted")
+    debug   = args.debug
 
     print("🦾 HH Auto")
-    print(f"📊 Limits: max={CONFIG.max_vacancies_per_session} vacancies, min_score={CONFIG.min_score}")
+    if dry_run:
+        print("🔍 DRY-RUN — scoring only, no applications submitted")
+    if debug:
+        print("🐛 DEBUG — verbose snapshots enabled")
 
-    logger = Logger()
-    adapter = HHAdapter()
-    llm_cover = LLMCover()
-    hr_matcher = HRMatcher()
+    logger  = Logger()
+    adapters = load_active_adapters()
 
-    applied_log = logger.load_applied_log()
-    initial_log_count = len(applied_log)
-    print(f"📄 Loaded applied_log: {initial_log_count} entries")
-
-    stop_keywords, stop_companies = _load_stop_filters()
-    if stop_keywords:
-        print(f"🚫 Stop keywords: {', '.join(stop_keywords)}")
-    if stop_companies:
-        print(f"🚫 Stop companies: {', '.join(stop_companies)}")
-
-    processed_count = 0
-    skip_count = 0
-
-    try:
-        if not adapter.verify():
-            print("❌ Pre-flight check failed — fix errors above before starting")
-            return 1
-
-        if not adapter.start():
-            print("❌ Failed to launch browser")
-            return 1
-
-        vacancies = adapter.get_vacancies()
-        if not vacancies:
-            print("❌ No vacancies found")
-            return 1
-
-        print(f"✅ Found {len(vacancies)} vacancies")
-
-        for url, title, index in vacancies:
-            if processed_count >= CONFIG.max_vacancies_per_session:
-                print(f"⏹ Limit reached: {processed_count} vacancies")
-                break
-
-            if skip_count >= CONFIG.max_skips:
-                print(f"⏹ Skip limit reached: {skip_count}")
-                break
-
-            existing_status = logger.is_processed(url, applied_log)
-            if existing_status:
-                print(f"⏭ Vacancy #{index} already processed ({existing_status})")
-                skip_count += 1
-                continue
-
-            title_lower = title.lower()
-            if any(kw in title_lower for kw in stop_keywords):
-                matched = next(kw for kw in stop_keywords if kw in title_lower)
-                print(f"🚫 Vacancy #{index} skipped — stop keyword '{matched}': {title}")
-                skip_count += 1
-                continue
-
-            print(f"\n{'='*50}")
-            print(f"VACANCY #{index}: {title}")
-            print(f"URL: {url}")
-            logger.log_daily(f"VACANCY #{index}: {title}")
-            logger.log_daily(f"URL: {url}")
-
-            vac_debug_dir = None
-            if debug and session_dir_base:
-                safe_title = "".join(c for c in title[:30] if c.isalnum() or c in " _-").strip()
-                vac_debug_dir = session_dir_base / f"{index:02d}_{safe_title}"
-
-            result = adapter.process_vacancy(
-                url, title, index, llm_cover, hr_matcher,
-                debug=debug, session_dir=vac_debug_dir, dry_run=dry_run
-            )
-
-            logger.log_result(
-                applied_log,
-                url=url,
-                title=title,
-                status=result['status'],
-                reason=result['reason'],
-                scenario=result.get('scenario', 'unknown'),
-                **result.get('details', {})
-            )
-
-            processed_count += 1
-            logger.log_daily(f"Result: {result['status']} - {result['reason']}")
-            print(f"📊 Status: {result['status']} - {result['reason']}")
-            print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
-
-    except KeyboardInterrupt:
-        print("\n⏹ Interrupted by user")
-
-    except Exception as e:
-        print(f"\n❌ Critical error: {e}")
+    if not adapters:
+        print("❌ No adapters configured. Set ACTIVE_SITES=hh in .env")
         return 1
 
-    finally:
-        adapter.close()
+    all_results = []
 
-        new_entries = applied_log[initial_log_count:]
-        successful, skipped = logger.count_session_results(applied_log, initial_log_count)
+    for adapter in adapters:
+        print(f"\n── [{adapter.name()}] ──────────────────────────────────")
 
-        # Score stats
-        scores = [e.get("match_score") for e in new_entries if isinstance(e.get("match_score"), (int, float))]
-        avg_score = round(sum(scores) / len(scores)) if scores else None
+        if not adapter.verify():
+            print(f"❌ [{adapter.name()}] Pre-flight failed — skipping")
+            continue
 
-        # Skip breakdown
-        skip_reasons: dict = {}
-        for e in new_entries:
-            st = e.get("status", "")
-            if "skipped" in st:
-                skip_reasons[st] = skip_reasons.get(st, 0) + 1
+        if not adapter.start():
+            print(f"❌ [{adapter.name()}] Failed to start — skipping")
+            continue
 
-        print(f"\n{'─'*52}")
-        if dry_run:
-            print("DRY-RUN COMPLETE")
-        else:
-            print("SESSION COMPLETE")
-        print(f"  Applied:     {successful}")
-        print(f"  Skipped:     {skipped}" + (f"  {skip_reasons}" if skip_reasons else ""))
-        print(f"  Avg score:   {avg_score if avg_score is not None else 'n/a'}")
-        print(f"  Log entries: {len(new_entries)}")
-        if not dry_run:
-            print(f"  Log file:    {CONFIG.applied_log_path}")
-        print(f"{'─'*52}")
+        try:
+            results = adapter.run(logger, dry_run=dry_run, debug=debug)
+            all_results.extend(results)
+        except KeyboardInterrupt:
+            print(f"\n⏹  [{adapter.name()}] Interrupted")
+            break
+        except Exception as e:
+            print(f"\n❌ [{adapter.name()}] Critical error: {e}")
+        finally:
+            adapter.close()
 
-        logger.log_session_summary(processed_count, successful, skipped, new_entries)
+    # ── Session summary ───────────────────────────────────────────────────────
+    successful = sum(1 for e in all_results if e.get("status", "").startswith("applied"))
+    skipped    = sum(1 for e in all_results if e.get("status", "").startswith("skipped"))
+    unverified = sum(1 for e in all_results if e.get("status") == "applied_unverified")
+    scores     = [e.get("match_score") for e in all_results
+                  if isinstance(e.get("match_score"), (int, float))]
+    avg_score  = round(sum(scores) / len(scores)) if scores else None
 
-        if debug and session_dir_base:
-            print(f"🐛 Debug snapshots: {session_dir_base}")
+    skip_breakdown: dict = {}
+    for e in all_results:
+        st = e.get("status", "")
+        if st.startswith("skipped"):
+            skip_breakdown[st] = skip_breakdown.get(st, 0) + 1
 
+    print(f"\n{'─'*52}")
+    print("DRY-RUN COMPLETE" if dry_run else "SESSION COMPLETE")
+    print(f"  Applied:     {successful}" + (f" ({unverified} unverified)" if unverified else ""))
+    print(f"  Skipped:     {skipped}" + (f"  {skip_breakdown}" if skip_breakdown else ""))
+    print(f"  Avg score:   {avg_score if avg_score is not None else 'n/a'}")
+    print(f"  Log entries: {len(all_results)}")
+    if not dry_run:
+        from config import CONFIG as _cfg
+        print(f"  Log file:    {_cfg.applied_log_path}")
+    print(f"{'─'*52}")
+
+    if unverified:
+        print(f"⚠️  {unverified} applied_unverified — check debug_screenshots/auto_* for DOM snapshots")
+
+    logger.log_session_summary(len(all_results), successful, skipped, all_results)
     return 0
 
 

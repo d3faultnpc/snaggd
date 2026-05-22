@@ -5,6 +5,7 @@ from config import SELECTORS
 class ChatHandler(BaseHandler):
     """
     Handler for auto-read employers (Sber etc.) — applies via chatik.
+    verify_submission: chat selectors unverified live — returns False until tested.
 
     Scenario:
       Employer has auto-view enabled. After clicking 'Apply' the form
@@ -21,6 +22,11 @@ class ChatHandler(BaseHandler):
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.CHAT_INTERFACE
+
+    def verify_submission(self, page) -> bool:
+        # Chat selectors not yet verified live — conservatively unverified until task #5
+        # TODO: check for message-sent indicator in chatik after live test
+        return False
 
     def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
         # 1. Click "Go to chat"
