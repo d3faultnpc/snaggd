@@ -1,5 +1,7 @@
 """HHAdapter — HH.ru implementation of SiteAdapter."""
 
+import os
+from datetime import datetime
 from pathlib import Path
 
 from adapters.base import SiteAdapter
@@ -8,7 +10,11 @@ from adapters.hh.detector import FormDetector
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType
 from config import CONFIG, SELECTORS
+from llm_cover import LLMCover
+from hr_matcher import HRMatcher
 from utils.helpers import random_delay
+
+_DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent.parent.parent / "debug_screenshots"))
 
 
 class HHAdapter(SiteAdapter):
@@ -24,8 +30,111 @@ class HHAdapter(SiteAdapter):
         self.browser = HHBrowser()
         self.detector = FormDetector()
         self.handlers = FormHandlers()
+        self.llm_cover = LLMCover()
+        self.hr_matcher = HRMatcher()
+        self._unverified_count = 0
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
+
+    def run(self, logger, dry_run: bool = False, debug: bool = False) -> list:
+        """Full session loop. Returns new applied_log entries from this run."""
+        applied_log = logger.load_applied_log()
+        initial_count = len(applied_log)
+        self._unverified_count = 0
+
+        stop_keywords, stop_companies = self._load_stop_filters()
+        if stop_keywords:
+            print(f"🚫 [{self.name()}] Stop keywords: {', '.join(stop_keywords)}")
+        if stop_companies:
+            print(f"🚫 [{self.name()}] Stop companies: {', '.join(stop_companies)}")
+
+        session_dir_base = None
+        if debug:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_dir_base = _DEBUG_DIR / f"session_{ts}"
+            session_dir_base.mkdir(parents=True, exist_ok=True)
+            print(f"🐛 [{self.name()}] DEBUG — snapshots in: {session_dir_base}")
+
+        vacancies = self.get_vacancies()
+        if not vacancies:
+            print(f"❌ [{self.name()}] No vacancies found")
+            return []
+        print(f"✅ [{self.name()}] Found {len(vacancies)} vacancies")
+
+        processed_count = 0
+        skip_count = 0
+
+        for url, title, index in vacancies:
+            if processed_count >= CONFIG.max_vacancies_per_session:
+                print(f"⏹ [{self.name()}] Limit reached: {processed_count}")
+                break
+            if skip_count >= CONFIG.max_skips:
+                print(f"⏹ [{self.name()}] Skip limit: {skip_count}")
+                break
+
+            existing = logger.is_processed(url, applied_log)
+            if existing:
+                print(f"⏭ #{index} already processed ({existing})")
+                skip_count += 1
+                continue
+
+            title_lower = title.lower()
+            if any(kw in title_lower for kw in stop_keywords):
+                matched = next(kw for kw in stop_keywords if kw in title_lower)
+                print(f"🚫 #{index} stop keyword '{matched}': {title}")
+                skip_count += 1
+                continue
+
+            print(f"\n{'='*50}")
+            print(f"[{self.name()}] VACANCY #{index}: {title}")
+            print(f"URL: {url}")
+            logger.log_daily(f"[{self.name()}] VACANCY #{index}: {title} — {url}")
+
+            vac_debug_dir = None
+            if debug and session_dir_base:
+                safe = "".join(c for c in title[:30] if c.isalnum() or c in " _-").strip()
+                vac_debug_dir = session_dir_base / f"{index:02d}_{safe}"
+
+            result = self.process_vacancy(
+                url, title, index, self.llm_cover, self.hr_matcher,
+                debug=debug, session_dir=vac_debug_dir, dry_run=dry_run,
+            )
+
+            logger.log_result(
+                applied_log, url=url, title=title,
+                status=result['status'], reason=result['reason'],
+                scenario=result.get('scenario', 'unknown'),
+                **result.get('details', {}),
+            )
+            processed_count += 1
+            logger.log_daily(f"Result: {result['status']} — {result['reason']}")
+            print(f"📊 Status: {result['status']} — {result['reason']}")
+            print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
+
+        return applied_log[initial_count:]
+
+    @staticmethod
+    def _load_stop_filters() -> tuple[list, list]:
+        """Parse stop_keywords and stop_companies from data/job_preferences.md."""
+        prefs = CONFIG.data_dir / "job_preferences.md"
+        stop_kw, stop_co = [], []
+        if not prefs.exists():
+            return stop_kw, stop_co
+        current = None
+        for line in prefs.read_text(encoding="utf-8").splitlines():
+            if line.startswith("stop_keywords:"):
+                current = "kw"
+            elif line.startswith("stop_companies:"):
+                current = "co"
+            elif line.startswith("  - "):
+                val = line[4:].strip().lower()
+                if current == "kw":
+                    stop_kw.append(val)
+                elif current == "co":
+                    stop_co.append(val)
+            elif line.strip() and not line.startswith(" ") and not line.startswith("#"):
+                current = None
+        return stop_kw, stop_co
 
     def verify(self) -> bool:
         """Check cookies exist and at least one search URL is configured."""
@@ -142,6 +251,19 @@ class HHAdapter(SiteAdapter):
             handler = self.handlers.get_handler(form_info.form_type)
             result = handler.process(current_page, cover_letter, hr_matcher,
                                      vacancy_text=vacancy_text)
+
+            # F2: DOM щуп — verify submit actually succeeded
+            if result.success:
+                verified = handler.verify_submission(current_page)
+                if not verified:
+                    print("   ⚠️ DOM verification failed — marking as applied_unverified")
+                    result.status = "applied_unverified"
+                    result.success = False
+                    self._unverified_count += 1
+                    if self._unverified_count >= 3:
+                        print(f"   🚨 {self._unverified_count} unverified submissions — saving auto-snapshot")
+                        auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        self._debug_snapshot(current_page, auto_dir, "unverified")
 
             if debug and session_dir:
                 self._debug_snapshot(current_page, session_dir, f"03_after_handler_{result.status}")

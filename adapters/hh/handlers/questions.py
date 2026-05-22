@@ -77,6 +77,9 @@ class QuestionsHandler(BaseHandler):
         self._wait_and_random_delay(page, 2000, 4000)
         return self._submit(page, filled_count, len(elements))
 
+    def verify_submission(self, page) -> bool:
+        return self._poll_for_success(page, timeout_s=5)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _extract_label(self, inp) -> str:

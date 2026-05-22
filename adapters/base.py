@@ -44,3 +44,11 @@ class SiteAdapter(ABC):
 
         Returns dict: {'status', 'reason', 'scenario', 'details'}.
         """
+
+    @abstractmethod
+    def run(self, logger, dry_run: bool = False, debug: bool = False) -> list:
+        """Full session loop: get vacancies → filter → process each → return new log entries.
+
+        Owns: stop-filter, score gate, vacancy loop, applied_unverified counter, debug snapshots.
+        main.py calls this — adapter owns everything else.
+        """

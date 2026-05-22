@@ -61,6 +61,53 @@ class BaseHandler(ABC):
         """Process the form. kwargs may include vacancy_text (used by QuestionsHandler)."""
         pass
 
+    @abstractmethod
+    def verify_submission(self, page) -> bool:
+        """DOM щуп: confirm submission succeeded after process() returned success.
+        Check DOM for success signals (modal gone, notification visible, button changed).
+        Return False → caller sets status=applied_unverified and increments error counter.
+        """
+        pass
+
+    def _poll_for_success(self, page, timeout_s: int = 5) -> bool:
+        """Shared helper: poll DOM for HH modal submission success signals."""
+        import time
+        end = time.time() + timeout_s
+        success_selectors = [
+            '[data-qa*="vacancy-response-success"]',
+            '[data-qa*="response-completed"]',
+            '[data-qa*="response-notification"]',
+        ]
+        modal_selectors = [
+            '[role="dialog"]',
+            '[data-qa*="modal"]',
+            '[data-qa*="response-popup"]',
+            '.HH-Modal',
+        ]
+        while time.time() < end:
+            # Success notification appeared
+            for sel in success_selectors:
+                try:
+                    el = page.query_selector(sel)
+                    if el and el.is_visible():
+                        return True
+                except Exception:
+                    pass
+            # Modal disappeared (submit closed the dialog)
+            modal_visible = False
+            for sel in modal_selectors:
+                try:
+                    el = page.query_selector(sel)
+                    if el and el.is_visible():
+                        modal_visible = True
+                        break
+                except Exception:
+                    pass
+            if not modal_visible:
+                return True
+            time.sleep(0.5)
+        return False
+
     def _wait_and_random_delay(self, page, min_ms: int = 2000, max_ms: int = 5000) -> None:
         """Human-like random delay."""
         import random

@@ -145,6 +145,9 @@ class HHModalHandler(BaseHandler):
                 continue
         return None
 
+    def verify_submission(self, page) -> bool:
+        return self._poll_for_success(page, timeout_s=5)
+
     def _check_post_submit_edge_case(self, page) -> ProcessResult | None:
         """
         Checks post-submit edge case: 'Application already viewed by employer' → click 'Chat'.
