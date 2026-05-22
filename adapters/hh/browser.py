@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from typing import List, Optional
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
@@ -71,6 +72,15 @@ class HHBrowser:
             try:
                 self.page.goto(search_url, timeout=CONFIG.page_load_timeout,
                                wait_until="domcontentloaded")
+                # HH may redirect to a city subdomain (e.g. odintsovo.hh.ru) based on
+                # geo-cookie or VPN exit node — force back to canonical hh.ru so that
+                # explicit area= parameter is respected and results aren't geo-narrowed.
+                actual_url = self.page.url
+                if '.hh.ru/' in actual_url and '://hh.ru/' not in actual_url:
+                    canonical = re.sub(r'https://[\w-]+\.hh\.ru/', 'https://hh.ru/', actual_url)
+                    print(f"   ⚠️ Geo-redirect detected → forcing hh.ru")
+                    self.page.goto(canonical, timeout=CONFIG.page_load_timeout,
+                                   wait_until="domcontentloaded")
                 print(f"⏳ Waiting {CONFIG.initial_wait/1000}s (page load + modals)...")
                 self.page.wait_for_timeout(CONFIG.initial_wait)
                 if i == 0:

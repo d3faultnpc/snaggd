@@ -223,13 +223,20 @@ class HHAdapter(SiteAdapter):
             try:
                 success_notif = current_page.query_selector(SELECTORS['immediate_success'])
                 if success_notif and success_notif.is_visible():
-                    print("   ✅ Application submitted instantly (no form)")
-                    return {
-                        'status': 'applied_immediate',
-                        'reason': 'Resume submitted without a form',
-                        'scenario': 'immediate',
-                        'details': score_details
-                    }
+                    # HH often shows chat link alongside the success notification —
+                    # that's the only way to send a cover letter after instant apply.
+                    chat_el = current_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
+                    if chat_el and chat_el.is_visible():
+                        print("   ✅ Applied instantly — chat available, routing for cover letter...")
+                        # Fall through to detector → ChatHandler
+                    else:
+                        print("   ✅ Application submitted instantly (no form)")
+                        return {
+                            'status': 'applied_immediate',
+                            'reason': 'Resume submitted without a form',
+                            'scenario': 'immediate',
+                            'details': score_details
+                        }
             except Exception:
                 pass
 

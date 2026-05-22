@@ -31,7 +31,13 @@ class LLMCover:
 
         if text_hash in self.cache:
             print("   📋 Using cached cover letter")
-            return self.cache[text_hash]
+            entry = self.cache[text_hash]
+            # Restore score fields if cache entry includes them (new format: 6 elements)
+            if len(entry) >= 6:
+                self.last_score = entry[3]
+                self.last_matched_skills = entry[4]
+                self.last_gaps = entry[5]
+            return entry[:3]
 
         try:
             result = self._generate_with_llm(text_for_processing)
@@ -41,7 +47,8 @@ class LLMCover:
             result = self._fallback_cover()
             print("   📝 LLM unavailable — using static fallback")
 
-        self.cache[text_hash] = result
+        # Store cover + score data together so cache hits restore score correctly
+        self.cache[text_hash] = list(result) + [self.last_score, self.last_matched_skills, self.last_gaps]
         self._save_cache()
 
         return result

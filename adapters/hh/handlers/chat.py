@@ -50,14 +50,16 @@ class ChatHandler(BaseHandler):
             add_cover.click()
             self._wait_and_random_delay(page, 2000, 3000)
 
-        # 3. Find input field — verified data-qa first, then fallback
+        # 3. Find input field — scoped inside chatik-root to avoid hitting vacancy form
+        chatik_root = page.query_selector('[data-qa="chatik-root"]')
+        scope = chatik_root if chatik_root else page
         chat_input = None
         for selector in [
             SELECTORS['chatik_input'],
             'div[contenteditable="true"]',
             'textarea',
         ]:
-            el = page.query_selector(selector)
+            el = scope.query_selector(selector)
             if el and el.is_visible():
                 chat_input = el
                 break
@@ -87,9 +89,9 @@ class ChatHandler(BaseHandler):
                 scenario="chat_fill_error"
             )
 
-        # 4. Send — try submit button first, fallback to Enter
+        # 4. Send — scoped to chatik-root to avoid clicking vacancy form's "Отправить"
         try:
-            send_btn = page.query_selector('button:has-text("Отправить")')
+            send_btn = scope.query_selector('button:has-text("Отправить")')
             if send_btn and send_btn.is_visible():
                 print("   🔹 Clicking 'Send' in chatik...")
                 send_btn.click()
