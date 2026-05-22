@@ -1,16 +1,31 @@
 # auto-apply-agent
 
-Automated job application agent for [HH.ru](https://hh.ru) (the largest job board in Russia/CIS). Fills out application forms, writes personalized cover letters via LLM, and logs every vacancy it touches.
+> Automated job application agent for [HH.ru](https://hh.ru) — the largest job board in Russia and CIS.
 
-**Tech stack:** Python 3.8+, Playwright, OpenRouter (BYOK)
+Reads your resume, scores each vacancy against it, writes a personalized cover letter, and submits the application — fully automated, one vacancy at a time.
 
-> HH.ru closed its public API in December 2025. This agent uses Playwright for all browser interactions.
+**Why it exists:** HH.ru shut down its public API in December 2025. This agent uses Playwright to drive a real browser session instead.
+
+**Tech stack:** Python 3.10+, Playwright, OpenRouter (BYOK — bring your own key)
+
+---
+
+## What it does
+
+1. Logs into HH.ru using saved cookies (no stored password)
+2. Scrapes vacancies from your search URLs
+3. Scores each vacancy against your resume (0–100) — skips anything below your threshold
+4. Generates a personalized cover letter via LLM, matching the vacancy's language and tone
+5. Detects the form type (modal, questionnaire, chatik, etc.) and fills it accordingly
+6. Logs every result to `data/applied_log.json`
+
+All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `google/gemini-2.5-flash-lite` (~$0.0004 per vacancy).
 
 ---
 
 ## Quickstart
 
-### 1. Install dependencies
+### 1. Install
 
 ```bash
 git clone https://github.com/d3faultnpc/auto-apply-agent.git
@@ -20,22 +35,22 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Run onboarding wizard (one time)
+### 2. Onboarding wizard (one time)
 
 ```bash
 python onboarding/wizard.py
 ```
 
-The wizard walks you through 4 blocks in order:
+The wizard creates all required data files in order:
 
 | Block | What it creates |
 |-------|----------------|
 | D — LLM config | `.env` with your OpenRouter key + model |
 | A — Resume | `data/resume_facts.md` from your PDF/DOCX/image |
 | B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` |
-| C — Tone | `data/tone_of_voice.md` (style for cover letters) |
+| C — Tone | `data/tone_of_voice.md` (cover letter style) |
 
-Get your free OpenRouter key at [openrouter.ai](https://openrouter.ai). Recommended model: `google/gemini-2.5-flash-lite`.
+Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
 
 ### 3. Log in to HH.ru (one time)
 
@@ -43,19 +58,41 @@ Get your free OpenRouter key at [openrouter.ai](https://openrouter.ai). Recommen
 python login.py
 ```
 
-This opens a browser window — log in manually. Cookies are saved to `data/hh_cookies.json`.
+Opens a browser window — log in manually. Cookies are saved to `data/hh_cookies.json` and reused on every run.
 
-### 4. Run the agent
+### 4. Run
 
 ```bash
+# Dry run first — scores vacancies, never clicks Apply
+python main.py --dry-run
+
+# Live run
 python main.py
+
+# Limit to N applications
+python main.py --max 5
 ```
 
-Options:
+| Flag | Description |
+|------|-------------|
+| `--dry-run` | Score + log vacancies without submitting |
+| `--max N` | Stop after N applications |
+| `--debug` | Save page screenshots on unknown forms |
 
-```
---max N      Process at most N vacancies (default: from .env MAX_VACANCIES)
---debug      Save screenshots on unknown forms + verbose logging
+---
+
+## Configuration
+
+All config lives in `.env` (created by the wizard):
+
+```bash
+LLM_API_KEY=sk-or-...                   # OpenRouter key (required)
+LLM_MODEL=google/gemini-2.5-flash-lite  # any OpenRouter model
+MIN_SCORE=60                            # skip vacancies scoring below this
+MAX_VACANCIES=10                        # max applications per run
+HEADLESS=false                          # true = no browser window
+DATA_DIR=./data                         # override data directory
+PROXY_URL=                              # socks5://... (optional)
 ```
 
 ---
@@ -65,74 +102,23 @@ Options:
 ```
 main.py (orchestrator)
 ├── HHAdapter  (adapters/hh/adapter.py)
-│   ├── HHBrowser   — Playwright: cookies, navigation, vacancy scraping
-│   ├── FormDetector — DOM-only form classification (no LLM tokens)
+│   ├── HHBrowser    — Playwright: cookies, navigation, vacancy scraping
+│   ├── FormDetector — DOM-based form classification (no LLM)
 │   └── FormHandlers
 │       ├── hh_modal     — city / metro / schedule dropdowns + cover textarea
 │       ├── cover_only   — single cover textarea
 │       ├── questions    — employer questionnaire (LLM batch fill)
-│       ├── chat         — chatik redirect flow
-│       ├── test_form    — employer test skip
-│       └── salary       — skip (salary-only forms)
-├── LLMCover  (llm_cover.py)   — cover letter + scoring with MD5 cache
+│       ├── chat         — chatik redirect flow (auto-read employers)
+│       ├── test_form    — employer test (skipped by default)
+│       └── salary       — salary-only forms (skipped)
+├── LLMCover  (llm_cover.py)   — cover letter + scoring, MD5 cache
 │   └── LLMAgent (core/llm_agent.py) — OpenRouter gateway
-├── HRMatcher (hr_matcher.py)  — HR question answering via LLM
 └── Logger    (logger.py)      — data/applied_log.json + daily logs
 ```
 
-**Two contexts, zero overlap:**
-- *Playwright context* — all browser actions, zero LLM tokens
-- *LLM context* — cover / score / form fill / HR answers. System prompt (≈1300 tokens, cached per session) = resume_facts + job_preferences + tone_of_voice. User message per vacancy ≈ 600 tokens.
-
-### Data flow
-
-```
-onboarding/wizard.py  →  data/{resume_facts,job_preferences,tone_of_voice,search_urls}
-login.py              →  data/hh_cookies.json
-
-main.py runtime:
-  for each search URL:
-    scrape vacancy list
-    for each vacancy (not in log, not stop-keyword match):
-      open page → extract text
-      click "Откликнуться"
-      [immediate success → log applied_immediate, done]
-      LLMCover.generate(vacancy_text)  →  cover letter + match score
-      FormDetector.detect(page)        →  form type (DOM only)
-      FormHandler.process(...)         →  fill + submit
-      Logger.log_result()              →  data/applied_log.json
-```
-
----
-
-## Configuration
-
-All config lives in `.env` (created by the wizard). Available variables:
-
-```bash
-LLM_API_KEY=sk-or-...          # OpenRouter key (required)
-LLM_MODEL=google/gemini-2.5-flash-lite  # any OpenRouter model
-HEADLESS=false                 # true = no browser window
-MAX_VACANCIES=10               # max applications per run
-DATA_DIR=./data                # override data directory path
-PROXY_URL=                     # socks5://... (optional, for RU users)
-```
-
----
-
-## Sandbox testing
-
-Test without touching real vacancies:
-
-```bash
-DATA_DIR=sandbox/data python main.py --debug --max 1
-```
-
----
-
-## Adding a new site adapter
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+Two contexts, zero overlap:
+- **Browser context** — all Playwright actions, zero LLM tokens
+- **LLM context** — cover / score / form fill. System prompt (~1300 tokens, cached per session) = resume + preferences + tone. Per-vacancy cost ≈ 600 input tokens.
 
 ---
 
@@ -140,22 +126,33 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```
 adapters/
-  base.py          ← SiteAdapter ABC
-  hh/              ← HH.ru adapter (Playwright + cookies)
+  base.py          ← SiteAdapter ABC (extend for new job boards)
+  hh/              ← HH.ru adapter
 core/
-  llm_agent.py     ← OpenRouter gateway, system prompt cache
+  llm_agent.py     ← OpenRouter gateway, prompt cache
 onboarding/
-  wizard.py        ← CLI onboarding (blocks D→A→B→C)
-  resume_parser.py ← multimodal PDF/DOCX/image → ResumeData
-  url_builder.py   ← job preferences → HH search URL
-prompts/
-  cover_letter.md  ← cover letter generation rules
-  match_scoring.md ← JSON scoring schema
-  form_fill.md     ← field-filling rules
-data/              ← gitignored, created by wizard (user-specific)
-scripts/
-  check_sensitive.py  ← pre-push sensitive data scanner
+  wizard.py        ← CLI setup (blocks D→A→B→C)
+  resume_parser.py ← multimodal PDF/DOCX/image → structured resume data
+  url_builder.py   ← job preferences → HH search URLs
+prompts/           ← LLM prompt templates (cover letter, scoring, form fill)
+data/              ← gitignored, created by wizard (your resume, cookies, logs)
+scripts/           ← dev utilities (vacancy inspector, label tester)
 ```
+
+---
+
+## Limitations
+
+- **HH.ru only** — multi-site support is planned for Phase 2
+- **Russian job board** — cover letters are generated in the vacancy's language (Russian or English)
+- **Cookie-based auth** — if cookies expire, re-run `login.py`
+- **Tested on macOS** — should work on Linux; Windows untested
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add a new site adapter.
 
 ---
 
