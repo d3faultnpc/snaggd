@@ -41,6 +41,9 @@ class ResumeData:
     tools: list = field(default_factory=list)
     languages: dict = field(default_factory=dict)
 
+    # Search
+    suggested_queries: list = field(default_factory=list)
+
     # Metadata
     source_file: str = ""
     parsed_at: str = ""
@@ -226,13 +229,15 @@ class ResumeParser:
             '  "achievements": ["quantified result 1"],\n'
             '  "key_cases": ["project or case description"],\n'
             '  "tools": ["tool1", "tool2"],\n'
-            '  "languages": {"english": "B2", "russian": "native"}\n'
+            '  "languages": {"english": "B2", "russian": "native"},\n'
+            '  "suggested_queries": ["product manager b2b", "руководитель продукта"]\n'
             "}\n\n"
             "Rules:\n"
             "- achievements: ONLY quantified results with metrics/numbers\n"
             "- skills: professional skills only, no soft skills\n"
             "- If a field is absent in the CV, use null or empty array\n"
-            "- Do NOT invent or assume anything not explicitly present"
+            "- Do NOT invent or assume anything not explicitly present\n"
+            "- suggested_queries: 2-3 Russian-language HH.ru search queries that best match this candidate's role and specialization; use terms job seekers actually type on hh.ru"
         )
 
     def _parse_json_response(self, raw: str, source_file: str) -> ResumeData:
@@ -262,6 +267,7 @@ class ResumeParser:
             key_cases=parsed.get("key_cases") or [],
             tools=parsed.get("tools") or [],
             languages=parsed.get("languages") or {},
+            suggested_queries=parsed.get("suggested_queries") or [],
             source_file=source_file,
             parsed_at=datetime.now().isoformat(),
         )

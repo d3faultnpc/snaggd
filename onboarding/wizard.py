@@ -116,6 +116,14 @@ def block_a(resume_path: Path | None = None) -> bool:
     out = CONFIG.data_dir / "resume_facts.md"
     out.write_text(ResumeParser(None).to_md(data), encoding="utf-8")
     print(f"\n✓  Saved → {out}")
+
+    if data.suggested_queries:
+        sq_out = CONFIG.data_dir / "suggested_queries.txt"
+        sq_out.write_text("\n".join(data.suggested_queries) + "\n", encoding="utf-8")
+        print(f"✓  Search suggestions → {sq_out}")
+        for q in data.suggested_queries:
+            print(f"   · {q}")
+
     return True
 
 
@@ -131,11 +139,23 @@ def block_b() -> bool:
     stop_co = ask_list("Stop-companies (companies you don't want to apply to)")
     stop_kw = ask_list("Stop-keywords in vacancy titles (e.g. junior, intern)")
 
+    # Load suggested queries from Block A (if available)
+    sq_path = CONFIG.data_dir / "suggested_queries.txt"
+    suggested = []
+    if sq_path.exists():
+        suggested = [l.strip() for l in sq_path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    if suggested:
+        print("Suggested search queries from your resume:")
+        for i, q in enumerate(suggested, 1):
+            print(f"  {i}. {q}")
+        print()
+
     # Collect one or more search URLs
     searches = []  # list of dicts with role/city/salary/remote/url
     while True:
         print(f"\n── Search #{len(searches) + 1} ──")
-        role   = ask("Target role (e.g. Product Manager)")
+        default_role = suggested[len(searches)] if len(searches) < len(suggested) else ""
+        role   = ask("Target role (e.g. Product Manager)", default_role)
         city   = ask("City (e.g. Moscow, remote)", "Moscow")
         salary = ask("Minimum salary, RUB (press Enter to skip)")
         remote = ask("Work format: office / remote / hybrid", "hybrid")
