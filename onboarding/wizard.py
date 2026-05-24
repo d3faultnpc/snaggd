@@ -170,10 +170,15 @@ def block_b(append: bool = False) -> bool:
         scope_choice = ask("  Scope [1/2]", "2")
         search_scope = "name" if scope_choice.strip() == "1" else "everywhere"
 
+        flexible = False
+        if remote.lower() in ("hybrid", "office"):
+            flex_ans = ask("Flexible/temporary schedule only? yes / no (warning: cuts ~95% of listings)", "no")
+            flexible = flex_ans.lower().startswith("y")
+
         url = build_hh_url(role=role, city=city, salary=salary,
-                           remote=remote, search_scope=search_scope)
+                           remote=remote, search_scope=search_scope, flexible=flexible)
         searches.append({"role": role, "city": city, "salary": salary,
-                         "remote": remote, "scope": search_scope, "url": url})
+                         "remote": remote, "scope": search_scope, "flexible": flexible, "url": url})
         print(f"✓  URL: {url}")
 
         another = ask("\nAdd another search direction? yes / no", "no")
