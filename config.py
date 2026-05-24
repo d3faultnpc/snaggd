@@ -48,6 +48,9 @@ class Config:
     # Browser
     headless: bool = os.getenv("HEADLESS", "false").lower() == "true"
 
+    # Test forms: skip by default; set true to attempt LLM fill when no skip link exists
+    fill_tests: bool = os.getenv("FILL_TESTS", "false").lower() == "true"
+
     def __post_init__(self):
         self.logs_dir.mkdir(exist_ok=True)
         self.data_dir.mkdir(exist_ok=True)

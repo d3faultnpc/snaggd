@@ -1,5 +1,5 @@
 from .base import BaseHandler, FormType, ProcessResult
-from config import SELECTORS
+from config import SELECTORS, CONFIG
 
 
 class TestFormHandler(BaseHandler):
@@ -22,6 +22,14 @@ class TestFormHandler(BaseHandler):
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
             if not no_q_link or not no_q_link.is_visible():
+                if CONFIG.fill_tests:
+                    # FILL_TESTS=true: delegate to LLM fill — not yet implemented
+                    return ProcessResult(
+                        success=False,
+                        status="skipped_test_form",
+                        reason="Test mandatory — LLM fill not yet implemented (FILL_TESTS=true noted)",
+                        scenario="test_form_fill_pending"
+                    )
                 return ProcessResult(
                     success=False,
                     status="skipped_test_form",
