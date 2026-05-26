@@ -181,6 +181,10 @@ class HHAdapter(SiteAdapter):
             if canonical and logger is not None and applied_log is not None:
                 existing = logger.is_processed(canonical, applied_log)
                 if existing:
+                    # Human-like pause even for skipped vacancies — avoids open→close instantly pattern
+                    # that triggers HH bot filters.
+                    delay = random_delay(7000, 10000)
+                    print(f"   ⏳ Pause {delay/1000:.1f}s (human behavior)")
                     print(f"   ⏭ Already processed as canonical ({existing}): {canonical}")
                     return {'status': existing, 'reason': f'Already processed: {canonical}', 'scenario': 'skip'}
 
@@ -391,7 +395,12 @@ class HHAdapter(SiteAdapter):
             page.screenshot(path=str(session_dir / f"{label}.png"), full_page=False)
 
             modal = None
-            for sel in ['[role="dialog"]', '[data-qa*="modal"]', '[data-qa*="response"]', '.HH-Modal']:
+            for sel in [
+                '[data-qa="chatik-root"]',   # chatik modal (must come before generic response selector)
+                '[role="dialog"]',
+                '[data-qa*="modal"]',
+                '.HH-Modal',
+            ]:
                 el = page.query_selector(sel)
                 if el and el.is_visible():
                     modal = el

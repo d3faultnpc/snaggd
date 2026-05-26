@@ -55,8 +55,8 @@ class ChatHandler(BaseHandler):
             self._handle_hr_bot_loop(page, hr_matcher)
 
         # 3. Click "Добавить сопроводительное" to open the cover letter field
-        add_cover = page.query_selector(SELECTORS['chatik_add_cover'])
-        if not add_cover or not add_cover.is_visible():
+        add_cover = self._find_add_cover_btn(page)
+        if not add_cover:
             print("   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter")
             return ProcessResult(
                 success=True,
@@ -124,6 +124,19 @@ class ChatHandler(BaseHandler):
             )
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _find_add_cover_btn(self, page):
+        """Finds the 'Добавить сопроводительное' button inside chatik.
+
+        Element type varies across HH versions (a/button/div). Iterates through
+        a cascade of selectors — data-qa first, then by tag+text, then any tag.
+        Searches full page (chatik may render outside chatik-root via React portal).
+        """
+        for selector in SELECTORS['chatik_add_cover']:
+            el = page.query_selector(selector)
+            if el and el.is_visible():
+                return el
+        return None
 
     def _find_cover_input(self, page):
         """Finds the cover letter textarea that appears after 'Добавить сопроводительное'.

@@ -92,7 +92,15 @@ SELECTORS = {
     'popup_questions': '[data-qa^="vacancy-response-question"]',
     'popup_add_cover': '[data-qa="add-cover-letter"]',
     # chatik selectors — partially verified 2026-05-26; cover_input cascade unverified (update after live debug)
-    'chatik_add_cover': 'a:has-text("Добавить сопроводительное")',   # no data-qa, text-based
+    # "Добавить сопроводительное" inside chatik — element type varies across HH versions.
+    # Cascade: try known data-qa first, then by element type, fallback to any tag via Playwright text selector.
+    'chatik_add_cover': [
+        '[data-qa="chatik-chat-message-applicant-action"]',  # from spec (unverified)
+        'button:has-text("Добавить сопроводительное")',
+        'div:has-text("Добавить сопроводительное")',
+        'span:has-text("Добавить сопроводительное")',
+        'a:has-text("Добавить сопроводительное")',           # original fallback
+    ],
     'chatik_input': '[data-qa="textarea-native-wrapper"] textarea',  # "Сообщение" field, verified 2026-05-26
     # Cover letter textarea that appears after clicking "Добавить сопроводительное"
     # Cascade: try specific data-qa first, fall back to placeholder text
