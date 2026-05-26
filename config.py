@@ -96,7 +96,15 @@ SELECTORS = {
     'inputs_all': 'input[type="text"], textarea, input[type="radio"]',
     'progress_indicators': '[class*="progress"], [class*="step"], [class*="Step"]',
     'labels': 'label',
-    'buttons': 'button, a[role="button"]'
+    'buttons': 'button, a[role="button"]',
+    # Company name on the vacancy page — used for Level 1 stop_companies filter.
+    # HH renders employer name as a link; data-qa is the reliable anchor.
+    # Fallback checked in order if primary not found.
+    'company_name': '[data-qa="vacancy-company-name"]',
+    'company_name_fallback': '[data-qa="bloko-header-2"]',
+    # Employer review rating score on vacancy page (confirmed in debug_screenshots 2026-04-05).
+    # Returns a numeric string e.g. "4.3". Present only if the employer has reviews on HH.
+    'employer_rating': '[data-qa="company-review-rating-value"]',
 }
 
 FORM_KEYWORDS = {

@@ -13,6 +13,7 @@ from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
 from hr_matcher import HRMatcher
 from utils.helpers import random_delay
+from utils.filters import StopFilters, load_stop_filters
 
 _DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent.parent.parent / "debug_screenshots"))
 
@@ -37,16 +38,22 @@ class HHAdapter(SiteAdapter):
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
     def run(self, logger, dry_run: bool = False, debug: bool = False) -> list:
-        """Full session loop. Returns new applied_log entries from this run."""
+        """Full session loop. Returns new applied_log entries from this run.
+
+        Three-tier stop filter (all adapter-agnostic config from job_preferences.md):
+          Level 0 — title_keywords : exact match in title, before page open, 0 LLM.
+          Level 1 — companies      : exact match in company name DOM, after page open, 0 LLM.
+          Level 2 — categories     : LLM semantic detection inside score_vacancy call.
+        All blocked vacancies are written to applied_log with specific statuses so the
+        dashboard can render a complete funnel (found → scored → applied).
+        """
         applied_log = logger.load_applied_log()
         initial_count = len(applied_log)
         self._unverified_count = 0
 
-        stop_keywords, stop_companies = self._load_stop_filters()
-        if stop_keywords:
-            print(f"🚫 [{self.name()}] Stop keywords: {', '.join(stop_keywords)}")
-        if stop_companies:
-            print(f"🚫 [{self.name()}] Stop companies: {', '.join(stop_companies)}")
+        stop_filters = load_stop_filters(CONFIG.data_dir)
+        if not stop_filters.is_empty():
+            print(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}")
 
         session_dir_base = None
         if debug:
@@ -78,10 +85,20 @@ class HHAdapter(SiteAdapter):
                 skip_count += 1
                 continue
 
+            # ── Level 0: title keyword filter (no LLM, no page open) ────────────
             title_lower = title.lower()
-            if any(kw in title_lower for kw in stop_keywords):
-                matched = next(kw for kw in stop_keywords if kw in title_lower)
-                print(f"🚫 #{index} stop keyword '{matched}': {title}")
+            matched_kw = next(
+                (kw for kw in stop_filters.title_keywords if kw in title_lower), None
+            )
+            if matched_kw:
+                print(f"🚫 #{index} title_blocked '{matched_kw}': {title}")
+                logger.log_result(
+                    applied_log, url=url, title=title,
+                    status="title_blocked",
+                    reason=f"Title keyword: '{matched_kw}'",
+                    scenario="skip",
+                )
+                logger.log_daily(f"[{self.name()}] title_blocked #{index}: {title}")
                 skip_count += 1
                 continue
 
@@ -98,6 +115,7 @@ class HHAdapter(SiteAdapter):
             result = self.process_vacancy(
                 url, title, index, self.llm_cover, self.hr_matcher,
                 debug=debug, session_dir=vac_debug_dir, dry_run=dry_run,
+                stop_filters=stop_filters,
             )
 
             logger.log_result(
@@ -112,29 +130,6 @@ class HHAdapter(SiteAdapter):
             print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
 
         return applied_log[initial_count:]
-
-    @staticmethod
-    def _load_stop_filters() -> tuple[list, list]:
-        """Parse stop_keywords and stop_companies from data/job_preferences.md."""
-        prefs = CONFIG.data_dir / "job_preferences.md"
-        stop_kw, stop_co = [], []
-        if not prefs.exists():
-            return stop_kw, stop_co
-        current = None
-        for line in prefs.read_text(encoding="utf-8").splitlines():
-            if line.startswith("stop_keywords:"):
-                current = "kw"
-            elif line.startswith("stop_companies:"):
-                current = "co"
-            elif line.startswith("  - "):
-                val = line[4:].strip().lower()
-                if current == "kw":
-                    stop_kw.append(val)
-                elif current == "co":
-                    stop_co.append(val)
-            elif line.strip() and not line.startswith(" ") and not line.startswith("#"):
-                current = None
-        return stop_kw, stop_co
 
     def verify(self) -> bool:
         """Check cookies exist and at least one search URL is configured."""
@@ -162,8 +157,15 @@ class HHAdapter(SiteAdapter):
 
     def process_vacancy(self, url: str, title: str, index: int,
                         llm_cover, hr_matcher,
-                        debug: bool = False, session_dir=None, dry_run: bool = False) -> dict:
-        """Process one vacancy: open → score → (skip if low score / dry-run) → click Apply → fill → submit."""
+                        debug: bool = False, session_dir=None, dry_run: bool = False,
+                        stop_filters: StopFilters | None = None) -> dict:
+        """Process one vacancy: open → filter → score → apply → fill → submit.
+
+        stop_filters levels handled here:
+          Level 1 — company name check (after page open, before LLM)
+          Level 2 — semantic stop_match check (inside LLM score call)
+        Level 0 (title) is handled upstream in run() before page open.
+        """
         try:
             if not self.browser.open_vacancy(url):
                 return {'status': 'skipped_open_error', 'reason': 'Failed to open vacancy'}
@@ -174,15 +176,66 @@ class HHAdapter(SiteAdapter):
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "01_vacancy_page")
 
+            # ── Level 1: employer data extraction (no LLM) ──────────────────────
+            # Always extract company name and rating — used for both hard filters
+            # and LLM context enrichment. Rating = None means employer has no HH reviews.
+            company = self.browser.get_company_name()
+            employer_rating = self.browser.get_employer_rating()
+
+            if company:
+                rating_str = f"{employer_rating}/5.0" if employer_rating is not None else "no reviews"
+                print(f"   🏢 {company} | HH rating: {rating_str}")
+
+            # Level 1a — company name exact match
+            if stop_filters and stop_filters.companies and company:
+                company_lower = company.lower()
+                matched_co = next(
+                    (co for co in stop_filters.companies if co in company_lower), None
+                )
+                if matched_co:
+                    print(f"   🚫 company_blocked '{matched_co}': {company}")
+                    return {
+                        'status': 'company_blocked',
+                        'reason': f"Company '{company}' matches stop list: '{matched_co}'",
+                        'scenario': 'skip',
+                        'details': {'company': company, 'employer_rating': employer_rating},
+                    }
+
+            # Level 1b — employer rating threshold
+            # Only skip when rating is explicitly present AND below threshold.
+            # None (no reviews) → unknown → do NOT skip, let LLM decide.
+            if (stop_filters and stop_filters.min_employer_rating is not None
+                    and employer_rating is not None
+                    and employer_rating < stop_filters.min_employer_rating):
+                print(f"   🚫 rating_blocked {employer_rating} < {stop_filters.min_employer_rating}")
+                return {
+                    'status': 'rating_blocked',
+                    'reason': (
+                        f"Employer rating {employer_rating} below threshold "
+                        f"{stop_filters.min_employer_rating} — {company or 'unknown'}"
+                    ),
+                    'scenario': 'skip',
+                    'details': {'company': company or '', 'employer_rating': employer_rating},
+                }
+
             vacancy_text = self.browser.get_vacancy_text()
             if not vacancy_text:
                 return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text'}
 
-            # Score and generate cover BEFORE clicking apply — enables dry-run and score gating
+            # ── Enrich vacancy context with employer metadata ────────────────────
+            # Prepend company name + HH rating so LLM can factor them into score
+            # and signals (e.g. "high_rated_employer", "no_reviews"). This costs
+            # ~20 extra tokens and requires no additional LLM call.
+            llm_context = _build_employer_header(company, employer_rating) + vacancy_text
+
+            # Score first, then cover — score may reveal stop_match before cover is used.
+            # llm_context = employer header (~20t) + vacancy_text. Cached by MD5.
             print("   🔹 Scoring vacancy...")
-            cover_letter, template_name, signals = llm_cover.generate(vacancy_text)
+            cover_letter, template_name, signals = llm_cover.generate(llm_context)
             match_score = llm_cover.last_score
-            print(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}")
+            stop_match = llm_cover.last_stop_match
+            print(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}"
+                  + (f", stop_match: {stop_match}" if stop_match else ""))
 
             score_details = {
                 'match_score': match_score,
@@ -190,7 +243,19 @@ class HHAdapter(SiteAdapter):
                 'gaps': llm_cover.last_gaps,
                 'signals': signals,
                 'template_name': template_name,
+                'company': company or '',
+                'employer_rating': employer_rating,
             }
+
+            # ── Level 2: semantic stop_match from LLM ───────────────────────────
+            if stop_match:
+                print(f"   🚫 semantic_blocked: LLM detected '{stop_match}'")
+                return {
+                    'status': 'semantic_blocked',
+                    'reason': f"LLM detected blocked category: '{stop_match}'",
+                    'scenario': 'skip',
+                    'details': score_details,
+                }
 
             if dry_run:
                 print(f"   🔍 Dry-run: score={match_score}, skills={llm_cover.last_matched_skills}")
@@ -331,3 +396,27 @@ class HHAdapter(SiteAdapter):
             print(f"   📸 [{label}] screenshot + HTML + {len(data_qa)} data-qa → {session_dir.name}/")
         except Exception as e:
             print(f"   ⚠️ debug_snapshot [{label}] error: {e}")
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+def _build_employer_header(company: str, rating: float | None) -> str:
+    """Build a short employer metadata block to prepend to vacancy_text for LLM context.
+
+    ~20 extra tokens. Lets the LLM factor employer reputation into score and signals:
+      - high rating (≥4.5) → signal "top_employer"
+      - low rating (< 3.5) → signal "low_rated_employer" (if not already filtered out)
+      - no reviews       → signal "no_hh_reviews" (unknown reputation)
+
+    Returns empty string if no employer data is available.
+    """
+    if not company and rating is None:
+        return ""
+    parts = []
+    if company:
+        parts.append(f"Employer: {company}")
+    if rating is not None:
+        parts.append(f"HH Employer Rating: {rating}/5.0")
+    else:
+        parts.append("HH Employer Rating: no reviews on HH")
+    return "\n".join(parts) + "\n\n"
