@@ -23,6 +23,7 @@ class FormInfo:
     has_cover_field: bool = False
     has_chat_link: bool = False
     has_form_error: bool = False
+    has_response_submit: bool = False  # vacancy-response-letter-submit visible → cover form ready
     has_popup_questions: bool = False
     has_task_questions: bool = False
     has_test_form: bool = False
