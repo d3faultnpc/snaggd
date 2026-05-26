@@ -68,6 +68,7 @@ SELECTORS = {
         '[data-qa="vacancy-response"]'
     ],
     'send_button': [
+        '[data-qa="vacancy-response-letter-submit"]',  # post-apply cover form (verified 2026-05-26)
         'button:has-text("Отправить")',
         'button:has-text("Откликнуться")',
         '[data-qa="vacancy-response-send-button"]'
