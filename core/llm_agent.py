@@ -124,7 +124,7 @@ class LLMAgent:
             "Help craft personalized applications based on the candidate profile below.\n"
         ]
         for filename, label in [
-            ("resume_facts.md",    "CANDIDATE PROFILE"),
+            ("candidate.md",       "CANDIDATE PROFILE"),
             ("job_preferences.md", "JOB PREFERENCES"),
             ("tone_of_voice.md",   "TONE & STYLE"),
         ]:
