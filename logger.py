@@ -1,8 +1,17 @@
 import json
+import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from config import CONFIG
+
+
+def _extract_vacancy_id(url: str) -> Optional[str]:
+    """Extracts numeric vacancy ID from any HH URL variant (canonical or relative)."""
+    if not url:
+        return None
+    m = re.search(r'/vacancy/(\d+)', url)
+    return m.group(1) if m else None
 
 class Logger:
     def __init__(self):
@@ -29,10 +38,21 @@ class Logger:
             json.dump(log_data, f, ensure_ascii=False, indent=2)
     
     def is_processed(self, url: str, applied_log: List[Dict[str, Any]]) -> Optional[str]:
-        """Returns existing status string if vacancy was already processed, else None."""
+        """Returns existing status if vacancy was already processed, else None.
+
+        Matches by vacancy ID extracted from URL so that tracking URLs
+        (adsrv.hh.ru/click?...&meta=SESSION_HASH) match canonical log entries
+        (hh.ru/vacancy/12345678) across sessions.
+        Falls back to exact URL match for entries without a parseable vacancy ID.
+        """
+        query_id = _extract_vacancy_id(url)
         for entry in applied_log:
             if entry.get("url") == url:
                 return entry.get("status")
+            if query_id:
+                stored_id = entry.get("vacancy_id") or _extract_vacancy_id(entry.get("url", ""))
+                if stored_id == query_id:
+                    return entry.get("status")
         return None
     
     def log_result(self, applied_log: List[Dict[str, Any]], **kwargs) -> None:

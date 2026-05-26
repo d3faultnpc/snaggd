@@ -12,6 +12,28 @@ class HHBrowser:
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.vacancy_page: Optional[Page] = None
+        self._canonical_url: Optional[str] = None
+        self._vacancy_id: Optional[str] = None
+
+    @property
+    def canonical_url(self) -> Optional[str]:
+        return self._canonical_url
+
+    @property
+    def vacancy_id(self) -> Optional[str]:
+        return self._vacancy_id
+
+    @staticmethod
+    def _extract_vacancy_id(url: str) -> Optional[str]:
+        """Extracts numeric vacancy ID from any HH URL variant.
+
+        Works on both canonical (hh.ru/vacancy/12345678) and relative (/vacancy/12345678).
+        Returns None for tracking URLs (adsrv.hh.ru/click?...) that encode no vacancy ID.
+        """
+        if not url:
+            return None
+        m = re.search(r'/vacancy/(\d+)', url)
+        return m.group(1) if m else None
         
     def start(self) -> bool:
         """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
@@ -134,12 +156,19 @@ class HHBrowser:
             return []
     
     def open_vacancy(self, url: str) -> bool:
-        """Opens a vacancy in a new tab."""
+        """Opens a vacancy in a new tab and captures canonical URL + vacancy ID."""
+        self._canonical_url = None
+        self._vacancy_id = None
         try:
             self.vacancy_page = self.context.new_page()
             self.vacancy_page.goto(url, timeout=CONFIG.page_load_timeout, wait_until="domcontentloaded")
             self.vacancy_page.bring_to_front()
             self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
+
+            # Capture canonical URL after redirect (tracking URLs resolve to hh.ru/vacancy/ID)
+            self._canonical_url = self.vacancy_page.url
+            self._vacancy_id = self._extract_vacancy_id(self._canonical_url)
+
             print("   ✅ Vacancy loaded")
             self._dismiss_cookie_banner(self.vacancy_page)
             return True
