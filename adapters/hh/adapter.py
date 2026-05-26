@@ -158,7 +158,7 @@ class HHAdapter(SiteAdapter):
     def process_vacancy(self, url: str, title: str, index: int,
                         llm_cover, hr_matcher,
                         debug: bool = False, session_dir=None, dry_run: bool = False,
-                        stop_filters: StopFilters | None = None) -> dict:
+                        stop_filters=None) -> dict:
         """Process one vacancy: open → filter → score → apply → fill → submit.
 
         stop_filters levels handled here:
@@ -400,7 +400,7 @@ class HHAdapter(SiteAdapter):
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
 
-def _build_employer_header(company: str, rating: float | None) -> str:
+def _build_employer_header(company, rating) -> str:
     """Build a short employer metadata block to prepend to vacancy_text for LLM context.
 
     ~20 extra tokens. Lets the LLM factor employer reputation into score and signals:

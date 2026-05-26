@@ -64,7 +64,7 @@ class Logger:
         self.log_daily(f"applied_log.json path: {self.applied_log_path}")
         self.log_daily(f"Daily log path: {self.daily_log_path}")
     
-    def count_session_results(self, applied_log: List[Dict[str, Any]], initial_count: int) -> tuple[int, int]:
+    def count_session_results(self, applied_log: List[Dict[str, Any]], initial_count: int) -> "tuple[int, int]":
         """Counts successful and skipped results for entries added in this session."""
         new_entries = applied_log[initial_count:]
         successful = sum(1 for e in new_entries if e.get('status', '').startswith('applied'))

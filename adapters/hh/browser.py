@@ -148,7 +148,7 @@ class HHBrowser:
             print(f"   ❌ Error opening vacancy: {e}")
             return False
     
-    def get_employer_rating(self) -> float | None:
+    def get_employer_rating(self) -> Optional[float]:
         """Extracts employer review rating score from the open vacancy page.
 
         Selector confirmed from debug_screenshots (2026-04-05):
