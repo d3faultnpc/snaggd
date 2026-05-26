@@ -141,12 +141,21 @@ class HHBrowser:
             self.vacancy_page.bring_to_front()
             self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
             print("   ✅ Vacancy loaded")
-
+            self._dismiss_cookie_banner(self.vacancy_page)
             return True
 
         except Exception as e:
             print(f"   ❌ Error opening vacancy: {e}")
             return False
+
+    def _dismiss_cookie_banner(self, page) -> None:
+        """Silently closes cookie consent banner on any page (footer or modal)."""
+        try:
+            btn = page.query_selector(SELECTORS['cookie_accept'])
+            if btn and btn.is_visible():
+                btn.click()
+        except Exception:
+            pass
     
     def get_employer_rating(self) -> Optional[float]:
         """Extracts employer review rating score from the open vacancy page.

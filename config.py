@@ -92,8 +92,8 @@ SELECTORS = {
     'popup_questions': '[data-qa^="vacancy-response-question"]',
     'popup_add_cover': '[data-qa="add-cover-letter"]',
     # chatik selectors — NOT verified on live modal
-    'chatik_add_cover': '[data-qa="chatik-chat-message-applicant-action"]',
-    'chatik_input': '[data-qa="chatik-new-message-text"]',
+    'chatik_add_cover': 'a:has-text("Добавить сопроводительное")',  # no data-qa, text-based
+    'chatik_input': '[data-qa="textarea-native-wrapper"] textarea',  # verified 2026-05-26
     'inputs_all': 'input[type="text"], textarea, input[type="radio"]',
     'progress_indicators': '[class*="progress"], [class*="step"], [class*="Step"]',
     'labels': 'label',

@@ -50,16 +50,18 @@ class ChatHandler(BaseHandler):
             add_cover.click()
             self._wait_and_random_delay(page, 2000, 3000)
 
-        # 3. Find input field — scoped inside chatik-root to avoid hitting vacancy form
-        chatik_root = page.query_selector('[data-qa="chatik-root"]')
-        scope = chatik_root if chatik_root else page
+        # 3. Find input field — search full page (textarea may be in React portal
+        #    rendered outside chatik-root DOM node despite appearing inside visually).
+        #    Confirmed selectors from live debug snapshot 2026-05-26.
         chat_input = None
         for selector in [
-            SELECTORS['chatik_input'],
+            SELECTORS['chatik_input'],                       # textarea-native-wrapper textarea
+            '[data-qa="textarea-wrapper"] textarea',
+            'textarea[placeholder*="ообщени"]',              # "Сообщение" / "сообщение"
+            '[data-qa="chatik-root"] div[contenteditable="true"]',
             'div[contenteditable="true"]',
-            'textarea',
         ]:
-            el = scope.query_selector(selector)
+            el = page.query_selector(selector)
             if el and el.is_visible():
                 chat_input = el
                 break
@@ -74,11 +76,7 @@ class ChatHandler(BaseHandler):
 
         print("   🔹 Typing cover letter into chatik...")
         try:
-            tag = chat_input.evaluate('el => el.tagName.toLowerCase()')
-            if tag == 'div':
-                chat_input.type(cover_letter, delay=10)
-            else:
-                chat_input.type(cover_letter, delay=10)
+            chat_input.type(cover_letter, delay=10)
             print("   ✅ Message typed")
             self._wait_and_random_delay(page, 2000, 3000)
         except Exception as e:
@@ -89,8 +87,10 @@ class ChatHandler(BaseHandler):
                 scenario="chat_fill_error"
             )
 
-        # 4. Send — scoped to chatik-root to avoid clicking vacancy form's "Отправить"
+        # 4. Send — prefer chatik-root scope to avoid clicking vacancy form's "Отправить"
         try:
+            chatik_root = page.query_selector('[data-qa="chatik-root"]')
+            scope = chatik_root if chatik_root else page
             send_btn = scope.query_selector('button:has-text("Отправить")')
             if send_btn and send_btn.is_visible():
                 print("   🔹 Clicking 'Send' in chatik...")
