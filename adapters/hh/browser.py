@@ -148,6 +148,41 @@ class HHBrowser:
             print(f"   ❌ Error opening vacancy: {e}")
             return False
     
+    def get_employer_rating(self) -> float | None:
+        """Extracts employer review rating score from the open vacancy page.
+
+        Selector confirmed from debug_screenshots (2026-04-05):
+          [data-qa="company-review-rating-value"] → text "4.3"
+
+        Returns float if found, None if the employer has no reviews on HH.ru.
+        None should be treated as "unknown rating" — caller decides whether to skip.
+        """
+        try:
+            el = self.vacancy_page.query_selector(SELECTORS['employer_rating'])
+            if el and el.is_visible():
+                raw = el.inner_text().strip().replace(",", ".")
+                return float(raw)
+        except Exception:
+            pass
+        return None
+
+    def get_company_name(self) -> str:
+        """Extracts employer/company name from the open vacancy page.
+
+        Returns empty string if not found — caller treats that as 'unknown, skip check'.
+        Tries primary selector first, falls back to secondary.
+        """
+        for selector in (SELECTORS['company_name'], SELECTORS['company_name_fallback']):
+            try:
+                el = self.vacancy_page.query_selector(selector)
+                if el and el.is_visible():
+                    name = el.inner_text().strip()
+                    if name:
+                        return name
+            except Exception:
+                continue
+        return ""
+
     def get_vacancy_text(self) -> Optional[str]:
         """Extracts vacancy description text."""
         try:

@@ -48,18 +48,29 @@ class LLMAgent:
         return (resp.choices[0].message.content or "").strip()
 
     def score_vacancy(self, vacancy_text: str) -> dict:
-        """Returns {"score": 0-100, "matched_skills": [], "gaps": [], "signals": []}."""
+        """Returns {score, matched_skills, gaps, signals, stop_match}.
+
+        stop_match: str category name if LLM detected a blocked category, else None.
+        The list of blocked categories comes from stop_categories in the system prompt
+        (loaded from job_preferences.md) — no extra parameters needed.
+        """
         prompt = self._load_prompt("match_scoring.md")
         resp = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=300,
+            max_tokens=400,
             messages=[
                 {"role": "system", "content": self._system()},
                 {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:3000]}"},
             ],
         )
         raw = (resp.choices[0].message.content or "{}").strip()
-        return self._parse_json(raw, fallback={"score": 50, "matched_skills": [], "gaps": [], "signals": []})
+        return self._parse_json(raw, fallback={
+            "score": 50,
+            "matched_skills": [],
+            "gaps": [],
+            "signals": [],
+            "stop_match": None,
+        })
 
     def fill_form(self, vacancy_text: str, fields: list[dict]) -> dict[str, str]:
         """
