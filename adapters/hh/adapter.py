@@ -115,13 +115,18 @@ class HHAdapter(SiteAdapter):
             result = self.process_vacancy(
                 url, title, index, self.llm_cover, self.hr_matcher,
                 debug=debug, session_dir=vac_debug_dir, dry_run=dry_run,
-                stop_filters=stop_filters,
+                stop_filters=stop_filters, logger=logger, applied_log=applied_log,
             )
 
+            # Use canonical URL (hh.ru/vacancy/ID) for log storage so future runs
+            # can dedup by vacancy ID regardless of tracking URL meta= changes.
+            canonical = self.browser.canonical_url or url
+            vacancy_id = self.browser.vacancy_id
             logger.log_result(
-                applied_log, url=url, title=title,
+                applied_log, url=canonical, title=title,
                 status=result['status'], reason=result['reason'],
                 scenario=result.get('scenario', 'unknown'),
+                vacancy_id=vacancy_id,
                 **result.get('details', {}),
             )
             processed_count += 1
@@ -158,7 +163,7 @@ class HHAdapter(SiteAdapter):
     def process_vacancy(self, url: str, title: str, index: int,
                         llm_cover, hr_matcher,
                         debug: bool = False, session_dir=None, dry_run: bool = False,
-                        stop_filters=None) -> dict:
+                        stop_filters=None, logger=None, applied_log=None) -> dict:
         """Process one vacancy: open → filter → score → apply → fill → submit.
 
         stop_filters levels handled here:
@@ -169,6 +174,15 @@ class HHAdapter(SiteAdapter):
         try:
             if not self.browser.open_vacancy(url):
                 return {'status': 'skipped_open_error', 'reason': 'Failed to open vacancy'}
+
+            # Canonical dedup check: tracking URL resolves to hh.ru/vacancy/ID after redirect.
+            # Catches vacancies already logged under canonical URL even when scraped as adsrv tracking URL.
+            canonical = self.browser.canonical_url
+            if canonical and logger is not None and applied_log is not None:
+                existing = logger.is_processed(canonical, applied_log)
+                if existing:
+                    print(f"   ⏭ Already processed as canonical ({existing}): {canonical}")
+                    return {'status': existing, 'reason': f'Already processed: {canonical}', 'scenario': 'skip'}
 
             delay = random_delay(15000, 25000)
             print(f"   ⏳ Pause {delay/1000:.1f}s (reading vacancy)")

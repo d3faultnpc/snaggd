@@ -91,9 +91,30 @@ SELECTORS = {
     'letter_toggle': '[data-qa="vacancy-response-letter-toggle"]',
     'popup_questions': '[data-qa^="vacancy-response-question"]',
     'popup_add_cover': '[data-qa="add-cover-letter"]',
-    # chatik selectors — NOT verified on live modal
-    'chatik_add_cover': 'a:has-text("Добавить сопроводительное")',  # no data-qa, text-based
-    'chatik_input': '[data-qa="textarea-native-wrapper"] textarea',  # verified 2026-05-26
+    # chatik selectors — partially verified 2026-05-26; cover_input cascade unverified (update after live debug)
+    'chatik_add_cover': 'a:has-text("Добавить сопроводительное")',   # no data-qa, text-based
+    'chatik_input': '[data-qa="textarea-native-wrapper"] textarea',  # "Сообщение" field, verified 2026-05-26
+    # Cover letter textarea that appears after clicking "Добавить сопроводительное"
+    # Cascade: try specific data-qa first, fall back to placeholder text
+    'chatik_cover_input': [
+        '[data-qa="chatik-cover-letter-textarea"]',
+        '[data-qa="cover-letter-textarea"]',
+        'textarea[placeholder*="сопроводительн"]',
+        'textarea[placeholder*="Сопроводительн"]',
+    ],
+    # Send button for cover letter form (inside chatik after "Добавить")
+    'chatik_cover_send': [
+        '[data-qa="chatik-cover-letter-submit"]',
+        'button:has-text("Отправить сопроводительное")',
+        'button:has-text("Сохранить")',
+    ],
+    # HR-bot message bubble (PERX and similar auto-interview bots)
+    # Used in _handle_hr_bot_loop() to detect and read bot questions
+    'chatik_bot_message': [
+        '[data-qa="chatik-message-employer"]',
+        '[data-qa*="chatik-message-bot"]',
+        '[class*="chatik-Message_employer"]',
+    ],
     'inputs_all': 'input[type="text"], textarea, input[type="radio"]',
     'progress_indicators': '[class*="progress"], [class*="step"], [class*="Step"]',
     'labels': 'label',
