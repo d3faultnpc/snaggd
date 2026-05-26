@@ -1,4 +1,6 @@
-# auto-apply-agent
+![header](./assets/header.png)
+
+# snaggd
 
 > Automated job application agent for [HH.ru](https://hh.ru) — the largest job board in Russia and CIS.
 
@@ -28,8 +30,8 @@ All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `go
 ### 1. Install
 
 ```bash
-git clone https://github.com/d3faultnpc/auto-apply-agent.git
-cd auto-apply-agent
+git clone https://github.com/d3faultnpc/snaggd.git
+cd snaggd
 python -m venv venv && source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 playwright install chromium
@@ -46,7 +48,7 @@ The wizard creates all required data files in order:
 | Block | What it creates |
 |-------|----------------|
 | D — LLM config | `.env` with your OpenRouter key + model |
-| A — Resume | `data/resume_facts.md` from your PDF/DOCX/image |
+| A — Resume | `data/candidate.md` from your PDF/DOCX/image |
 | B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` |
 | C — Tone | `data/tone_of_voice.md` (cover letter style) |
 
