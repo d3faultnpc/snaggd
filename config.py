@@ -101,7 +101,7 @@ SELECTORS = {
         'span:has-text("Добавить сопроводительное")',
         'a:has-text("Добавить сопроводительное")',           # original fallback
     ],
-    'chatik_input': '[data-qa="textarea-native-wrapper"] textarea',  # "Сообщение" field, verified 2026-05-26
+    'chatik_input': '[data-qa="chatik-new-message-text"]',  # "Сообщение" textarea, confirmed via DOM probe 2026-05-27
     # Cover letter textarea that appears after clicking "Добавить сопроводительное"
     # Cascade: try specific data-qa first, fall back to placeholder text
     'chatik_cover_input': [
