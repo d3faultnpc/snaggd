@@ -85,7 +85,7 @@ class LLMAgent:
         prompt = (
             prompt_template
             .replace("{{FIELDS}}", _json.dumps(fields, ensure_ascii=False))
-            .replace("{{VACANCY}}", vacancy_text[:2000])
+            .replace("{{VACANCY}}", vacancy_text[:_MAX_VACANCY_CHARS])
         )
         resp = self.client.chat.completions.create(
             model=self.model,

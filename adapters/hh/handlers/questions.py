@@ -42,16 +42,31 @@ class QuestionsHandler(BaseHandler):
                 reason="All fields are hidden or have no labels", scenario="questions_error"
             )
 
-        # ── Step 2: one LLM call for all fields ──────────────────────────────
+        # ── Step 2: pre-inject cover letter for cover-letter fields ─────────────
+        # The pre-generated cover_letter (from cover_letter.md prompt) must be used
+        # directly for cover letter fields — never routed through fill_form which uses
+        # a generic form-fill prompt and produces low-quality output.
         answers: dict[str, str] = {}
-        if _agent is not None:
+        cover_field_keys = set()
+        if cover_letter:
+            for f in fields:
+                label_lower = f["label"].lower()
+                if "сопроводительное" in label_lower or "cover letter" in label_lower:
+                    answers[str(f["idx"])] = cover_letter
+                    cover_field_keys.add(str(f["idx"]))
+                    print(f"   📝 Cover letter field detected: {f['label'][:50]}")
+
+        # Non-cover fields: one LLM batch call via fill_form
+        remaining_fields = [f for f in fields if str(f["idx"]) not in cover_field_keys]
+        if remaining_fields and _agent is not None:
             try:
-                answers = _agent.fill_form(vacancy_text, fields)
+                llm_answers = _agent.fill_form(vacancy_text, remaining_fields)
+                answers.update(llm_answers)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
-        elif hr_matcher is not None:
+        elif remaining_fields and hr_matcher is not None:
             # fallback: legacy per-question matching if LLM unavailable
-            for f in fields:
+            for f in remaining_fields:
                 answers[str(f["idx"])] = hr_matcher.find_answer(f["label"])
 
         # ── Step 3: fill each field ───────────────────────────────────────────

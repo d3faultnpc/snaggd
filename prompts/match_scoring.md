@@ -23,10 +23,20 @@ Return ONLY valid JSON, no markdown fences:
 }
 
 Scoring guide:
-- 80–100: strong match, most key requirements met
-- 60–79: good match, minor gaps
-- 40–59: partial match, notable gaps
-- 0–39: poor fit, major mismatch
+- 80–100: strong match — most key requirements met AND domain aligns with candidate's background
+- 60–79: good match — solid skills overlap, minor gaps or adjacent domain
+- 40–59: partial match — transferable skills but notable domain or experience gaps
+- 0–39: poor fit — major mismatch in skills or domain
+
+Domain alignment (apply BEFORE finalising the score):
+Check the vacancy's primary domain against the candidate's domain (from CANDIDATE PROFILE) and preferred domains (from JOB PREFERENCES).
+- Domain matches candidate profile (fintech, marketplace, B2B2C platform, payment systems, admin/back-office tools) → no modifier
+- Adjacent domain (B2B SaaS, e-commerce, growth product, internal tools) → –5 to –10 points
+- Clearly different domain (media, music/streaming, gaming, content, healthcare, logistics, real estate, travel) → –20 to –30 points
+
+Generic PM skills (A/B testing, roadmap, cross-functional coordination) are present in almost every PM role.
+Do NOT use them as strong match signals — they are baseline, not differentiators.
+Focus on domain expertise, specific product types, and the candidate's actual track record.
 
 stop_match examples:
 - Vacancy at "1x Bet" or "Pin-Up" with no explicit keyword → stop_match: "gambling"
