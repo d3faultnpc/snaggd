@@ -37,14 +37,21 @@ class LLMAgent:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def generate_cover(self, vacancy_text: str) -> str:
+    def generate_cover(self, vacancy_text: str, match_context: dict | None = None) -> str:
+        """Generate cover letter.
+
+        match_context: optional dict from score_vacancy() — matched_skills, gaps, signals,
+        vacancy_role_type. Injected as a compact SCORING CONTEXT block so the model writes
+        precisely to what actually overlaps instead of re-analysing the vacancy cold.
+        """
         prompt = self._load_prompt("cover_letter.md")
+        hint = self._build_match_hint(match_context) if match_context else ""
         resp = self.client.chat.completions.create(
             model=self.model,
             max_tokens=800,
             messages=[
                 {"role": "system", "content": self._system()},
-                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
+                {"role": "user", "content": f"{prompt}{hint}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
         return (resp.choices[0].message.content or "").strip()
@@ -136,6 +143,37 @@ class LLMAgent:
         return "\n\n".join(parts)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
+
+    def _build_match_hint(self, match_context: dict) -> str:
+        """Compact scoring summary injected between cover_letter prompt and VACANCY block.
+
+        Gives the cover model pre-computed match signals so it writes specifically
+        to the real overlap — not to the vacancy text cold.
+        Only non-empty / meaningful fields are included to avoid token waste.
+        """
+        parts = []
+        score = match_context.get("score")
+        if score is not None:
+            parts.append(f"Match score: {score}/100")
+        matched = match_context.get("matched_skills") or []
+        if matched:
+            parts.append(f"Matched skills: {', '.join(matched[:5])}")
+        gaps = match_context.get("gaps") or []
+        if gaps:
+            parts.append(f"Gaps (do NOT overstate in letter): {', '.join(gaps[:3])}")
+        signals = match_context.get("signals") or []
+        if signals:
+            parts.append(f"Signals: {', '.join(signals)}")
+        role_type = match_context.get("vacancy_role_type")
+        if role_type and role_type not in ("unknown", None):
+            parts.append(f"Vacancy role type: {role_type}")
+        if not parts:
+            return ""
+        body = "\n".join(f"- {p}" for p in parts)
+        return (
+            "\n\nSCORING CONTEXT (from pre-run analysis — use to write more precisely, "
+            "do not copy these labels into the letter):\n" + body + "\n"
+        )
 
     def _load_profile(self, filename: str) -> str:
         path = Path(CONFIG.data_dir) / filename

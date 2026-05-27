@@ -117,8 +117,9 @@ class LLMCover:
         self.last_gaps = score_data.get("gaps", [])
         self.last_stop_match = score_data.get("stop_match", None)
         signals = score_data.get("signals", [])
-        # Generate cover regardless (cached for future hits, used if apply proceeds)
-        cover = _agent.generate_cover(vacancy_text)
+        # Generate cover with scoring context: matched skills + signals + vacancy role type
+        # so the model writes precisely to the real overlap, not from scratch.
+        cover = _agent.generate_cover(vacancy_text, match_context=score_data)
         return cover, "llm", signals
     
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:
