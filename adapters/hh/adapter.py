@@ -268,6 +268,7 @@ class HHAdapter(SiteAdapter):
                 'template_name': template_name,
                 'company': company or '',
                 'employer_rating': employer_rating,
+                'cover_letter': cover_letter,
             }
 
             # ── Level 2: semantic stop_match from LLM ───────────────────────────

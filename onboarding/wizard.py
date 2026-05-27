@@ -62,50 +62,71 @@ def _llm_client():
 # ── Block A helpers ───────────────────────────────────────────────────────────
 
 def _post_parse_enrich(data: ResumeData) -> ResumeData:
-    """After LLM parse: interactively fill in personal data and contacts if missing."""
+    """After LLM parse: fill missing personal/contact data and career self-profile.
+
+    Personal/contacts block: runs only when something is missing.
+    Career self-profile block: always runs — not extractable from CV, used by
+    match scoring (role type penalty) and cover generation (context hint).
+    """
     contacts = dict(data.contacts or {})
     personal = dict(data.personal or {})
 
     missing_personal = not data.name or not personal.get("age") or not personal.get("location")
     missing_contacts = not any(contacts.get(k) for k in ("linkedin", "github", "telegram", "email"))
 
-    if not missing_personal and not missing_contacts:
-        return data
+    if missing_personal or missing_contacts:
+        print("\n📋 A few personal details are missing — answer what you know (Enter to skip):")
 
-    print("\n📋 A few personal details are missing — answer what you know (Enter to skip):")
-
-    if not data.name:
-        val = ask("Full name")
-        if val:
-            data.name = val
-
-    if not personal.get("age"):
-        val = ask("Age")
-        if val:
-            try:
-                personal["age"] = int(val)
-            except ValueError:
-                pass
-
-    if not personal.get("location"):
-        val = ask("City / location")
-        if val:
-            personal["location"] = val
-
-    if missing_contacts:
-        print("\n🔗 Contact links (used to answer HR form questions like 'share your LinkedIn'):")
-        for key, label in [
-            ("linkedin", "LinkedIn URL"),
-            ("github",   "GitHub URL"),
-            ("telegram", "Telegram @handle"),
-            ("email",    "Email"),
-        ]:
-            val = ask(f"  {label}")
+        if not data.name:
+            val = ask("Full name")
             if val:
-                contacts[key] = val
+                data.name = val
 
-    data.personal = personal
-    data.contacts = contacts
+        if not personal.get("age"):
+            val = ask("Age")
+            if val:
+                try:
+                    personal["age"] = int(val)
+                except ValueError:
+                    pass
+
+        if not personal.get("location"):
+            val = ask("City / location")
+            if val:
+                personal["location"] = val
+
+        if missing_contacts:
+            print("\n🔗 Contact links (used to answer HR form questions like 'share your LinkedIn'):")
+            for key, label in [
+                ("linkedin", "LinkedIn URL"),
+                ("github",   "GitHub URL"),
+                ("telegram", "Telegram @handle"),
+                ("email",    "Email"),
+            ]:
+                val = ask(f"  {label}")
+                if val:
+                    contacts[key] = val
+
+        data.personal = personal
+        data.contacts = contacts
+
+    # Career self-profile — always ask, not extracted from CV.
+    # role_type shapes the role-mismatch penalty in scoring.
+    # edge + not_looking_for give the cover model a precise angle to write from.
+    print("\n🎯 Career self-profile (shapes scoring and cover letter angle — press Enter to skip):")
+    role_choices = ["builder", "operator", "strategic", "ops", "head"]
+    role_val = ask(f"Role type ({'/'.join(role_choices)})", "builder")
+    if role_val in role_choices:
+        data.role_type = role_val
+
+    edge_val = ask("Your edge vs other PMs in 1 sentence")
+    if edge_val:
+        data.professional_edge = edge_val
+
+    not_for = ask_list("NOT looking for (e.g. process_management, pmm, outsource)")
+    if not_for:
+        data.not_looking_for = not_for
+
     return data
 
 
@@ -311,7 +332,7 @@ def block_d() -> bool:
     print("Sets up .env for LLM and browser.\n")
 
     api_key = ask("OpenRouter API key (sk-or-...)")
-    model   = ask("LLM model", "google/gemini-2.5-flash-lite")
+    model   = ask("LLM model", "deepseek/deepseek-v3.2")
     headless = ask("Run browser headless? yes / no", "no")
     max_v   = ask("Max vacancies per session", "10")
     min_score = ask("Minimum match score to apply (0–100, skip below this)", "60")

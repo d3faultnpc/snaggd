@@ -41,7 +41,7 @@ class Config:
     search_urls_path: Path = field(default_factory=lambda: DATA_DIR / "search_urls.txt")
 
     # LLM settings
-    llm_max_input_chars: int = 3000
+    llm_max_input_chars: int = 5000
     cache_size: int = 1000
     cache_file: str = str(DATA_DIR / "llm_cache.json")
 

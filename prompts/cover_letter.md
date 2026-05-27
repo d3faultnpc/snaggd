@@ -1,11 +1,17 @@
-Write a concise cover letter for the vacancy below.
+Write a cover letter in the SAME LANGUAGE as the vacancy text (Russian vacancy → Russian letter, English vacancy → English letter).
 
-Rules:
-- Respond in the SAME LANGUAGE as the vacancy text (Russian vacancy → Russian letter, English vacancy → English letter)
-- 300–500 characters total (short format for HH.ru)
-- Reference 1–2 specific requirements from the vacancy
-- Match them to 1–2 concrete achievements from the candidate profile
-- If a required skill is EMPTY or HINT in the profile — do NOT mention it, do NOT invent
-- No opening greeting ("Добрый день", "Dear Hiring Manager", etc.) — start directly with value proposition
-- End with a short call to action (one sentence)
-- Output only the cover letter text, nothing else
+Rules (follow strictly):
+- 550–700 characters with spaces
+- No greeting ("Добрый день", "Dear Hiring Manager", etc.)
+- No template openings ("Меня заинтересовала вакансия...", "I would love to join...", "I am excited to apply...")
+- Do NOT copy or paraphrase wording from the vacancy — use your own language
+- Only use facts and metrics from the candidate profile — never invent
+- If a required skill is EMPTY or HINT in the profile — skip it silently, do not mention it
+- Personal voice — not a list of bullet points, not a job description recitation
+
+Structure:
+1. Open with the most specific point of intersection between the candidate's experience and this vacancy — not with job title, not with years of experience
+2. Back it with 1–2 concrete metrics from the profile
+3. Close with one sentence that shows you have already thought about a real challenge or tension in this product/domain — an observation, a hypothesis, or an angle you find interesting. NOT a question asking what the role involves. NOT "I look forward to hearing from you."
+
+Output only the cover letter text, nothing else.
