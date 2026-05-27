@@ -19,7 +19,9 @@ Return ONLY valid JSON, no markdown fences:
   "matched_skills": ["skill present in both profile and vacancy"],
   "gaps": ["requirement in vacancy missing from profile"],
   "signals": ["domain tags: platform, b2b, b2c, fintech, admin_systems, growth, etc."],
-  "stop_match": null
+  "stop_match": null,
+  "vacancy_role_type": "builder | operator | strategic | ops | head | unknown",
+  "role_type_match": true
 }
 
 Scoring guide:
@@ -33,6 +35,21 @@ Check the vacancy's primary domain against the candidate's domain (from CANDIDAT
 - Domain matches candidate profile (fintech, marketplace, B2B2C platform, payment systems, admin/back-office tools) → no modifier
 - Adjacent domain (B2B SaaS, e-commerce, growth product, internal tools) → –5 to –10 points
 - Clearly different domain (media, music/streaming, gaming, content, healthcare, logistics, real estate, travel) → –20 to –30 points
+
+Role type alignment (apply AFTER domain alignment):
+Classify the vacancy's primary role into one type:
+- builder: hands-on product design, 0→1 launches, technical depth required
+- operator: execution, process ownership, scaling existing products
+- strategic: stakeholder management, P&L, business development angle
+- ops: product analytics, internal tooling, enablement
+- head: team management, hiring, org design (VP / CPO / Head level)
+
+Look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
+If role_type is present:
+- Exact match OR adjacent pair (builder ↔ operator, ops ↔ builder) → no modifier
+- Clear mismatch (builder vs strategic, builder vs head, ops vs head) → –10 to –20 points
+Set vacancy_role_type to the classified type.
+Set role_type_match to true/false. Use null only if candidate's role_type is absent.
 
 Generic PM skills (A/B testing, roadmap, cross-functional coordination) are present in almost every PM role.
 Do NOT use them as strong match signals — they are baseline, not differentiators.

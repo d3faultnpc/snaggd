@@ -54,6 +54,14 @@ class ResumeData:
     # Search
     suggested_queries: list = field(default_factory=list)
 
+    # Career self-profile — set via wizard, not extracted from CV
+    # role_type: builder | operator | strategic | ops | head
+    role_type: str = ""
+    # professional_edge: one-sentence unique angle vs other candidates in this role
+    professional_edge: str = ""
+    # not_looking_for: role types / work contexts to penalise in scoring
+    not_looking_for: list = field(default_factory=list)
+
     # Metadata
     source_file: str = ""
     parsed_at: str = ""
@@ -126,6 +134,22 @@ class ResumeParser:
         lines = [
             "# candidate.md",
             f"# completeness: {data.completeness:.0%} | source: {data.source_file} | updated: {data.parsed_at[:10]}",
+            "",
+            "## Career Profile",
+        ]
+
+        role_type = data.role_type or "# HINT: fill via wizard — builder | operator | strategic | ops | head"
+        lines.append(f"role_type: {role_type}")
+
+        edge = data.professional_edge or "# HINT: fill via wizard — one-sentence unique angle vs other candidates"
+        lines.append(f"edge: {edge}")
+
+        if data.not_looking_for:
+            lines.append(f"not_looking_for: {', '.join(data.not_looking_for)}")
+        else:
+            lines.append("not_looking_for: # HINT: fill via wizard — e.g. process_management, pmm, outsource")
+
+        lines += [
             "",
             "## Identity",
             f"name: {data.name or 'MISSING — add your name'}",
@@ -359,6 +383,10 @@ class ResumeParser:
             contacts=parsed.get("contacts") or {},
             personal=parsed.get("personal") or {},
             suggested_queries=parsed.get("suggested_queries") or [],
+            # career self-profile fields: not extracted from CV, filled by wizard
+            role_type="",
+            professional_edge="",
+            not_looking_for=[],
             source_file=source_file,
             parsed_at=datetime.now().isoformat(),
         )
