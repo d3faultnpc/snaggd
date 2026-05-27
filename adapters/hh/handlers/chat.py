@@ -204,15 +204,27 @@ class ChatHandler(BaseHandler):
         return None
 
     def _find_cover_input(self, scope):
-        """Finds cover letter textarea inside chatik iframe.
+        """Finds cover letter input inside chatik iframe.
 
-        Different from the "Сообщение" input — this is the formal cover letter field
-        that appears after clicking 'Добавить сопроводительное'.
+        DOM probe (2026-05-27) confirmed: after clicking 'Добавить сопроводительное',
+        NO separate textarea is created. A cover letter panel appears visually, but the
+        actual text input remains the existing 'Сообщение' field
+        (data-qa="chatik-new-message-text"). Text typed while the panel is active
+        is sent as the cover letter.
+
+        Falls back to chatik_cover_input cascade in case HH ever adds a separate field.
         """
+        # Primary: the verified "Сообщение" textarea — the cover letter input post-panel-open
+        el = scope.query_selector(SELECTORS['chatik_input'])
+        if el and el.is_visible():
+            return el
+
+        # Fallback cascade (unverified — for possible future HH versions)
         for selector in SELECTORS['chatik_cover_input']:
             el = scope.query_selector(selector)
             if el and el.is_visible():
                 return el
+
         return None
 
     def _send_cover(self, scope, cover_input, page) -> bool:
