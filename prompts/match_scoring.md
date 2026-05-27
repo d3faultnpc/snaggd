@@ -18,9 +18,9 @@ Return ONLY valid JSON, no markdown fences:
   "score": <integer 0–100>,
   "matched_skills": ["skill present in both profile and vacancy"],
   "gaps": ["requirement in vacancy missing from profile"],
-  "signals": ["domain tags: platform, b2b, b2c, fintech, admin_systems, growth, etc."],
+  "signals": ["3–5 short tags characterizing this vacancy's domain, context, and product type"],
   "stop_match": null,
-  "vacancy_role_type": "builder | operator | strategic | ops | head | unknown",
+  "vacancy_role_type": "contribution style of this vacancy (use the same vocabulary as the candidate's role_type when possible)",
   "role_type_match": true
 }
 
@@ -31,29 +31,27 @@ Scoring guide:
 - 0–39: poor fit — major mismatch in skills or domain
 
 Domain alignment (apply BEFORE finalising the score):
-Check the vacancy's primary domain against the candidate's domain (from CANDIDATE PROFILE) and preferred domains (from JOB PREFERENCES).
-- Domain matches candidate profile (fintech, marketplace, B2B2C platform, payment systems, admin/back-office tools) → no modifier
-- Adjacent domain (B2B SaaS, e-commerce, growth product, internal tools) → –5 to –10 points
-- Clearly different domain (media, music/streaming, gaming, content, healthcare, logistics, real estate, travel) → –20 to –30 points
+Compare the vacancy's primary domain and product type against the candidate's domain and
+background as described in CANDIDATE PROFILE.
+- Same or closely related domain / product type → no modifier
+- Adjacent: transferable skills, overlapping patterns → –5 to –10 points
+- Clear mismatch: substantial domain gap, different industry patterns → –20 to –30 points
+Do not apply penalties mechanically by industry label — consider product type overlap
+and how transferable the candidate's actual experience is to this specific context.
 
 Role type alignment (apply AFTER domain alignment):
-Classify the vacancy's primary role into one type:
-- builder: hands-on product design, 0→1 launches, technical depth required
-- operator: execution, process ownership, scaling existing products
-- strategic: stakeholder management, P&L, business development angle
-- ops: product analytics, internal tooling, enablement
-- head: team management, hiring, org design (VP / CPO / Head level)
-
 Look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
-If role_type is present:
-- Exact match OR adjacent pair (builder ↔ operator, ops ↔ builder) → no modifier
-- Clear mismatch (builder vs strategic, builder vs head, ops vs head) → –10 to –20 points
+Classify the vacancy's required contribution style and compare it to the candidate's role_type.
+Use the same vocabulary as the candidate's role_type where possible.
+- Same contribution style or adjacent → no modifier
+- Clear mismatch in how value is created → –10 to –20 points
 Set vacancy_role_type to the classified type.
 Set role_type_match to true/false. Use null only if candidate's role_type is absent.
 
-Generic PM skills (A/B testing, roadmap, cross-functional coordination) are present in almost every PM role.
-Do NOT use them as strong match signals — they are baseline, not differentiators.
-Focus on domain expertise, specific product types, and the candidate's actual track record.
+Baseline skills common to most vacancies in this field are NOT differentiators.
+Do NOT use them as strong match signals — they are table stakes, not evidence of fit.
+Focus on domain depth, specific product or context expertise, and the candidate's actual
+track record that goes beyond the baseline for this type of role.
 
 stop_match examples:
 - Vacancy at "1x Bet" or "Pin-Up" with no explicit keyword → stop_match: "gambling"

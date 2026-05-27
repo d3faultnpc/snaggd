@@ -12,6 +12,6 @@ Rules (follow strictly):
 Structure:
 1. Open with the most specific point of intersection between the candidate's experience and this vacancy — not with job title, not with years of experience
 2. Back it with 1–2 concrete metrics from the profile
-3. Close with one sentence: a brief question about the role or an observation about their product — not "I look forward to hearing from you"
+3. Close with one sentence that shows you have already thought about a real challenge or tension in this product/domain — an observation, a hypothesis, or an angle you find interesting. NOT a question asking what the role involves. NOT "I look forward to hearing from you."
 
 Output only the cover letter text, nothing else.
