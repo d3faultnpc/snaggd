@@ -5,6 +5,7 @@ Uses OpenRouter as gateway; model configured via LLM_MODEL env var.
 
 import json
 import os
+import re
 from pathlib import Path
 
 from openai import OpenAI
@@ -73,13 +74,21 @@ class LLMAgent:
             ],
         )
         raw = (resp.choices[0].message.content or "{}").strip()
-        return self._parse_json(raw, fallback={
+        result = self._parse_json(raw, fallback={
             "score": 50,
             "matched_skills": [],
             "gaps": [],
             "signals": [],
             "stop_match": None,
         })
+        # Sanitize score: some models embed emoji or extraneous text alongside the
+        # integer (e.g. DeepSeek occasionally returns "紙 67"). Extract the first
+        # integer found; fall back to 50 if none present.
+        raw_score = result.get("score")
+        if raw_score is not None and not isinstance(raw_score, int):
+            m = re.search(r"\d+", str(raw_score))
+            result["score"] = int(m.group()) if m else 50
+        return result
 
     def fill_form(self, vacancy_text: str, fields: list[dict]) -> dict[str, str]:
         """
