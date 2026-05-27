@@ -242,7 +242,7 @@ class ResumeParser:
         b64 = base64.b64encode(path.read_bytes()).decode()
         response = self.llm.chat.completions.create(
             model=self.MULTIMODAL_MODEL,
-            max_tokens=1800,
+            max_tokens=2500,
             messages=[{
                 "role": "user",
                 "content": [
@@ -257,10 +257,10 @@ class ResumeParser:
     def _extract_with_llm(self, text: str, source_file: str) -> ResumeData:
         response = self.llm.chat.completions.create(
             model=self.TEXT_MODEL,
-            max_tokens=1800,
+            max_tokens=2500,
             messages=[{
                 "role": "user",
-                "content": f"{self._extraction_prompt()}\n\nCV text:\n{text[:6000]}",
+                "content": f"{self._extraction_prompt()}\n\nCV text:\n{text}",
             }],
         )
         raw = response.choices[0].message.content or "{}"

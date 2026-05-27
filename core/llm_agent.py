@@ -13,6 +13,8 @@ from config import CONFIG
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
+_MAX_VACANCY_CHARS = CONFIG.llm_max_input_chars
+
 try:
     from json_repair import repair_json as _repair_json
     _HAS_JSON_REPAIR = True
@@ -39,10 +41,10 @@ class LLMAgent:
         prompt = self._load_prompt("cover_letter.md")
         resp = self.client.chat.completions.create(
             model=self.model,
-            max_tokens=600,
+            max_tokens=800,
             messages=[
                 {"role": "system", "content": self._system()},
-                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:3000]}"},
+                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
         return (resp.choices[0].message.content or "").strip()
@@ -60,7 +62,7 @@ class LLMAgent:
             max_tokens=400,
             messages=[
                 {"role": "system", "content": self._system()},
-                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:3000]}"},
+                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
         raw = (resp.choices[0].message.content or "{}").strip()
