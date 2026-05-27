@@ -332,7 +332,7 @@ def block_d() -> bool:
     print("Sets up .env for LLM and browser.\n")
 
     api_key = ask("OpenRouter API key (sk-or-...)")
-    model   = ask("LLM model", "google/gemini-2.5-flash-lite")
+    model   = ask("LLM model", "deepseek/deepseek-v3.2")
     headless = ask("Run browser headless? yes / no", "no")
     max_v   = ask("Max vacancies per session", "10")
     min_score = ask("Minimum match score to apply (0–100, skip below this)", "60")
