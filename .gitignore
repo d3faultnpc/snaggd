@@ -26,6 +26,9 @@ venv/
 .venv/
 *.egg-info/
 
+# Phase 2 design artifacts — not ready for public repo yet
+design/
+
 # Leftovers from legacy paths (belt + suspenders)
 hh_cookies.json
 llm_cache.json
