@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Onboarding wizard — run once before first main.py session.
-Produces: data/resume_facts.md, data/job_preferences.md, data/tone_of_voice.md
+Produces: data/candidate.md, data/job_preferences.md, data/tone_of_voice.md
 
 Usage:
     python onboarding/wizard.py
@@ -59,7 +59,57 @@ def _llm_client():
     return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
 
 
-# ── Block A: Resume → resume_facts.md ─────────────────────────────────────────
+# ── Block A helpers ───────────────────────────────────────────────────────────
+
+def _post_parse_enrich(data: ResumeData) -> ResumeData:
+    """After LLM parse: interactively fill in personal data and contacts if missing."""
+    contacts = dict(data.contacts or {})
+    personal = dict(data.personal or {})
+
+    missing_personal = not data.name or not personal.get("age") or not personal.get("location")
+    missing_contacts = not any(contacts.get(k) for k in ("linkedin", "github", "telegram", "email"))
+
+    if not missing_personal and not missing_contacts:
+        return data
+
+    print("\n📋 A few personal details are missing — answer what you know (Enter to skip):")
+
+    if not data.name:
+        val = ask("Full name")
+        if val:
+            data.name = val
+
+    if not personal.get("age"):
+        val = ask("Age")
+        if val:
+            try:
+                personal["age"] = int(val)
+            except ValueError:
+                pass
+
+    if not personal.get("location"):
+        val = ask("City / location")
+        if val:
+            personal["location"] = val
+
+    if missing_contacts:
+        print("\n🔗 Contact links (used to answer HR form questions like 'share your LinkedIn'):")
+        for key, label in [
+            ("linkedin", "LinkedIn URL"),
+            ("github",   "GitHub URL"),
+            ("telegram", "Telegram @handle"),
+            ("email",    "Email"),
+        ]:
+            val = ask(f"  {label}")
+            if val:
+                contacts[key] = val
+
+    data.personal = personal
+    data.contacts = contacts
+    return data
+
+
+# ── Block A: Resume → candidate.md ────────────────────────────────────────────
 
 def block_a(resume_path: Path | None = None) -> bool:
     section("Block A — Resume")
@@ -81,6 +131,7 @@ def block_a(resume_path: Path | None = None) -> bool:
             try:
                 parser = ResumeParser(client)
                 data = parser.parse_file(resume_path)
+                data = _post_parse_enrich(data)
                 print(f"✓  Parsed — completeness {data.completeness:.0%}")
                 if data.hints:
                     print("   Hints:")
@@ -113,7 +164,7 @@ def block_a(resume_path: Path | None = None) -> bool:
             "languages":        {},
         })
 
-    out = CONFIG.data_dir / "resume_facts.md"
+    out = CONFIG.data_dir / "candidate.md"
     out.write_text(ResumeParser(None).to_md(data), encoding="utf-8")
     print(f"\n✓  Saved → {out}")
 
@@ -170,10 +221,15 @@ def block_b(append: bool = False) -> bool:
         scope_choice = ask("  Scope [1/2]", "2")
         search_scope = "name" if scope_choice.strip() == "1" else "everywhere"
 
+        flexible = False
+        if remote.lower() in ("hybrid", "office"):
+            flex_ans = ask("Flexible/temporary schedule only? yes / no (warning: cuts ~95% of listings)", "no")
+            flexible = flex_ans.lower().startswith("y")
+
         url = build_hh_url(role=role, city=city, salary=salary,
-                           remote=remote, search_scope=search_scope)
+                           remote=remote, search_scope=search_scope, flexible=flexible)
         searches.append({"role": role, "city": city, "salary": salary,
-                         "remote": remote, "scope": search_scope, "url": url})
+                         "remote": remote, "scope": search_scope, "flexible": flexible, "url": url})
         print(f"✓  URL: {url}")
 
         another = ask("\nAdd another search direction? yes / no", "no")

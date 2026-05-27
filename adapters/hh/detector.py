@@ -39,6 +39,15 @@ class FormDetector:
             info.has_chat_link = bool(chat_el and chat_el.is_visible())
         except Exception:
             info.has_chat_link = False
+
+        # Post-apply cover letter submit button — "Резюме доставлено" flow (verified 2026-05-26)
+        # Present when HH auto-submits resume and offers cover letter as second step.
+        # Takes priority over chat_link: fill the form directly, do NOT navigate to chatik.
+        try:
+            submit_el = page.query_selector('[data-qa="vacancy-response-letter-submit"]')
+            info.has_response_submit = bool(submit_el and submit_el.is_visible())
+        except Exception:
+            info.has_response_submit = False
         
         # Employer questions detected in popup (vacancy-response-question, verified 2026-04-06)
         try:
@@ -139,6 +148,12 @@ class FormDetector:
         #     Verified 2026-04-06: form-helper-error + vacancy-response-link-view-topic in 02_snapshot.
         if info.has_form_error and info.has_chat_link:
             return FormType.CHAT_INTERFACE
+
+        # 0d. Post-apply cover letter form ("Резюме доставлено" flow, verified 2026-05-26).
+        #     vacancy-response-letter-submit visible → standard textarea + submit, no chatik needed.
+        #     Must come BEFORE the generic chat_link check to avoid routing to ChatHandler.
+        if info.has_response_submit:
+            return FormType.COVER_ONLY
 
         # 1. HH modal (multi-step)
         if (info.has_progress or

@@ -48,6 +48,9 @@ class Config:
     # Browser
     headless: bool = os.getenv("HEADLESS", "false").lower() == "true"
 
+    # Test forms: skip by default; set true to attempt LLM fill when no skip link exists
+    fill_tests: bool = os.getenv("FILL_TESTS", "false").lower() == "true"
+
     def __post_init__(self):
         self.logs_dir.mkdir(exist_ok=True)
         self.data_dir.mkdir(exist_ok=True)
@@ -65,6 +68,7 @@ SELECTORS = {
         '[data-qa="vacancy-response"]'
     ],
     'send_button': [
+        '[data-qa="vacancy-response-letter-submit"]',  # post-apply cover form (verified 2026-05-26)
         'button:has-text("Отправить")',
         'button:has-text("Откликнуться")',
         '[data-qa="vacancy-response-send-button"]'
@@ -87,13 +91,50 @@ SELECTORS = {
     'letter_toggle': '[data-qa="vacancy-response-letter-toggle"]',
     'popup_questions': '[data-qa^="vacancy-response-question"]',
     'popup_add_cover': '[data-qa="add-cover-letter"]',
-    # chatik selectors — NOT verified on live modal
-    'chatik_add_cover': '[data-qa="chatik-chat-message-applicant-action"]',
-    'chatik_input': '[data-qa="chatik-new-message-text"]',
+    # chatik selectors — partially verified 2026-05-26; cover_input cascade unverified (update after live debug)
+    # "Добавить сопроводительное" inside chatik — element type varies across HH versions.
+    # Cascade: try known data-qa first, then by element type, fallback to any tag via Playwright text selector.
+    'chatik_add_cover': [
+        '[data-qa="chatik-chat-message-applicant-action"]',  # from spec (unverified)
+        'button:has-text("Добавить сопроводительное")',
+        'div:has-text("Добавить сопроводительное")',
+        'span:has-text("Добавить сопроводительное")',
+        'a:has-text("Добавить сопроводительное")',           # original fallback
+    ],
+    'chatik_input': '[data-qa="chatik-new-message-text"]',  # "Сообщение" textarea, confirmed via DOM probe 2026-05-27
+    # Cover letter textarea that appears after clicking "Добавить сопроводительное"
+    # Cascade: try specific data-qa first, fall back to placeholder text
+    'chatik_cover_input': [
+        '[data-qa="chatik-cover-letter-textarea"]',
+        '[data-qa="cover-letter-textarea"]',
+        'textarea[placeholder*="сопроводительн"]',
+        'textarea[placeholder*="Сопроводительн"]',
+    ],
+    # Send button for cover letter form (inside chatik after "Добавить")
+    'chatik_cover_send': [
+        '[data-qa="chatik-cover-letter-submit"]',
+        'button:has-text("Отправить сопроводительное")',
+        'button:has-text("Сохранить")',
+    ],
+    # HR-bot message bubble (PERX and similar auto-interview bots)
+    # Used in _handle_hr_bot_loop() to detect and read bot questions
+    'chatik_bot_message': [
+        '[data-qa="chatik-message-employer"]',
+        '[data-qa*="chatik-message-bot"]',
+        '[class*="chatik-Message_employer"]',
+    ],
     'inputs_all': 'input[type="text"], textarea, input[type="radio"]',
     'progress_indicators': '[class*="progress"], [class*="step"], [class*="Step"]',
     'labels': 'label',
-    'buttons': 'button, a[role="button"]'
+    'buttons': 'button, a[role="button"]',
+    # Company name on the vacancy page — used for Level 1 stop_companies filter.
+    # HH renders employer name as a link; data-qa is the reliable anchor.
+    # Fallback checked in order if primary not found.
+    'company_name': '[data-qa="vacancy-company-name"]',
+    'company_name_fallback': '[data-qa="bloko-header-2"]',
+    # Employer review rating score on vacancy page (confirmed in debug_screenshots 2026-04-05).
+    # Returns a numeric string e.g. "4.3". Present only if the employer has reviews on HH.
+    'employer_rating': '[data-qa="company-review-rating-value"]',
 }
 
 FORM_KEYWORDS = {

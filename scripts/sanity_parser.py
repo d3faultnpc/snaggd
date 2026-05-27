@@ -63,5 +63,5 @@ if data.hints:
     for h in data.hints:
         print(f"  - {h}")
 
-print("\n--- resume_facts.md preview ---")
+print("\n--- candidate.md preview ---")
 print(parser.to_md(data))
