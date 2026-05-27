@@ -1,3 +1,5 @@
+import time
+
 from .base import BaseHandler, FormType, ProcessResult
 from config import SELECTORS
 
@@ -10,15 +12,24 @@ class ChatHandler(BaseHandler):
       (form-helper-error + vacancy-response-link-view-topic visible after Apply click).
 
     Flow:
-      1. Click "Go to chat" → chatik opens, application auto-submitted by HH
-      2. _handle_hr_bot_loop() → detect and answer HR-bot questions via LLM text input
-      3. Click "Добавить сопроводительное" → cover letter textarea appears
-      4. click() + type(cover_letter) → send
-      If cover button not found → return applied_via_chat_no_cover (application already submitted).
+      1. Click "Go to chat" (main page) → chatik iframe opens at chatik.hh.ru
+      2. _wait_for_chatik_frame() → get Frame object for the cross-origin iframe
+      3. _handle_hr_bot_loop(scope) → detect and answer HR-bot questions via LLM
+      4. _find_add_cover_btn(scope) → find "Добавить сопроводительное" in iframe
+      5. click() → cover letter textarea appears
+      6. _find_cover_input(scope) + type(cover_letter) → fill textarea
+      7. _send_cover(scope) → send
+
+    Key architecture note:
+      Chatik renders ALL its content in a cross-origin iframe (<iframe src="chatik.hh.ru/...">).
+      page.query_selector / page.wait_for_selector cannot enter cross-origin iframes.
+      All chatik interactions must go through the Frame object returned by _wait_for_chatik_frame.
+      ElementHandle.click() / .type() work fine regardless of which frame they belong to.
 
     Verified selectors:
-      vacancy-response-link-view-topic — "Go to chat" link (2026-04-06)
-      textarea-native-wrapper textarea — "Сообщение" input (2026-05-26)
+      vacancy-response-link-view-topic — "Go to chat" link on main page (2026-04-06)
+      iframe.chatik-integration-iframe — chatik iframe container (2026-05-27)
+      textarea-native-wrapper textarea — "Сообщение" input inside iframe (2026-05-26)
 
     Unverified (update after live debug snapshot):
       chatik_cover_input cascade — textarea after "Добавить сопроводительное"
@@ -36,7 +47,7 @@ class ChatHandler(BaseHandler):
         return False
 
     def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
-        # 1. Click "Go to chat" — chatik opens, HH auto-submits the application
+        # 1. Click "Go to chat" — chat_link is on main page, not inside iframe
         chat_link = page.query_selector(SELECTORS['chat_link'])
         if not chat_link or not chat_link.is_visible():
             return ProcessResult(
@@ -50,12 +61,18 @@ class ChatHandler(BaseHandler):
         chat_link.click()
         self._wait_and_random_delay(page, 3000, 5000)
 
-        # 2. HR-bot Q&A loop (PERX and similar auto-interview bots)
-        if hr_matcher:
-            self._handle_hr_bot_loop(page, hr_matcher)
+        # 2. Wait for chatik iframe — all content lives in a cross-origin frame
+        chatik_scope = self._wait_for_chatik_frame(page)
+        if chatik_scope is None:
+            print("   ⚠️ Chatik iframe not accessible — falling back to main page scope")
+            chatik_scope = page  # fallback for possible future HH redesign
 
-        # 3. Click "Добавить сопроводительное" to open the cover letter field
-        add_cover = self._find_add_cover_btn(page)
+        # 3. HR-bot Q&A loop (PERX and similar auto-interview bots)
+        if hr_matcher:
+            self._handle_hr_bot_loop(chatik_scope, page, hr_matcher)
+
+        # 4. Click "Добавить сопроводительное" to open the cover letter field
+        add_cover = self._find_add_cover_btn(chatik_scope)
         if not add_cover:
             print("   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter")
             return ProcessResult(
@@ -69,8 +86,8 @@ class ChatHandler(BaseHandler):
         add_cover.click()
         self._wait_and_random_delay(page, 2000, 3000)
 
-        # 4. Find cover letter textarea (separate from "Сообщение" field)
-        cover_input = self._find_cover_input(page)
+        # 5. Find cover letter textarea (separate from "Сообщение" field)
+        cover_input = self._find_cover_input(chatik_scope)
         if not cover_input:
             print("   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover")
             return ProcessResult(
@@ -80,7 +97,7 @@ class ChatHandler(BaseHandler):
                 scenario="chat_no_cover"
             )
 
-        # 5. Focus + type cover letter
+        # 6. Focus + type cover letter
         print("   🔹 Typing cover letter into cover field...")
         try:
             cover_input.click()
@@ -96,9 +113,9 @@ class ChatHandler(BaseHandler):
                 scenario="chat_fill_error"
             )
 
-        # 6. Send cover letter
+        # 7. Send cover letter
         try:
-            sent = self._send_cover(page, cover_input)
+            sent = self._send_cover(chatik_scope, cover_input, page)
             if sent:
                 print("   ✅ Cover letter sent via chatik!")
                 return ProcessResult(
@@ -125,68 +142,94 @@ class ChatHandler(BaseHandler):
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _find_add_cover_btn(self, page):
-        """Finds the 'Добавить сопроводительное' button inside chatik.
+    def _wait_for_chatik_frame(self, page):
+        """Waits for the chatik iframe to load and returns its Playwright Frame object.
 
-        Previous approach (wait_for_function + document.body.innerText) failed because
-        document.body.innerText does NOT traverse shadow DOM — chatik message content
-        renders in shadow roots, so the text was invisible to JS even when visually present.
+        Chatik renders all its content inside a cross-origin iframe served from chatik.hh.ru.
+        The iframe element appears in the main page DOM after clicking 'Go to chat', but
+        the frame object becomes accessible in page.frames once the iframe navigates.
 
-        Playwright's wait_for_selector and query_selector pierce shadow DOM by default.
-        The :text() pseudo-class also pierces shadow DOM and is tag-agnostic (a/button/div).
+        Returns the Frame if found within 12s, or None on timeout.
         """
-        # Primary: shadow-piercing text wait — works regardless of element tag or class.
-        # Returns the element directly on success.
+        # Step 1: wait for iframe element to appear in main page DOM
         try:
-            el = page.wait_for_selector(
+            page.wait_for_selector(
+                'iframe.chatik-integration-iframe',
+                timeout=12000,
+                state='attached'
+            )
+        except Exception:
+            print("   ⚠️ Chatik iframe element not found in DOM within 12s")
+            return None
+
+        # Step 2: wait for the frame to become accessible (frame URL set after navigation)
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            for frame in page.frames:
+                if 'chatik.hh.ru' in frame.url:
+                    print(f"   ✅ Chatik iframe frame acquired: {frame.url[:60]}")
+                    return frame
+            page.wait_for_timeout(300)
+
+        print("   ⚠️ Chatik iframe element loaded but frame not accessible within 5s")
+        return None
+
+    def _find_add_cover_btn(self, scope):
+        """Finds 'Добавить сопроводительное' inside chatik iframe.
+
+        scope is a Playwright Frame object (chatik.hh.ru iframe).
+        Frame.wait_for_selector and Frame.query_selector have same API as Page equivalents.
+        """
+        # Primary: text-based wait — works regardless of element tag or class
+        try:
+            el = scope.wait_for_selector(
                 ':text("Добавить сопроводительное")',
                 timeout=12000,
                 state='visible'
             )
             if el:
-                print("   ✅ 'Добавить сопроводительное' found via shadow-piercing text selector")
+                print("   ✅ 'Добавить сопроводительное' found in chatik iframe")
                 return el
         except Exception:
-            print("   ⚠️ :text() selector timed out (12s) — trying data-qa cascade")
+            print("   ⚠️ :text() timed out in chatik iframe — trying data-qa cascade")
 
-        # Fallback: data-qa / tag cascade — Playwright query_selector also pierces shadow DOM.
+        # Fallback: data-qa / tag cascade
         for selector in SELECTORS['chatik_add_cover']:
-            el = page.query_selector(selector)
+            el = scope.query_selector(selector)
             if el and el.is_visible():
-                print(f"   ✅ Found via cascade: {selector}")
+                print(f"   ✅ Found via cascade in iframe: {selector}")
                 return el
 
-        print("   ⚠️ 'Добавить сопроводительное' not found after all attempts")
+        print("   ⚠️ 'Добавить сопроводительное' not found in chatik iframe")
         return None
 
-    def _find_cover_input(self, page):
-        """Finds the cover letter textarea that appears after 'Добавить сопроводительное'.
+    def _find_cover_input(self, scope):
+        """Finds cover letter textarea inside chatik iframe.
 
-        Different from the regular 'Сообщение' input — this is the formal cover letter field.
-        Tries specific data-qa selectors first, falls back to placeholder text.
-        Cascade must be updated after live debug snapshot confirms the actual data-qa value.
+        Different from the "Сообщение" input — this is the formal cover letter field
+        that appears after clicking 'Добавить сопроводительное'.
         """
         for selector in SELECTORS['chatik_cover_input']:
-            el = page.query_selector(selector)
+            el = scope.query_selector(selector)
             if el and el.is_visible():
                 return el
         return None
 
-    def _send_cover(self, page, cover_input) -> bool:
-        """Sends the cover letter form. Prefers dedicated cover send button,
-        falls back to chatik-root scoped 'Отправить', then Enter.
+    def _send_cover(self, scope, cover_input, page) -> bool:
+        """Sends the cover letter form inside chatik iframe.
+
+        scope is already the chatik frame — no need to scope to chatik-root.
+        Prefers dedicated cover send button, falls back to any 'Отправить', then Enter.
         """
         for selector in SELECTORS['chatik_cover_send']:
-            btn = page.query_selector(selector)
+            btn = scope.query_selector(selector)
             if btn and btn.is_visible():
-                print(f"   🔹 Clicking send button...")
+                print("   🔹 Clicking send button...")
                 btn.click()
                 self._wait_and_random_delay(page, 2000, 3000)
                 return True
 
-        # Fallback: scoped "Отправить" inside chatik-root to avoid vacancy form collision
-        chatik_root = page.query_selector('[data-qa="chatik-root"]')
-        scope = chatik_root if chatik_root else page
+        # Fallback: any visible "Отправить" in chatik frame
         send_btn = scope.query_selector('button:has-text("Отправить")')
         if send_btn and send_btn.is_visible():
             print("   🔹 Clicking 'Отправить' in chatik...")
@@ -194,23 +237,21 @@ class ChatHandler(BaseHandler):
             self._wait_and_random_delay(page, 2000, 3000)
             return True
 
-        # Last resort: Enter key
+        # Last resort: Enter key on cover input
         print("   🔹 Sending via Enter...")
         cover_input.press("Enter")
         self._wait_and_random_delay(page, 2000, 3000)
         return True
 
-    def _handle_hr_bot_loop(self, page, hr_matcher) -> None:
-        """Detects HR-bot questions in chatik and answers them via LLM text input.
+    def _handle_hr_bot_loop(self, scope, page, hr_matcher) -> None:
+        """Detects HR-bot questions in chatik iframe and answers them via LLM text input.
 
-        Called before the cover letter step. If no bot messages are found, returns immediately.
-        Reads the latest employer message, generates a text answer via hr_matcher,
-        types it into the "Сообщение" field (NOT the cover letter field), and sends.
-        Repeats until no new bot message appears within the wait window.
+        scope is the chatik Frame — all queries run inside the iframe.
+        Called before the cover letter step. Returns immediately if no bot messages found.
 
         Text input instead of quick-reply buttons: more accurate, not limited to preset options.
 
-        NOTE: Selectors in chatik_bot_message are unverified — update after live debug snapshot.
+        NOTE: chatik_bot_message selectors are unverified — update after live debug snapshot.
         """
         bot_message_selectors = SELECTORS['chatik_bot_message']
         max_rounds = 5
@@ -218,10 +259,10 @@ class ChatHandler(BaseHandler):
         last_answered_text = None
 
         while rounds < max_rounds:
-            # Check for bot message
+            # Check for bot message inside iframe
             bot_el = None
             for selector in bot_message_selectors:
-                els = page.query_selector_all(selector)
+                els = scope.query_selector_all(selector)
                 visible = [e for e in els if e.is_visible()]
                 if visible:
                     bot_el = visible[-1]  # latest message
@@ -234,7 +275,7 @@ class ChatHandler(BaseHandler):
             if not question_text:
                 break
 
-            # Skip if this is the same question we already answered (bot hasn't replied yet)
+            # Skip if same question already answered (bot hasn't replied yet)
             if question_text == last_answered_text:
                 break
 
@@ -251,10 +292,10 @@ class ChatHandler(BaseHandler):
                 print("   ⚠️ HR-bot: empty LLM answer — skipping bot loop")
                 break
 
-            # Find "Сообщение" input and type the answer
-            msg_input = page.query_selector(SELECTORS['chatik_input'])
+            # Find "Сообщение" input inside iframe and type answer
+            msg_input = scope.query_selector(SELECTORS['chatik_input'])
             if not msg_input or not msg_input.is_visible():
-                print("   ⚠️ HR-bot: 'Сообщение' input not found — skipping bot loop")
+                print("   ⚠️ HR-bot: 'Сообщение' input not found in chatik iframe — skipping")
                 break
 
             print(f"   🔹 Answering HR-bot: {answer[:60]}...")
@@ -263,9 +304,7 @@ class ChatHandler(BaseHandler):
             msg_input.type(answer, delay=10)
             self._wait_and_random_delay(page, 500, 1000)
 
-            # Send answer
-            chatik_root = page.query_selector('[data-qa="chatik-root"]')
-            scope = chatik_root if chatik_root else page
+            # Send: already in iframe scope, any "Отправить" is safe to click
             send_btn = scope.query_selector('button:has-text("Отправить")')
             if send_btn and send_btn.is_visible():
                 send_btn.click()
