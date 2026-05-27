@@ -129,10 +129,15 @@ class HHAdapter(SiteAdapter):
                 vacancy_id=vacancy_id,
                 **result.get('details', {}),
             )
-            processed_count += 1
+            # Skip-scenario results (dedup hit after page open, blocked by filters) do not
+            # count toward the per-session application budget — only genuine attempts do.
+            if result.get('scenario') != 'skip':
+                processed_count += 1
+                print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
+            else:
+                skip_count += 1
             logger.log_daily(f"Result: {result['status']} — {result['reason']}")
             print(f"📊 Status: {result['status']} — {result['reason']}")
-            print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
 
         return applied_log[initial_count:]
 

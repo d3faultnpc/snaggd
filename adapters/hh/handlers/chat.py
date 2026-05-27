@@ -128,14 +128,35 @@ class ChatHandler(BaseHandler):
     def _find_add_cover_btn(self, page):
         """Finds the 'Добавить сопроводительное' button inside chatik.
 
-        Element type varies across HH versions (a/button/div). Iterates through
-        a cascade of selectors — data-qa first, then by tag+text, then any tag.
-        Searches full page (chatik may render outside chatik-root via React portal).
+        Previous approach (wait_for_function + document.body.innerText) failed because
+        document.body.innerText does NOT traverse shadow DOM — chatik message content
+        renders in shadow roots, so the text was invisible to JS even when visually present.
+
+        Playwright's wait_for_selector and query_selector pierce shadow DOM by default.
+        The :text() pseudo-class also pierces shadow DOM and is tag-agnostic (a/button/div).
         """
+        # Primary: shadow-piercing text wait — works regardless of element tag or class.
+        # Returns the element directly on success.
+        try:
+            el = page.wait_for_selector(
+                ':text("Добавить сопроводительное")',
+                timeout=12000,
+                state='visible'
+            )
+            if el:
+                print("   ✅ 'Добавить сопроводительное' found via shadow-piercing text selector")
+                return el
+        except Exception:
+            print("   ⚠️ :text() selector timed out (12s) — trying data-qa cascade")
+
+        # Fallback: data-qa / tag cascade — Playwright query_selector also pierces shadow DOM.
         for selector in SELECTORS['chatik_add_cover']:
             el = page.query_selector(selector)
             if el and el.is_visible():
+                print(f"   ✅ Found via cascade: {selector}")
                 return el
+
+        print("   ⚠️ 'Добавить сопроводительное' not found after all attempts")
         return None
 
     def _find_cover_input(self, page):
