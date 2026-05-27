@@ -13,20 +13,24 @@ _AREA = {
 }
 
 _SCHEDULE = {
-    "remote":  "remote",
-    "hybrid":  "flexible",
-    "office":  None,
+    "remote": "remote",
+    "hybrid": None,   # flexible removed as default — pass flexible=True for gig/temporary roles
+    "office": None,
 }
 
 
 def build_hh_url(role: str, city: str = "Москва",
                  salary: str = "", remote: str = "hybrid",
-                 search_scope: str = "everywhere") -> str:
+                 search_scope: str = "everywhere",
+                 flexible: bool = False) -> str:
     """Build HH.ru search URL.
 
     search_scope:
       "name"       — vacancy title only (precise, fewer results)
       "everywhere" — title + description + company (broad, LLM scorer filters precision)
+    flexible:
+      True  — add schedule=flexible (gig/temporary roles; cuts ~95% of listings)
+      False — no schedule filter (default)
     """
     city_key = city.lower().strip()
     area = _AREA.get(city_key, "1")
@@ -37,7 +41,7 @@ def build_hh_url(role: str, city: str = "Москва",
         "search_field": search_scope if search_scope in ("name", "everywhere") else "everywhere",
     }
 
-    schedule = _SCHEDULE.get(remote.lower())
+    schedule = "flexible" if flexible else _SCHEDULE.get(remote.lower())
     if schedule:
         params["schedule"] = schedule
 

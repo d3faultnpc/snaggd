@@ -12,7 +12,15 @@ except Exception as _e:
     print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
 
 class LLMCover:
-    """Cover letter generator with caching."""
+    """Cover letter generator with caching.
+
+    Exposes last_score, last_matched_skills, last_gaps, last_stop_match
+    after each generate() call so the adapter can read results without
+    an extra LLM round-trip.
+
+    Cache key: MD5 of vacancy text. Cache entry stores all fields so a
+    cache hit restores every attribute (including stop_match) at zero cost.
+    """
 
     def __init__(self):
         self.cache_file = Path(CONFIG.cache_file)
@@ -20,23 +28,33 @@ class LLMCover:
         self.last_score: int = 0
         self.last_matched_skills: list = []
         self.last_gaps: list = []
-        
+        self.last_stop_match: Optional[str] = None
+
     def generate(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        """
-        Generates a cover letter.
+        """Score vacancy + generate cover letter in two LLM calls.
+
+        Order: score first (may reveal stop_match), cover second.
         Returns: (cover_letter, template_name, signals)
+        Side effects: sets last_score, last_matched_skills, last_gaps, last_stop_match.
         """
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
 
         if text_hash in self.cache:
-            print("   📋 Using cached cover letter")
+            print("   📋 Using cached result")
             entry = self.cache[text_hash]
-            # Restore score fields if cache entry includes them (new format: 6 elements)
-            if len(entry) >= 6:
+            # Cache format v2: [cover, template, signals, score, skills, gaps, stop_match]
+            if len(entry) >= 7:
                 self.last_score = entry[3]
                 self.last_matched_skills = entry[4]
                 self.last_gaps = entry[5]
+                self.last_stop_match = entry[6]
+            elif len(entry) >= 6:
+                # v1 cache (no stop_match): restore what we have, stop_match unknown
+                self.last_score = entry[3]
+                self.last_matched_skills = entry[4]
+                self.last_gaps = entry[5]
+                self.last_stop_match = None
             return entry[:3]
 
         try:
@@ -45,10 +63,14 @@ class LLMCover:
         except Exception as e:
             print(f"   ⚠️ LLM error: {e}")
             result = self._fallback_cover()
+            self.last_stop_match = None
             print("   📝 LLM unavailable — using static fallback")
 
-        # Store cover + score data together so cache hits restore score correctly
-        self.cache[text_hash] = list(result) + [self.last_score, self.last_matched_skills, self.last_gaps]
+        # Cache v2: cover + template + signals + score + skills + gaps + stop_match
+        self.cache[text_hash] = list(result) + [
+            self.last_score, self.last_matched_skills,
+            self.last_gaps, self.last_stop_match,
+        ]
         self._save_cache()
 
         return result
@@ -86,12 +108,17 @@ class LLMCover:
     def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
         if _agent is None:
             raise RuntimeError("LLMAgent not available")
-        cover = _agent.generate_cover(vacancy_text)
+        # Score first: may reveal stop_match before spending tokens on cover letter.
+        # If stop_match is set, the adapter will skip apply — cover is still cached
+        # so the next encounter of the same vacancy costs 0 extra calls.
         score_data = _agent.score_vacancy(vacancy_text)
         self.last_score = score_data.get("score", 0)
         self.last_matched_skills = score_data.get("matched_skills", [])
         self.last_gaps = score_data.get("gaps", [])
+        self.last_stop_match = score_data.get("stop_match", None)
         signals = score_data.get("signals", [])
+        # Generate cover regardless (cached for future hits, used if apply proceeds)
+        cover = _agent.generate_cover(vacancy_text)
         return cover, "llm", signals
     
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:
