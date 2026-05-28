@@ -14,8 +14,7 @@ class QuestionsHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.EMPLOYER_QUESTIONS
 
-    def process(self, page, cover_letter: str, hr_matcher=None,
-                vacancy_text: str = "") -> ProcessResult:
+    def process(self, page, cover_letter: str, vacancy_text: str = "", **kwargs) -> ProcessResult:
         inputs = page.query_selector_all('input[type="text"], input[type="radio"], textarea')
         if not inputs:
             return ProcessResult(
@@ -64,10 +63,9 @@ class QuestionsHandler(BaseHandler):
                 answers.update(llm_answers)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
-        elif remaining_fields and hr_matcher is not None:
-            # fallback: legacy per-question matching if LLM unavailable
-            for f in remaining_fields:
-                answers[str(f["idx"])] = hr_matcher.find_answer(f["label"])
+        elif remaining_fields and _agent is None:
+            # LLM unavailable — leave fields empty, log clearly
+            print(f"   ⚠️ LLM unavailable — {len(remaining_fields)} field(s) left blank")
 
         # ── Step 3: fill each field ───────────────────────────────────────────
         filled_count = 0

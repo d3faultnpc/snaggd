@@ -15,7 +15,7 @@ class HHModalHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.HH_MODAL_STEP1, FormType.HH_MODAL_STEP2]
 
-    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         # 1. Find and fill the cover letter textarea
         textarea = self._find_cover_textarea(page)
         filled = False

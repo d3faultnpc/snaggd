@@ -11,7 +11,6 @@ from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
-from hr_matcher import HRMatcher
 from utils.helpers import random_delay
 from utils.filters import StopFilters, load_stop_filters
 
@@ -32,7 +31,6 @@ class HHAdapter(SiteAdapter):
         self.detector = FormDetector()
         self.handlers = FormHandlers()
         self.llm_cover = LLMCover()
-        self.hr_matcher = HRMatcher()
         self._unverified_count = 0
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
@@ -113,7 +111,7 @@ class HHAdapter(SiteAdapter):
                 vac_debug_dir = session_dir_base / f"{index:02d}_{safe}"
 
             result = self.process_vacancy(
-                url, title, index, self.llm_cover, self.hr_matcher,
+                url, title, index, self.llm_cover,
                 debug=debug, session_dir=vac_debug_dir, dry_run=dry_run,
                 stop_filters=stop_filters, logger=logger, applied_log=applied_log,
             )
@@ -166,7 +164,7 @@ class HHAdapter(SiteAdapter):
         return self.browser.get_vacancy_urls()
 
     def process_vacancy(self, url: str, title: str, index: int,
-                        llm_cover, hr_matcher,
+                        llm_cover,
                         debug: bool = False, session_dir=None, dry_run: bool = False,
                         stop_filters=None, logger=None, applied_log=None) -> dict:
         """Process one vacancy: open → filter → score → apply → fill → submit.
@@ -345,7 +343,7 @@ class HHAdapter(SiteAdapter):
                 }
 
             handler = self.handlers.get_handler(form_info.form_type)
-            result = handler.process(current_page, cover_letter, hr_matcher,
+            result = handler.process(current_page, cover_letter,
                                      vacancy_text=vacancy_text)
 
             # F2: DOM щуп — verify submit actually succeeded

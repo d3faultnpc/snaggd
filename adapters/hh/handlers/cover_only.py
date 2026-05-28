@@ -7,7 +7,7 @@ class CoverOnlyHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.COVER_ONLY, FormType.UNKNOWN]
 
-    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         """Fills the cover letter field and submits."""
 
         textarea = self._find_element_by_selectors(page, SELECTORS['cover_textarea'])

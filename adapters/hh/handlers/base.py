@@ -59,7 +59,7 @@ class BaseHandler(ABC):
         pass
 
     @abstractmethod
-    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         """Process the form. kwargs may include vacancy_text (used by QuestionsHandler)."""
         pass
 

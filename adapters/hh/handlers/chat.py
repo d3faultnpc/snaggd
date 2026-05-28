@@ -3,6 +3,12 @@ import time
 from .base import BaseHandler, FormType, ProcessResult
 from config import SELECTORS
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception:
+    _agent = None
+
 
 class ChatHandler(BaseHandler):
     """
@@ -46,7 +52,7 @@ class ChatHandler(BaseHandler):
         # or success notification appears.
         return False
 
-    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         # 1. Click "Go to chat" — chat_link is on main page, not inside iframe
         chat_link = page.query_selector(SELECTORS['chat_link'])
         if not chat_link or not chat_link.is_visible():
@@ -68,8 +74,7 @@ class ChatHandler(BaseHandler):
             chatik_scope = page  # fallback for possible future HH redesign
 
         # 3. HR-bot Q&A loop (PERX and similar auto-interview bots)
-        if hr_matcher:
-            self._handle_hr_bot_loop(chatik_scope, page, hr_matcher)
+        self._handle_hr_bot_loop(chatik_scope, page)
 
         # 4. Click "Добавить сопроводительное" to open the cover letter field
         add_cover = self._find_add_cover_btn(chatik_scope)
@@ -255,12 +260,13 @@ class ChatHandler(BaseHandler):
         self._wait_and_random_delay(page, 2000, 3000)
         return True
 
-    def _handle_hr_bot_loop(self, scope, page, hr_matcher) -> None:
-        """Detects HR-bot questions in chatik iframe and answers them via LLM text input.
+    def _handle_hr_bot_loop(self, scope, page) -> None:
+        """Detects HR-bot questions in chatik iframe and answers them via LLM.
 
         scope is the chatik Frame — all queries run inside the iframe.
         Called before the cover letter step. Returns immediately if no bot messages found.
 
+        Answers via _agent.answer_question() — uses candidate profile directly.
         Text input instead of quick-reply buttons: more accurate, not limited to preset options.
 
         NOTE: chatik_bot_message selectors are unverified — update after live debug snapshot.
@@ -293,9 +299,12 @@ class ChatHandler(BaseHandler):
 
             print(f"   🤖 HR-bot question: {question_text[:80]}...")
 
-            # Generate answer via LLM
+            # Generate answer via LLM directly from candidate profile
+            if _agent is None:
+                print("   ⚠️ HR-bot: LLM unavailable — skipping bot loop")
+                break
             try:
-                answer = hr_matcher.find_answer(question_text)
+                answer = _agent.answer_question(question_text)
             except Exception as e:
                 print(f"   ⚠️ HR-bot LLM error: {e} — skipping bot loop")
                 break
