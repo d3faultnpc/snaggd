@@ -103,11 +103,16 @@ class ChatHandler(BaseHandler):
             )
 
         # 6. Focus + type cover letter
+        # Chatik uses a single "Сообщение" textarea for cover letters too.
+        # Typing \n triggers React's Enter-as-send handler → paragraph 1 is dispatched
+        # as a standalone message, element re-renders, paragraph 2 is lost.
+        # Fix: flatten all newlines to a space before typing.
+        chatik_safe_cover = cover_letter.replace('\n', ' ').strip()
         print("   🔹 Typing cover letter into cover field...")
         try:
             cover_input.click()
             self._wait_and_random_delay(page, 500, 1000)
-            cover_input.type(cover_letter, delay=10)
+            cover_input.type(chatik_safe_cover, delay=10)
             print("   ✅ Cover letter typed")
             self._wait_and_random_delay(page, 1500, 2500)
         except Exception as e:
@@ -319,10 +324,11 @@ class ChatHandler(BaseHandler):
                 print("   ⚠️ HR-bot: 'Сообщение' input not found in chatik iframe — skipping")
                 break
 
-            print(f"   🔹 Answering HR-bot: {answer[:60]}...")
+            safe_answer = answer.replace('\n', ' ').strip()
+            print(f"   🔹 Answering HR-bot: {safe_answer[:60]}...")
             msg_input.click()
             self._wait_and_random_delay(page, 300, 600)
-            msg_input.type(answer, delay=10)
+            msg_input.type(safe_answer, delay=10)
             self._wait_and_random_delay(page, 500, 1000)
 
             # Send: already in iframe scope, any "Отправить" is safe to click
