@@ -4,6 +4,7 @@ Rules (follow strictly):
 - 550–700 characters with spaces
 - No greeting ("Добрый день", "Dear Hiring Manager", etc.)
 - No template openings ("Меня заинтересовала вакансия...", "I would love to join...", "I am excited to apply...")
+- Do not open with role, domain, or career summary ("Мой опыт в...", "За N лет в...", "I have N years of experience...", "Я занимаюсь...")
 - Do NOT copy or paraphrase wording from the vacancy — use your own language
 - Only use facts and metrics from the candidate profile — never invent
 - If a required skill is EMPTY or HINT in the profile — skip it silently, do not mention it

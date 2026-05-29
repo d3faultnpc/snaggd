@@ -35,11 +35,19 @@ class HHBrowser:
         m = re.search(r'/vacancy/(\d+)', url)
         return m.group(1) if m else None
         
-    def start(self) -> bool:
+    def start(self, debug: bool = False) -> bool:
         """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
         try:
             self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.launch(headless=CONFIG.headless)
+            # Non-headless + not debug → offscreen window (invisible but detectable as real browser).
+            # Debug mode keeps the window visible so the dev can watch what's happening.
+            launch_args = []
+            if not CONFIG.headless and not debug:
+                launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
+            self.browser = self.playwright.chromium.launch(
+                headless=CONFIG.headless,
+                args=launch_args,
+            )
             self.context = self.browser.new_context()
             self._load_cookies()
             self.page = self.context.new_page()
