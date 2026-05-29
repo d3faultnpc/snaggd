@@ -1,6 +1,12 @@
 from .base import BaseHandler, FormType, ProcessResult
 from config import SELECTORS, CONFIG
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception:
+    _agent = None
+
 
 class TestFormHandler(BaseHandler):
     """
@@ -58,14 +64,24 @@ class TestFormHandler(BaseHandler):
         except Exception:
             pass
 
-        # 3. Fill cover letter
+        # 2.5. Fill remaining employer question fields (salary, custom questions)
+        # These are task-body textareas that stay after the "без теста" click.
+        self._fill_employer_questions(page, kwargs.get('vacancy_text', ''))
+
+        # 3. Fill cover letter — use specific selectors first, then fallback that
+        # explicitly excludes task-body (employer question) textareas filled in step 2.5
         textarea = self._find_element_by_selectors(page, [
-            f'[data-qa="vacancy-response-popup-form-letter-input"] textarea',
+            '[data-qa="vacancy-response-popup-form-letter-input"] textarea',
             SELECTORS['popup_letter_input'],
             '[data-qa="vacancy-response-letter-informer"] textarea',
-            '[data-qa="textarea-native-wrapper"] textarea',
-            'textarea',
         ])
+        if not textarea:
+            for t in page.query_selector_all('textarea'):
+                if t.is_visible():
+                    in_task_body = t.evaluate("el => !!el.closest('[data-qa=\"task-body\"]')")
+                    if not in_task_body:
+                        textarea = t
+                        break
 
         filled = False
         if textarea:
@@ -89,8 +105,22 @@ class TestFormHandler(BaseHandler):
                 print(f"   🔹 Clicking: '{btn.inner_text().strip()}'")
                 btn.scroll_into_view_if_needed()
                 btn.click()
-                self._wait_and_random_delay(page, 2000, 4000)
+                self._wait_and_random_delay(page, 1500, 2500)
 
+                # Guard: check for validation errors (required field left empty)
+                try:
+                    invalid = page.query_selector('[aria-invalid="true"]')
+                    if invalid and invalid.is_visible():
+                        return ProcessResult(
+                            success=False,
+                            status="skipped_form_validation_error",
+                            reason="Form has a required field that failed validation after submit",
+                            scenario="test_form_validation_error"
+                        )
+                except Exception:
+                    pass
+
+                self._wait_and_random_delay(page, 500, 1500)
                 if filled:
                     return ProcessResult(
                         success=True,
@@ -111,3 +141,40 @@ class TestFormHandler(BaseHandler):
             reason="Test skipped but submit button not found",
             scenario="test_form_no_submit"
         )
+
+    def _fill_employer_questions(self, page, vacancy_text: str) -> None:
+        """Fill task-body employer questions (salary, custom) that remain after 'без теста' click."""
+        if _agent is None:
+            return
+        try:
+            task_inputs = page.query_selector_all('[data-qa="task-body"] textarea, [data-qa="task-body"] input[type="text"]')
+            if not task_inputs:
+                return
+            fields = []
+            fillable = []
+            for i, el in enumerate(task_inputs):
+                if not el.is_visible():
+                    continue
+                label = el.evaluate("""el => {
+                    const body = el.closest('[data-qa="task-body"]');
+                    if (body) {
+                        const q = body.querySelector('[data-qa="task-question"]');
+                        if (q && q.innerText.trim()) return q.innerText.trim();
+                    }
+                    return el.getAttribute('placeholder') || '';
+                }""")
+                if label:
+                    fields.append({"idx": i, "label": label, "type": "textarea"})
+                    fillable.append((i, el))
+            if not fields:
+                return
+            print(f"   🔹 Filling {len(fields)} employer question(s) (task-body)...")
+            answers = _agent.fill_form(vacancy_text, fields)
+            for idx, el in fillable:
+                answer = answers.get(str(idx), "")
+                if answer:
+                    el.type(answer[:500], delay=10)
+                    self._wait_and_random_delay(page, 400, 800)
+                    print(f"   ✅ Employer question answered: {answer[:60]}")
+        except Exception as e:
+            print(f"   ⚠️ Employer question fill error: {e}")

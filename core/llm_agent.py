@@ -155,25 +155,16 @@ class LLMAgent:
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _build_match_hint(self, match_context: dict) -> str:
-        """Compact scoring summary injected between cover_letter prompt and VACANCY block.
+        """Compact context injected between cover_letter prompt and VACANCY block.
 
-        Gives the cover model pre-computed match signals so it writes specifically
-        to the real overlap — not to the vacancy text cold.
-        Only non-empty / meaningful fields are included to avoid token waste.
+        Only score and vacancy role type — NOT matched_skills or gaps.
+        Skill lists cause the model to enumerate them instead of writing creatively.
+        The model already has the full profile; let it find the intersection itself.
         """
         parts = []
         score = match_context.get("score")
         if score is not None:
             parts.append(f"Match score: {score}/100")
-        matched = match_context.get("matched_skills") or []
-        if matched:
-            parts.append(f"Matched skills: {', '.join(matched[:5])}")
-        gaps = match_context.get("gaps") or []
-        if gaps:
-            parts.append(f"Gaps (do NOT overstate in letter): {', '.join(gaps[:3])}")
-        signals = match_context.get("signals") or []
-        if signals:
-            parts.append(f"Signals: {', '.join(signals)}")
         role_type = match_context.get("vacancy_role_type")
         if role_type and role_type not in ("unknown", None):
             parts.append(f"Vacancy role type: {role_type}")
@@ -181,8 +172,8 @@ class LLMAgent:
             return ""
         body = "\n".join(f"- {p}" for p in parts)
         return (
-            "\n\nSCORING CONTEXT (from pre-run analysis — use to write more precisely, "
-            "do not copy these labels into the letter):\n" + body + "\n"
+            "\n\nSCORING CONTEXT (do not copy these labels into the letter):\n"
+            + body + "\n"
         )
 
     def _load_profile(self, filename: str) -> str:

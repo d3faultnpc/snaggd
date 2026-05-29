@@ -129,7 +129,20 @@ class QuestionsHandler(BaseHandler):
                     label = btn.inner_text().strip()
                     btn.scroll_into_view_if_needed()
                     btn.click()
-                    self._wait_and_random_delay(page, 2000, 3000)
+                    self._wait_and_random_delay(page, 1000, 1500)
+                    # Guard: required field validation error
+                    try:
+                        invalid = page.query_selector('[aria-invalid="true"]')
+                        if invalid and invalid.is_visible():
+                            return ProcessResult(
+                                success=False, status="skipped_form_validation_error",
+                                reason="Form has a required field that failed validation after submit",
+                                scenario="questions_validation_error",
+                                details={"filled_count": filled_count},
+                            )
+                    except Exception:
+                        pass
+                    self._wait_and_random_delay(page, 1000, 1500)
                     return ProcessResult(
                         success=True, status="applied",
                         reason=f"Questionnaire submitted ({filled_count} fields), button: '{label}'",

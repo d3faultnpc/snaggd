@@ -98,6 +98,14 @@ class HHBrowser:
         all_vacancies: list = []
 
         for i, search_url in enumerate(search_urls):
+            # Direct vacancy URL — add as-is without scraping search results
+            if re.search(r'/vacancy/\d+', search_url):
+                vacancy_id = re.search(r'/vacancy/(\d+)', search_url).group(1)
+                clean_url = f'https://hh.ru/vacancy/{vacancy_id}'
+                all_vacancies.append((clean_url, f'vacancy/{vacancy_id}', len(all_vacancies) + 1))
+                print(f"🔹 Direct vacancy URL: {clean_url}")
+                continue
+
             print(f"🔹 Search {i+1}/{len(search_urls)}: {search_url[:80]}...")
             try:
                 self.page.goto(search_url, timeout=CONFIG.page_load_timeout,
