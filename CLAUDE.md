@@ -15,9 +15,21 @@ Never write code in the same turn you load memory.
 
 ### Gate 2 — Before any code
 Read the relevant source files first. "Correct in L2" ≠ "correct in code."
-For every task — including pre-approved ones — present:
-  CAUSE → IMPACT → SOLUTION → ALTERNATIVES → your call?
-Wait for explicit go-ahead this session. Design approved ≠ implement approved.
+
+Gate 2 is triggered by change TYPE, not change size.
+
+Mandatory — present CAUSE → IMPACT → SOLUTION → ALTERNATIVES → your call?
+Wait for explicit go-ahead before implementing:
+  - Any LLM prompt / prompt template change (even 1 word — output quality is non-linear)
+  - New user-visible behavior, new config option, new flow
+  - Architectural change: new module, new handler, new adapter, new data schema
+
+Optional — can batch and show combined diff at Gate 3:
+  - Selector fix, logging change, pure refactor (zero behavior change)
+  - Test-only change
+  - Import / dependency fix
+
+Design approved ≠ implement approved.
 
 ### Gate 3 — Before commit
 Self-review every changed file. Run a self-test where possible.
@@ -28,6 +40,26 @@ No merge, no tag, no push to remote without an explicit instruction in this sess
 "We discussed it last session" does not count.
 Pipeline: feature/* → dev (user tests locally) → user says "push" → main + GitHub.
 After any merge, push, or branch close: update "Branch state" in MEMORY.md.
+
+### Environment model (enforced by Gate 4)
+
+```
+sandbox/*  →  local/dev  →  local/main
+               ↕                ↕
+           origin/dev      origin/main
+```
+
+Tier rules — no exceptions:
+- `sandbox/*`: hypothesis only. Local. Never pushed to GitHub. Disposable.
+- `local/dev`: confirmed + testable. Safe base for new branches. Updated only by explicit feature/* merge.
+- `local/main`: stable + architecture-validated. Updated only by explicit dev → main merge with user approval.
+- `origin/dev`: mirrors local/dev on explicit "push dev" instruction. GitHub beta state.
+- `origin/main`: mirrors local/main at every release. Always tagged.
+
+Rollback protocol:
+- Local: `git reset --hard <tag-or-commit>` — always available.
+- GitHub: `git revert <commit>` (preferred, non-destructive). Force-push only after explicit user confirmation.
+- Tags on main are the primary rollback anchors. Never delete a tag.
 
 ### Gate 5 — Memory / task status
 Mark a task ✅✅ in L2 only after the user accepts it — not when you think it's done.
