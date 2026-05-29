@@ -42,7 +42,7 @@ class Config:
 
     # LLM settings
     llm_max_input_chars: int = 5000
-    cache_size: int = 1000
+    cache_size: int = 15
     cache_file: str = str(DATA_DIR / "llm_cache.json")
 
     # Browser

@@ -1,5 +1,6 @@
 import json
 import hashlib
+import time
 from typing import Tuple, List, Optional
 from pathlib import Path
 from config import CONFIG
@@ -24,6 +25,7 @@ class LLMCover:
 
     def __init__(self):
         self.cache_file = Path(CONFIG.cache_file)
+        self._profile_hash = self._compute_profile_hash()
         self.cache = self._load_cache()
         self.last_score: int = 0
         self.last_matched_skills: list = []
@@ -76,13 +78,33 @@ class LLMCover:
         return result
     
     def _hash_text(self, text: str) -> str:
-        """Creates an MD5 hash for vacancy text (used as cache key)."""
-        return hashlib.md5(text.encode('utf-8')).hexdigest()[:16]
-    
+        """Cache key: compound hash of (cover_model, llm_model, profile, vacancy_text).
+
+        Any change to model, candidate profile, or vacancy text produces a new key.
+        Stale entries from old models or profiles are ignored automatically.
+        """
+        cover_model = _agent.cover_model if _agent else ""
+        llm_model = _agent.model if _agent else ""
+        compound = f"{cover_model}|{llm_model}|{self._profile_hash}|{text}"
+        return hashlib.md5(compound.encode('utf-8')).hexdigest()[:16]
+
+    def _compute_profile_hash(self) -> str:
+        """Short hash of candidate.md — changes when the user updates their profile."""
+        try:
+            profile_path = Path(CONFIG.data_dir) / "candidate.md"
+            content = profile_path.read_text(encoding="utf-8")[:500] if profile_path.exists() else ""
+            return hashlib.md5(content.encode('utf-8')).hexdigest()[:8]
+        except Exception:
+            return "noprofile"
+
     def _load_cache(self) -> dict:
-        """Loads cache from file."""
+        """Loads cache. Returns empty dict if file is from a previous day (session boundary)."""
         try:
             if self.cache_file.exists():
+                age_hours = (time.time() - self.cache_file.stat().st_mtime) / 3600
+                if age_hours > 24:
+                    print("   📋 Cache expired (>24h) — starting fresh")
+                    return {}
                 with open(self.cache_file, 'r', encoding='utf-8') as f:
                     cache = json.load(f)
                 print(f"   📋 Cache loaded: {len(cache)} entries")
