@@ -154,8 +154,8 @@ class HHAdapter(SiteAdapter):
             print(f"   ❌ No search URLs configured — run: python onboarding/wizard.py --block b")
         return cookies_ok and urls_ok
 
-    def start(self) -> bool:
-        return self.browser.start()
+    def start(self, debug: bool = False) -> bool:
+        return self.browser.start(debug=debug)
 
     def close(self) -> None:
         self.browser.close()
