@@ -297,9 +297,15 @@ class HHAdapter(SiteAdapter):
                     'details': score_details
                 }
 
-            print("   🔹 Clicking 'Apply'...")
-            if not self.browser.click_apply_button():
-                return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
+            # Auto-read vacancies already have the chat link embedded — clicking any
+            # "Откликнуться" would hit a recommendation card and open the wrong popup.
+            _pre_chat = self.browser.vacancy_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
+            if _pre_chat and _pre_chat.is_visible():
+                print("   ✅ Chat link already active (auto-read vacancy) — skipping apply click")
+            else:
+                print("   🔹 Clicking 'Apply'...")
+                if not self.browser.click_apply_button():
+                    return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
 
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_after_apply_click")

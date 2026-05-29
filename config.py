@@ -63,9 +63,9 @@ SELECTORS = {
     'vacancy_description': '[data-qa="vacancy-description"]',
     'vacancy_title_page': '[data-qa="vacancy-title"]',
     'apply_button': [
+        '[data-qa="vacancy-response"]',
         'button:has-text("Откликнуться")',
         'a:has-text("Откликнуться")',
-        '[data-qa="vacancy-response"]'
     ],
     'send_button': [
         '[data-qa="vacancy-response-letter-submit"]',  # post-apply cover form (verified 2026-05-26)
