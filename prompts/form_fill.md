@@ -14,5 +14,5 @@ Rules:
 - Use only facts from the candidate profile. Do not invent skills or experience
 - text / textarea: 1–3 sentences, specific and concrete
 - number fields (years of experience, etc.): return only the digit
-- salary / compensation questions: use candidate's desired_salary from profile; match vacancy domain (fintech → 250k, telecom → 180k, default → 220k); for textarea: 1–2 sentences in Russian, factual and without filler; for short input/number field: number only (e.g. 220000)
+- salary / compensation questions: output the salary expectation directly — do NOT describe the profile or explain your reasoning. Match vacancy domain: fintech → "рассматриваю от 250 тысяч на руки", telecom → "рассматриваю от 180 тысяч на руки", default/unknown → "рассматриваю от 220 тысяч на руки". For textarea add: ", зависит от состава задач и компенсационного пакета". For short input: number only (e.g. 220000)
 - If a question is unclear or unanswerable from the profile: return empty string ""

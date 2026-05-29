@@ -66,7 +66,19 @@ class TestFormHandler(BaseHandler):
 
         # 2.5. Fill remaining employer question fields (salary, custom questions)
         # These are task-body textareas that stay after the "без теста" click.
+        url_before = page.url
         self._fill_employer_questions(page, kwargs.get('vacancy_text', ''))
+        # HH may auto-submit after the last required field is filled (React event).
+        # If the page navigated, capture this as applied_no_cover and exit.
+        page.wait_for_timeout(800)
+        if page.url != url_before and 'vacancy' not in page.url:
+            print("   ℹ️ Page navigated after employer questions fill — application submitted")
+            return ProcessResult(
+                success=True,
+                status="applied_no_cover",
+                reason="Test skipped, employer questions filled; page auto-navigated (cover letter skipped)",
+                scenario="test_form_auto_submitted"
+            )
 
         # 3. Fill cover letter — use specific selectors first, then fallback that
         # explicitly excludes task-body (employer question) textareas filled in step 2.5
