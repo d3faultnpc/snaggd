@@ -68,13 +68,19 @@ class HHAdapter(SiteAdapter):
 
         processed_count = 0
         skip_count = 0
+        termination_reason = "completed"
+        termination_detail = "All vacancies processed"
 
         for url, title, index in vacancies:
             if processed_count >= CONFIG.max_vacancies_per_session:
                 print(f"⏹ [{self.name()}] Limit reached: {processed_count}")
+                termination_reason = "max_vacancies_reached"
+                termination_detail = f"{processed_count} vacancies processed"
                 break
             if skip_count >= CONFIG.max_skips:
                 print(f"⏹ [{self.name()}] Skip limit: {skip_count}")
+                termination_reason = "max_skips_reached"
+                termination_detail = f"{skip_count} consecutive skips"
                 break
 
             existing = logger.is_processed(url, applied_log)
@@ -137,7 +143,17 @@ class HHAdapter(SiteAdapter):
             logger.log_daily(f"Result: {result['status']} — {result['reason']}")
             print(f"📊 Status: {result['status']} — {result['reason']}")
 
-        return applied_log[initial_count:]
+        new_entries = applied_log[initial_count:]
+        logger.log_result(
+            applied_log,
+            type="session_end",
+            reason=termination_reason,
+            detail=termination_detail,
+            processed=processed_count,
+        )
+        logger.log_daily(f"[{self.name()}] Session ended: {termination_reason} — {termination_detail}")
+        print(f"🏁 [{self.name()}] Session ended: {termination_reason} — {termination_detail}")
+        return new_entries
 
     def verify(self) -> bool:
         """Check cookies exist and at least one search URL is configured."""
