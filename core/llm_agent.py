@@ -30,6 +30,7 @@ class LLMAgent:
             raise RuntimeError("LLM_API_KEY not set — add it to .env")
 
         self.model = os.getenv("LLM_MODEL", "anthropic/claude-3-5-haiku")
+        self.cover_model = os.getenv("COVER_MODEL", self.model)
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
             api_key=api_key,
@@ -48,7 +49,7 @@ class LLMAgent:
         prompt = self._load_prompt("cover_letter.md")
         hint = self._build_match_hint(match_context) if match_context else ""
         resp = self.client.chat.completions.create(
-            model=self.model,
+            model=self.cover_model,
             max_tokens=800,
             messages=[
                 {"role": "system", "content": self._system()},

@@ -43,16 +43,40 @@ class ChatHandler(BaseHandler):
       chatik_bot_message — employer/bot message bubble
     """
 
+    def __init__(self):
+        self._cover_typed = False
+
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.CHAT_INTERFACE
 
     def verify_submission(self, page) -> bool:
-        # TODO (#5): check for message-sent indicator in chatik after live test
-        # Possible signals: last message bubble matches our cover letter text,
-        # or success notification appears.
+        if not self._cover_typed:
+            # No cover typed (applied_via_chat_no_cover path).
+            # Application was already submitted when the chat link was clicked.
+            return True
+
+        # Cover was typed — verify by checking whether React cleared the input after send.
+        chatik_frame = None
+        for frame in page.frames:
+            if 'chatik.hh.ru' in frame.url:
+                chatik_frame = frame
+                break
+
+        if chatik_frame is None:
+            # Frame gone after send — navigated away successfully.
+            return True
+
+        try:
+            inp = chatik_frame.query_selector(SELECTORS['chatik_input'])
+            if inp:
+                return inp.input_value().strip() == ""
+        except Exception:
+            pass
+
         return False
 
     def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
+        self._cover_typed = False
         # 1. Click "Go to chat" — chat_link is on main page, not inside iframe
         chat_link = page.query_selector(SELECTORS['chat_link'])
         if not chat_link or not chat_link.is_visible():
@@ -113,6 +137,7 @@ class ChatHandler(BaseHandler):
             cover_input.click()
             self._wait_and_random_delay(page, 500, 1000)
             cover_input.type(chatik_safe_cover, delay=10)
+            self._cover_typed = True
             print("   ✅ Cover letter typed")
             self._wait_and_random_delay(page, 1500, 2500)
         except Exception as e:
