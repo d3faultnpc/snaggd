@@ -48,6 +48,9 @@ class Config:
     # Browser
     headless: bool = os.getenv("HEADLESS", "false").lower() == "true"
 
+    # REST API
+    api_key: str = os.getenv("API_KEY", "")
+
     # Test forms: skip by default; set true to attempt LLM fill when no skip link exists
     fill_tests: bool = os.getenv("FILL_TESTS", "false").lower() == "true"
 

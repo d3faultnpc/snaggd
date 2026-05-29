@@ -1,8 +1,10 @@
 """HHAdapter — HH.ru implementation of SiteAdapter."""
 
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
@@ -35,7 +37,9 @@ class HHAdapter(SiteAdapter):
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
-    def run(self, logger, dry_run: bool = False, debug: bool = False) -> list:
+    def run(self, logger, dry_run: bool = False, debug: bool = False,
+            stop_event: Optional[threading.Event] = None,
+            max_vacancies: Optional[int] = None) -> list:
         """Full session loop. Returns new applied_log entries from this run.
 
         Three-tier stop filter (all adapter-agnostic config from job_preferences.md):
@@ -70,9 +74,15 @@ class HHAdapter(SiteAdapter):
         skip_count = 0
         termination_reason = "completed"
         termination_detail = "All vacancies processed"
+        vacancy_limit = max_vacancies if max_vacancies is not None else CONFIG.max_vacancies_per_session
 
         for url, title, index in vacancies:
-            if processed_count >= CONFIG.max_vacancies_per_session:
+            if stop_event and stop_event.is_set():
+                print(f"⏹ [{self.name()}] Stop requested via API")
+                termination_reason = "stopped"
+                termination_detail = "Stop requested via API"
+                break
+            if processed_count >= vacancy_limit:
                 print(f"⏹ [{self.name()}] Limit reached: {processed_count}")
                 termination_reason = "max_vacancies_reached"
                 termination_detail = f"{processed_count} vacancies processed"
