@@ -68,7 +68,7 @@ def main() -> int:
             print(f"❌ [{adapter.name()}] Pre-flight failed — skipping")
             continue
 
-        if not adapter.start():
+        if not adapter.start(debug=debug):
             print(f"❌ [{adapter.name()}] Failed to start — skipping")
             continue
 
