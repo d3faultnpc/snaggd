@@ -17,7 +17,7 @@ class TestFormHandler(BaseHandler):
     def verify_submission(self, page) -> bool:
         return self._poll_for_success(page, timeout_s=5)
 
-    def process(self, page, cover_letter: str, hr_matcher=None, **kwargs) -> ProcessResult:
+    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         # 1. Click "Apply without answering questions"
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])

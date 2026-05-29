@@ -218,9 +218,12 @@ Total: ≈ 1300 tokens
    - `LLMAgent.score_vacancy(text)` → `{score: 0–100, matched_skills: [], gaps: [], signals: []}`
    - `LLMAgent.generate_cover(text)` → cover letter string, same language as vacancy
 
-2. `HRMatcher.answer(question, context)` → answer string (EMPLOYER_QUESTIONS handler only)
-   - Primary: LLMAgent
-   - Optional context: `data/hr_questions.md` if present
+2. `QuestionsHandler` (EMPLOYER_QUESTIONS form type):
+   - Collects ALL visible fields with labels in one pass
+   - Cover-letter fields: pre-filled with the pre-generated cover letter directly
+   - Remaining fields: one batch call `LLMAgent.fill_form(vacancy_text, fields)` → `{idx: answer}`
+   - Prompt: `prompts/form_fill.md`. LLM uses candidate profile to answer in vacancy language.
+   - No file-based Q&A bank. No per-question LLM calls.
 
 ### Language Detection
 
@@ -369,7 +372,7 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 | `data/hh_cookies.json` | login.py | yes |
 | `data/applied_log.json` | runtime (logger.py) | yes |
 | `data/llm_cache.json` | runtime (llm_cover.py) | yes |
-| `data/hr_questions.md` | user-created, optional | yes |
+| `data/form_answers.md` | user-created, optional (rarely needed — LLM answers from candidate profile) | yes |
 | `config.py` | code | no |
 | `prompts/cover_letter.md` | code | no |
 | `prompts/match_scoring.md` | code | no |

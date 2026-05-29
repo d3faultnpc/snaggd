@@ -38,7 +38,7 @@ class SiteAdapter(ABC):
 
     @abstractmethod
     def process_vacancy(self, url: str, title: str, index: int,
-                        llm_cover, hr_matcher,
+                        llm_cover,
                         debug: bool = False, session_dir=None) -> dict:
         """Process one vacancy end-to-end.
 
