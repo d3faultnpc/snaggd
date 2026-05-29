@@ -10,8 +10,11 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi import Depends, FastAPI, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+
+_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=True)
 
 app = FastAPI(title="snaggd", version="0.3.1", docs_url="/api/docs")
 
@@ -22,7 +25,7 @@ _sessions: dict = {}
 
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
-def _require_key(x_api_key: str = Header(...)):
+def _require_key(x_api_key: str = Security(_api_key_scheme)):
     from config import CONFIG
     if not CONFIG.api_key or x_api_key != CONFIG.api_key:
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
