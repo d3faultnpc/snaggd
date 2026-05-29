@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -130,6 +131,48 @@ def _post_parse_enrich(data: ResumeData) -> ResumeData:
     return data
 
 
+# ── Helpers: file patchers ────────────────────────────────────────────────────
+
+def _patch_filters_json(data_dir: Path, *, stop_companies=None, min_employer_rating=None) -> None:
+    """Merge wizard-collected hard-filter rules into data/filters.json."""
+    path = data_dir / "filters.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    if not data.get("_comment"):
+        data["_comment"] = "Machine-only stop rules. Edited by wizard/settings. Never sent to LLM."
+    data.setdefault("stop_title_keywords", [])
+    data.setdefault("stop_companies", [])
+    if stop_companies is not None:
+        data["stop_companies"] = stop_companies
+    if min_employer_rating is not None:
+        data["min_employer_rating"] = min_employer_rating
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
+    """Append or replace §Desired Salary section in candidate.md."""
+    path = data_dir / "candidate.md"
+    if not path.exists():
+        return
+    content = path.read_text(encoding="utf-8")
+    marker = "## Desired Salary"
+    new_section = f"\n{marker}\n{salary_text}\n"
+    if marker in content:
+        lines, skip = [], False
+        for line in content.splitlines():
+            if line.strip() == marker:
+                skip = True
+                continue
+            if skip and line.startswith("## "):
+                skip = False
+            if not skip:
+                lines.append(line)
+        content = "\n".join(lines)
+    path.write_text(content.rstrip("\n") + new_section, encoding="utf-8")
+
+
 # ── Block A: Resume → candidate.md ────────────────────────────────────────────
 
 def block_a(resume_path: Path | None = None) -> bool:
@@ -212,8 +255,10 @@ def block_b(append: bool = False) -> bool:
 
     from onboarding.url_builder import build_hh_url
 
-    stop_co = ask_list("Stop-companies (companies you don't want to apply to)")
-    stop_kw = ask_list("Stop-keywords in vacancy titles (e.g. junior, intern)")
+    stop_co   = ask_list("Stop-companies (companies you don't want to apply to)")
+    stop_kw   = ask_list("Stop-keywords in vacancy titles (e.g. junior, intern)")
+    stop_cats = ask_list("Stop industries/domains — LLM semantic filter (e.g. gambling, adult, MLM, outsource)")
+    min_rating_str = ask("Min employer HH rating to apply (1.0–5.0, e.g. 3.6, Enter = no filter)")
 
     # Load suggested queries from Block A (if available)
     sq_path = CONFIG.data_dir / "suggested_queries.txt"
@@ -269,6 +314,12 @@ def block_b(append: bool = False) -> bool:
         urls_out.write_text(new_urls, encoding="utf-8")
         print(f"\n✓  {len(searches)} search URL(s) saved → {urls_out}")
 
+    # Desired salary — free-form, written to candidate.md for LLM context
+    print("\n💰 Desired salary — used when the agent fills salary fields on application forms.")
+    print("   Tip: wider range gives the model more freedom to match market rates.")
+    print("   Examples: 'от 220 000 руб.' · 'default 220 000, fintech 250 000' · '200 000–350 000'")
+    salary_hint = ask("Salary expectations (free form, Enter to skip)")
+
     # Save preferences (used by LLM for vacancy scoring)
     roles = ", ".join(s["role"] for s in searches)
     salary_min = next((s["salary"] for s in searches if s["salary"]), "not set")
@@ -283,10 +334,32 @@ def block_b(append: bool = False) -> bool:
         lines += ["stop_companies:"] + [f"  - {c}" for c in stop_co]
     if stop_kw:
         lines += ["stop_keywords:"] + [f"  - {k}" for k in stop_kw]
+    if stop_cats:
+        lines += ["stop_categories:"] + [f"  - {c}" for c in stop_cats]
 
     prefs_out = CONFIG.data_dir / "job_preferences.md"
     prefs_out.write_text("\n".join(lines), encoding="utf-8")
     print(f"✓  Preferences saved → {prefs_out}")
+
+    # Write hard filter rules to filters.json (stop_companies + min_rating)
+    min_rating: float | None = None
+    if min_rating_str:
+        try:
+            min_rating = float(min_rating_str)
+        except ValueError:
+            print(f"⚠  Could not parse rating '{min_rating_str}' — skipping")
+    _patch_filters_json(
+        CONFIG.data_dir,
+        stop_companies=[c.lower() for c in stop_co] if stop_co else [],
+        min_employer_rating=min_rating,
+    )
+    print(f"✓  Filters saved → {CONFIG.data_dir / 'filters.json'}")
+
+    # Append desired salary to candidate.md
+    if salary_hint:
+        _append_salary_to_candidate(CONFIG.data_dir, salary_hint)
+        print(f"✓  Salary added → {CONFIG.data_dir / 'candidate.md'}")
+
     return True
 
 
@@ -297,8 +370,6 @@ def block_c() -> bool:
     print("Controls how cover letters sound.\n")
 
     formality = ask("Style: formal / semi-formal / friendly", "semi-formal")
-    length    = ask("Cover letter length: short (300-500) / medium (500-800)", "short")
-    lang      = ask("Language: russian / english", "russian")
     sample    = ""
     print("\nPaste a sample cover letter you like (press Enter twice when done, or just Enter to skip):")
     lines = []
@@ -313,8 +384,6 @@ def block_c() -> bool:
     content = [
         "# tone_of_voice.md",
         f"formality: {formality}",
-        f"cover_length: {length}",
-        f"language: {lang}",
     ]
     if sample:
         content += ["", "sample_cover: |", *("  " + l for l in sample.split("\n"))]
