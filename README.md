@@ -21,7 +21,7 @@ Reads your resume, scores each vacancy against it, writes a personalized cover l
 5. Detects the form type (modal, questionnaire, chatik, etc.) and fills it accordingly
 6. Logs every result to `data/applied_log.json`
 
-All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `google/gemini-2.5-flash-lite` (~$0.0004 per vacancy).
+All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `deepseek/deepseek-v3.2` (~$0.0002 per vacancy).
 
 ---
 
@@ -49,8 +49,8 @@ The wizard creates all required data files in order:
 |-------|----------------|
 | D — LLM config | `.env` with your OpenRouter key + model |
 | A — Resume | `data/candidate.md` from your PDF/DOCX/image |
-| B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` |
-| C — Tone | `data/tone_of_voice.md` (cover letter style) |
+| B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` + `data/filters.json` (stop rules) |
+| C — Tone | `data/tone_of_voice.md` (cover letter formality + optional style sample) |
 
 Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
 
@@ -88,13 +88,16 @@ python main.py --max 5
 All config lives in `.env` (created by the wizard):
 
 ```bash
-LLM_API_KEY=sk-or-...                   # OpenRouter key (required)
-LLM_MODEL=google/gemini-2.5-flash-lite  # any OpenRouter model
-MIN_SCORE=60                            # skip vacancies scoring below this
-MAX_VACANCIES=10                        # max applications per run
-HEADLESS=false                          # true = no browser window
-DATA_DIR=./data                         # override data directory
-PROXY_URL=                              # socks5://... (optional)
+LLM_API_KEY=sk-or-...              # OpenRouter key (required)
+LLM_MODEL=deepseek/deepseek-v3.2   # any OpenRouter model
+COVER_MODEL=                       # optional: separate model for cover letters
+MIN_SCORE=60                       # skip vacancies scoring below this
+MAX_VACANCIES=10                   # max applications per run
+MAX_SKIPS=10                       # stop session after N skipped vacancies
+HEADLESS=false                     # true = no browser window
+FILL_TESTS=false                   # true = attempt LLM fill for employer tests
+DATA_DIR=./data                    # override data directory
+PROXY_URL=                         # socks5://... (optional)
 ```
 
 ---
@@ -113,7 +116,7 @@ main.py (orchestrator)
 │       ├── chat         — chatik redirect flow (auto-read employers)
 │       ├── test_form    — employer test (skipped by default)
 │       └── salary       — salary-only forms (skipped)
-├── LLMCover  (llm_cover.py)   — cover letter + scoring, MD5 cache
+├── LLMCover  (llm_cover.py)   — cover letter + scoring, compound-key session cache
 │   └── LLMAgent (core/llm_agent.py) — OpenRouter gateway
 └── Logger    (logger.py)      — data/applied_log.json + daily logs
 ```
@@ -128,17 +131,34 @@ Two contexts, zero overlap:
 
 ```
 adapters/
-  base.py          ← SiteAdapter ABC (extend for new job boards)
-  hh/              ← HH.ru adapter
+  base.py               ← SiteAdapter ABC (extend for new job boards)
+  hh/
+    adapter.py          ← orchestration, stop filters, apply flow
+    browser.py          ← Playwright: cookies, navigation, vacancy scraping
+    detector.py         ← DOM-based form classification (no LLM)
+    handlers/           ← one module per form type
+      hh_modal.py       ← city / metro / schedule dropdowns + cover textarea
+      cover_only.py     ← single cover textarea
+      questions.py      ← employer questionnaire (LLM batch fill)
+      chat.py           ← chatik redirect flow (auto-read employers)
+      test_form.py      ← employer test (skipped unless FILL_TESTS=true)
+      salary.py         ← salary-only forms (skipped)
 core/
-  llm_agent.py     ← OpenRouter gateway, prompt cache
+  llm_agent.py          ← OpenRouter gateway, session-scoped prompt cache
+utils/
+  filters.py            ← stop filter logic (title, company, rating, semantic)
+  helpers.py            ← shared utilities
 onboarding/
-  wizard.py        ← CLI setup (blocks D→A→B→C)
-  resume_parser.py ← multimodal PDF/DOCX/image → structured resume data
-  url_builder.py   ← job preferences → HH search URLs
-prompts/           ← LLM prompt templates (cover letter, scoring, form fill)
-data/              ← gitignored, created by wizard (your resume, cookies, logs)
-scripts/           ← dev utilities (vacancy inspector, label tester)
+  wizard.py             ← CLI setup (blocks D→A→B→C)
+  resume_parser.py      ← multimodal PDF/DOCX/image → structured resume data
+  url_builder.py        ← job preferences → HH search URLs
+prompts/
+  cover_letter.md       ← cover generation: tone, hooks, forbidden openers
+  match_scoring.md      ← vacancy scoring: signals, penalties, role-type match
+  form_fill.md          ← form field answering: salary, employer questions
+  cv_extractor.md       ← resume extraction prompt (used by resume_parser.py)
+data/                   ← gitignored, created by wizard (your resume, cookies, logs)
+scripts/                ← dev utilities (vacancy inspector, label tester)
 ```
 
 ---

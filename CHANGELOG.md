@@ -1,5 +1,95 @@
 # Changelog
 
+## [0.3.1] — 2026-05-29 · Reliability & Onboarding
+
+### Summary
+Bug-fix and quality release on top of 0.3.0. Core fixes: auto-read employer
+detection (chatik-first flow that skips the apply button entirely), session
+cache key collision, employer questionnaire fill, and wizard completeness
+(stop_categories, salary hint, employer rating filter). No new user-facing
+flows — the existing ones are now more reliable.
+
+---
+
+### Fixed: Auto-read employer detection
+Employers with a chatik-first flow embed `vacancy-response-link-view-topic`
+on the vacancy page before any button click. The previous code would try to
+click the regular apply button, accidentally match a recommendation card link
+below the fold, and time out after 30 s. Fix: pre-check for chat link
+visibility before attempting any click — if present, skip the button entirely
+and go straight to form detection.
+
+### Fixed: Apply button selector priority
+`apply_button` selector list reordered: `[data-qa="vacancy-response"]` first,
+text-based selectors as fallback. Prevents matching unrelated
+`a:has-text("Откликнуться")` links in the recommendation feed.
+
+### Fixed: Session LLM cache key collision
+Cache key now compounds `cover_model|llm_model|profile_hash|vacancy_text`.
+Profile hash is computed from `candidate.md + job_preferences.md` — updating
+your profile invalidates your own entries only. Session scope added: entries
+expire after 24 h to prevent stale covers from a prior run.
+
+### Fixed: Employer questionnaire fill (QuestionsHandler)
+Employer questions on the apply form are now filled via a single batched LLM
+call before the cover letter step. Previously only standard HH modal fields
+were filled. Navigation guard added: `Далее` is clicked only when extra
+fields are detected. Cover selector updated to the verified
+`[data-qa="vacancy-response-letter-submit"]`. Validation error detection
+before final submit.
+
+### Fixed: Salary fill quality
+`form_fill.md` updated to output a domain-aware number when a salary field is
+present, using the candidate's stated range from `candidate.md §Desired Salary`.
+Previously returned boilerplate fallback text.
+
+### Changed: Cover letter forbidden openers
+Extended: all `Мой опыт` variants (`Мой профессиональный опыт`, `Мой опыт
+работы`, etc.) blocked in addition to the previously blocked `Я /
+Меня зовут` family.
+
+### Changed: Match context trimmed
+`match_context` injected into the cover prompt now carries only `score` and
+`role_type`. `matched_skills` and `gaps` removed — they added noise without
+improving cover quality in practice.
+
+### New: Dual-model cover
+`COVER_MODEL` env var (optional) routes cover generation to a dedicated
+model while `LLM_MODEL` handles vacancy scoring. When unset, one model does
+both. Documented in `.env.example`.
+
+### New: Offscreen browser
+Browser launches offscreen by default (no taskbar clutter). `--debug` flag
+restores the visible window at the primary monitor origin.
+
+### New: verify_submission (ChatHandler)
+After posting a cover letter via chatik, the agent re-reads the DOM to
+confirm acceptance. Logs `applied_via_chat` on confirmed success;
+falls back to `applied_unverified` if the confirmation element is absent.
+
+### Changed: Wizard — Block B completeness
+New questions added to Block B:
+- **Stop industries/domains** — list saved to `job_preferences.md` as
+  `stop_categories:` for the LLM semantic filter.
+- **Min employer HH rating** — written to `data/filters.json` as
+  `min_employer_rating` (hard filter, never sent to LLM).
+- **Stop companies** — now also written to `filters.json` `stop_companies`
+  in addition to `job_preferences.md`.
+- **Desired salary** — free-form (e.g. `от 220 000 руб.`), appended to
+  `candidate.md §Desired Salary` for LLM context.
+
+### Changed: Wizard — Block C simplified
+Removed `cover_length` and `language` — they contradicted the
+`cover_letter.md` prompt's 550–700 char target and built-in language
+auto-detection. Block C now writes only `formality` and optional
+`sample_cover`.
+
+### Changed: MAX_SKIPS from env var
+`max_skips` (vacancy skip budget per session) is now configurable via
+`MAX_SKIPS` env var. Default: 10.
+
+---
+
 ## [0.3.0] — 2026-05-28 · Context Intelligence
 
 ### Summary
