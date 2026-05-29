@@ -29,6 +29,9 @@ venv/
 # Phase 2 design artifacts — not ready for public repo yet
 design/
 
+# User dropbox — personal insights/files passed to Claude, never committed
+user artifacts/
+
 # Leftovers from legacy paths (belt + suspenders)
 hh_cookies.json
 llm_cache.json
