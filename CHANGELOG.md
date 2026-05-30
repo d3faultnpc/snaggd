@@ -1,5 +1,74 @@
 # Changelog
 
+## [0.3.2] — 2026-05-30 · Obstacle Navigation
+
+### Summary
+Two sessions of work on top of 0.3.1. Core themes: the agent now senses and
+navigates unexpected blocking obstacles (modals, layered forms) via LLM, and
+drives toward cover letter delivery as the terminal goal instead of stopping
+at the first form. Also adds a REST API for programmatic control and several
+yield/reliability fixes.
+
+---
+
+### New: REST API
+FastAPI wrapper over the apply agent: `POST /apply/start`, `GET /apply/status`,
+`POST /apply/stop`. API key auth via `X-API-Key` header. Swagger UI at `/docs`.
+Session termination logging and status codes reference included.
+
+### New: LLM-guided modal dismissal
+Unexpected blocking overlays after Apply click are now handled automatically.
+The agent detects any `role=alertdialog` or `role=dialog` element, extracts
+modal text and visible button labels, and asks the LLM which button to click
+(~50 output tokens, no candidate context). Covers current and future HH modals
+without hardcoding button text or selectors.
+
+### New: Goal-directed post-handler chat chain (F3)
+After any form handler succeeds, the agent re-checks whether a chatik link
+appeared on the vacancy page. If present, it routes cover letter delivery
+through chatik automatically. Enables multi-layer flows such as:
+modal → questionnaire → chatik, handled end-to-end in one vacancy cycle.
+
+### New: HH pagination support
+HH moved from infinite scroll to paginated results (50 vacancies/page).
+Added `MAX_PAGES` config and `_build_page_url()` for `&page=N` traversal.
+Dedup hits no longer count toward the per-session skip budget.
+
+### Fixed: Questionnaire misclassified as mandatory test
+Forms with `employer-asking-for-test` header but visible `task-question` fields
+were being classified as skippable tests. They now route correctly to
+`QuestionsHandler` (collect fields → LLM batch fill → submit).
+
+### Fixed: Chatik submit verification false-negative
+`verify_submission()` in ChatHandler: when React rebuilds the input element
+after send, a stale `inp is None` check was returning False (applied_unverified).
+Fix: treat `inp is None` as confirmed send; added 2 s retry for React clear race.
+
+### Fixed: `dry_run` entries now retryable in live mode
+`is_processed()` skips entries with `status=dry_run`, so a subsequent live
+run re-scores and applies to vacancies that were only scored in dry-run mode.
+
+### Fixed: LLM output sanitization
+`_sanitize_score_result()`: type-guard for `signals`, `matched_skills`, `gaps`,
+and `stop_match`. Prevents garbage LLM output (objects, nulls, mixed types)
+from corrupting the apply log.
+
+### Fixed: Default LLM model
+`LLM_MODEL` default corrected to `deepseek/deepseek-v3.2` (was stale
+`anthropic/claude-3-5-haiku` left from an earlier draft).
+
+### Changed: Scroll yield improvement
+`_scroll_to_load_all()` added before scraping each search page. HH lazy-loads
+~20 of 50 vacancy cards without scroll; the new loop scrolls to stable count
+before extracting links, capturing the full page yield.
+
+### New: Developer ergonomics — `--url` flag
+`python main.py --url <vacancy-url>` runs a one-shot debug session on a single
+vacancy. Implies `--debug` and `--max 1`. Useful for testing specific vacancies
+without modifying `search_urls.txt`.
+
+---
+
 ## [0.3.1] — 2026-05-29 · Reliability & Onboarding
 
 ### Summary
