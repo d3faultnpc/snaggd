@@ -12,6 +12,11 @@ except Exception as _e:
     _agent = None
     print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
 
+def get_agent():
+    """Returns the shared LLMAgent singleton (None if init failed)."""
+    return _agent
+
+
 class LLMCover:
     """Cover letter generator with caching.
 

@@ -12,7 +12,7 @@ from adapters.hh.detector import FormDetector
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType
 from config import CONFIG, SELECTORS
-from llm_cover import LLMCover
+from llm_cover import LLMCover, get_agent as _get_llm_agent
 from utils.helpers import random_delay
 from utils.filters import StopFilters, load_stop_filters
 
@@ -336,6 +336,7 @@ class HHAdapter(SiteAdapter):
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_after_apply_click")
 
             current_page = self.browser.get_current_page()
+            self._dismiss_blocking_modal(current_page)
 
             # Immediate-apply (no form)
             try:
@@ -390,6 +391,19 @@ class HHAdapter(SiteAdapter):
                         auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                         self._debug_snapshot(current_page, auto_dir, "unverified")
 
+            # F3: post-handler chat check — some flows (e.g. questionnaire submit)
+            # navigate back to the vacancy page where chatik then becomes available.
+            # Send cover letter via chat if the link appeared and we didn't come from ChatHandler.
+            if result.success and cover_letter and form_info.form_type != FormType.CHAT_INTERFACE:
+                try:
+                    chat_el = current_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
+                    if chat_el and chat_el.is_visible():
+                        print("   💬 Chat link appeared after form submit — routing cover to chatik...")
+                        chat_handler = self.handlers.get_handler(FormType.CHAT_INTERFACE)
+                        result = chat_handler.process(current_page, cover_letter, vacancy_text=vacancy_text)
+                except Exception as e:
+                    print(f"   ⚠️ Post-handler chat check failed: {e}")
+
             if debug and session_dir:
                 self._debug_snapshot(current_page, session_dir, f"03_after_handler_{result.status}")
 
@@ -420,6 +434,69 @@ class HHAdapter(SiteAdapter):
         finally:
             self.browser.close_vacancy()
 
+    # ── Modal dismissal ───────────────────────────────────────────────────────
+
+    def _dismiss_blocking_modal(self, page) -> bool:
+        """LLM-guided dismissal of unexpected blocking modals before form detection.
+
+        Detects role="dialog" overlays that appear after Apply click (e.g. "другая страна"
+        confirmation). Extracts text + buttons, asks LLM which to click.
+        Returns True if a modal was found and handled, False if none present.
+        """
+        # HH uses role="alertdialog" (Magritte) and role="dialog" depending on modal type
+        _MODAL_SELECTORS = '[role="alertdialog"], [role="dialog"], [data-qa="magritte-alert"]'
+        try:
+            dialog = page.query_selector(_MODAL_SELECTORS)
+            if not dialog or not dialog.is_visible():
+                return False
+
+            try:
+                modal_text = dialog.inner_text().strip()[:600]
+            except Exception:
+                return False
+
+            buttons = []
+            btn_els = []
+            try:
+                for btn in page.query_selector_all(
+                    '[role="alertdialog"] button, [role="dialog"] button, [data-qa="magritte-alert"] button'
+                ):
+                    if btn.is_visible():
+                        label = btn.inner_text().strip()
+                        buttons.append({"index": len(buttons), "label": label or f"btn_{len(buttons)}"})
+                        btn_els.append(btn)
+            except Exception:
+                pass
+
+            if not buttons:
+                return False
+
+            print(f"   🔲 Blocking modal: \"{modal_text[:80]}\"")
+            print(f"   🔘 Buttons: {[b['label'] for b in buttons]}")
+
+            llm = _get_llm_agent()
+            if llm is None:
+                return False
+
+            action = llm.ask_modal_action(modal_text, buttons)
+            print(f"   🤖 Modal action: {action}")
+
+            if action.get("action") == "click":
+                idx = action["button_index"]
+                if 0 <= idx < len(btn_els):
+                    label = buttons[idx]["label"]
+                    btn_els[idx].click()
+                    print(f"   ✅ Modal dismissed: clicked \"{label}\"")
+                    page.wait_for_timeout(1500)
+                    return True
+
+            print("   ⚠️ Modal: skipping dismissal (LLM chose skip or index out of range)")
+            return False
+
+        except Exception as e:
+            print(f"   ⚠️ Modal dismissal error: {e}")
+            return False
+
     # ── Debug helper ──────────────────────────────────────────────────────────
 
     @staticmethod
@@ -432,7 +509,9 @@ class HHAdapter(SiteAdapter):
             modal = None
             for sel in [
                 '[data-qa="chatik-root"]',   # chatik modal (must come before generic response selector)
+                '[role="alertdialog"]',       # Magritte alert dialogs (e.g. relocation warning)
                 '[role="dialog"]',
+                '[data-qa="magritte-alert"]',
                 '[data-qa*="modal"]',
                 '.HH-Modal',
             ]:

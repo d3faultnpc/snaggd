@@ -136,8 +136,11 @@ class FormDetector:
     def _classify_form(self, info: FormInfo, combined_text: str) -> FormType:
         """Classifies form type based on collected DOM signals."""
 
-        # 0a. Employer test — highest priority
+        # 0a. Employer test header present — but if task-questions are also visible,
+        # it's a fillable questionnaire (not a true skip-or-die test).
         if info.has_test_form:
+            if info.has_task_questions:
+                return FormType.EMPLOYER_QUESTIONS
             return FormType.TEST_FORM
 
         # 0c. Employer questions — popup (vacancy-response-question) or full-page (task-question)
