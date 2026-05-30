@@ -3,10 +3,11 @@
 HH Auto — autonomous job application agent.
 
 Usage:
-    python main.py                   # normal run (ACTIVE_SITES=hh by default)
-    python main.py --debug           # debug: screenshots + HTML at each step
-    python main.py --dry-run         # score vacancies, do NOT submit
-    python main.py --max 3           # limit to 3 vacancies
+    python main.py                        # normal run (ACTIVE_SITES=hh by default)
+    python main.py --debug                # debug: screenshots + HTML at each step
+    python main.py --dry-run              # score vacancies, do NOT submit
+    python main.py --max 3                # limit to 3 vacancies
+    python main.py --url <hh-url>         # one-shot debug on a single vacancy URL
 """
 
 import argparse
@@ -37,6 +38,8 @@ def main() -> int:
                         help="Score vacancies only — do NOT submit applications")
     parser.add_argument("--max",     type=int, default=None,
                         help="Max vacancies per session (overrides MAX_VACANCIES in .env)")
+    parser.add_argument("--url",     type=str, default=None,
+                        help="One-shot debug: process a single vacancy URL (implies --debug --max 1)")
     args = parser.parse_args()
 
     from config import CONFIG
@@ -44,9 +47,14 @@ def main() -> int:
         CONFIG.max_vacancies_per_session = args.max
 
     dry_run = args.dry_run
-    debug   = args.debug
+    debug   = args.debug or bool(args.url)
+
+    if args.url:
+        CONFIG.max_vacancies_per_session = 1
 
     print("🦾 HH Auto")
+    if args.url:
+        print(f"🔗 URL mode: {args.url} (debug + max 1 implied)")
     if dry_run:
         print("🔍 DRY-RUN — scoring only, no applications submitted")
     if debug:
@@ -67,6 +75,10 @@ def main() -> int:
         if not adapter.verify():
             print(f"❌ [{adapter.name()}] Pre-flight failed — skipping")
             continue
+
+        if args.url and hasattr(adapter, 'browser'):
+            _url = args.url
+            adapter.browser._load_search_urls = lambda: [_url]
 
         if not adapter.start(debug=debug):
             print(f"❌ [{adapter.name()}] Failed to start — skipping")

@@ -134,6 +134,7 @@ class HHBrowser:
                     self.page.wait_for_timeout(wait_ms)
                     if i == 0 and page_num == 0:
                         self._close_cookie_modal()
+                    self._scroll_to_load_all()
                     page_vacancies = self._scrape_vacancies()
                     if not page_vacancies:
                         print(f"   ⏹ Page {page_num}: empty — stopping pagination")
@@ -167,6 +168,21 @@ class HHBrowser:
             print("   ⚠️ search_urls.txt not found — using HH_SEARCH_URL from .env (legacy)")
             return [fallback]
         return []
+
+    def _scroll_to_load_all(self) -> None:
+        """Scrolls down until no new vacancy cards appear (HH lazy-loads within each page).
+
+        HH renders ~20 cards on initial load; subsequent batches appear as the user scrolls.
+        Stops as soon as two consecutive scroll steps yield the same count, or after 10 steps.
+        """
+        prev_count = 0
+        for _ in range(10):
+            self.page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            self.page.wait_for_timeout(800)
+            curr_count = len(self.page.query_selector_all(SELECTORS['vacancy_title']))
+            if curr_count == prev_count:
+                break
+            prev_count = curr_count
 
     def _scrape_vacancies(self) -> List[tuple]:
         """Scrapes vacancy links from the current search results page."""
@@ -301,7 +317,7 @@ class HHBrowser:
             print("   ✅ 'Apply' button clicked")
 
             # Human-like pause for the form to appear
-            time.sleep(3 + 4)
+            time.sleep(7)
             
             return True
             
