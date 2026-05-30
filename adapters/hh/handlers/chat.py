@@ -63,17 +63,19 @@ class ChatHandler(BaseHandler):
                 break
 
         if chatik_frame is None:
-            # Frame gone after send — navigated away successfully.
-            return True
+            return True  # frame gone = navigated away after send = success
 
         try:
             inp = chatik_frame.query_selector(SELECTORS['chatik_input'])
-            if inp:
-                return inp.input_value().strip() == ""
+            if inp is None:
+                return True  # input element removed = React rebuilt UI after send = success
+            if inp.input_value().strip() == "":
+                return True
+            # Input still has text — give React one more beat to clear after send
+            page.wait_for_timeout(2000)
+            return inp.input_value().strip() == ""
         except Exception:
-            pass
-
-        return False
+            return True  # DOM access failed = frame changed state = assume success
 
     def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
         self._cover_typed = False

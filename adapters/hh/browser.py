@@ -24,6 +24,14 @@ class HHBrowser:
         return self._vacancy_id
 
     @staticmethod
+    def _build_page_url(url: str, page: int) -> str:
+        """Returns URL with &page=N appended; returns original URL for page 0."""
+        if page == 0:
+            return url
+        url_clean = re.sub(r'[&?]page=\d+', '', url)
+        return f"{url_clean}&page={page}"
+
+    @staticmethod
     def _extract_vacancy_id(url: str) -> Optional[str]:
         """Extracts numeric vacancy ID from any HH URL variant.
 
@@ -108,22 +116,30 @@ class HHBrowser:
 
             print(f"🔹 Search {i+1}/{len(search_urls)}: {search_url[:80]}...")
             try:
-                self.page.goto(search_url, timeout=CONFIG.page_load_timeout,
-                               wait_until="domcontentloaded")
-                # HH may redirect to a city subdomain (e.g. odintsovo.hh.ru) based on
-                # geo-cookie or VPN exit node — force back to canonical hh.ru so that
-                # explicit area= parameter is respected and results aren't geo-narrowed.
-                actual_url = self.page.url
-                if '.hh.ru/' in actual_url and '://hh.ru/' not in actual_url:
-                    canonical = re.sub(r'https://[\w-]+\.hh\.ru/', 'https://hh.ru/', actual_url)
-                    print(f"   ⚠️ Geo-redirect detected → forcing hh.ru")
-                    self.page.goto(canonical, timeout=CONFIG.page_load_timeout,
+                for page_num in range(CONFIG.max_pages):
+                    page_url = self._build_page_url(search_url, page_num)
+                    self.page.goto(page_url, timeout=CONFIG.page_load_timeout,
                                    wait_until="domcontentloaded")
-                print(f"⏳ Waiting {CONFIG.initial_wait/1000}s (page load + modals)...")
-                self.page.wait_for_timeout(CONFIG.initial_wait)
-                if i == 0:
-                    self._close_cookie_modal()
-                all_vacancies.extend(self._scrape_vacancies())
+                    # Geo-redirect check only on first page of each search URL
+                    if page_num == 0:
+                        actual_url = self.page.url
+                        if '.hh.ru/' in actual_url and '://hh.ru/' not in actual_url:
+                            canonical = re.sub(r'https://[\w-]+\.hh\.ru/', 'https://hh.ru/', actual_url)
+                            print(f"   ⚠️ Geo-redirect detected → forcing hh.ru")
+                            self.page.goto(canonical, timeout=CONFIG.page_load_timeout,
+                                           wait_until="domcontentloaded")
+                    # First page of the session: full wait for modals; subsequent pages: short wait
+                    wait_ms = CONFIG.initial_wait if (i == 0 and page_num == 0) else 3000
+                    print(f"⏳ Waiting {wait_ms/1000:.0f}s (page {page_num})...")
+                    self.page.wait_for_timeout(wait_ms)
+                    if i == 0 and page_num == 0:
+                        self._close_cookie_modal()
+                    page_vacancies = self._scrape_vacancies()
+                    if not page_vacancies:
+                        print(f"   ⏹ Page {page_num}: empty — stopping pagination")
+                        break
+                    print(f"   📄 Page {page_num}: {len(page_vacancies)} vacancies")
+                    all_vacancies.extend(page_vacancies)
             except Exception as e:
                 print(f"   ❌ Error loading search #{i+1}: {e}")
                 continue
@@ -135,7 +151,7 @@ class HHBrowser:
                 seen.add(url)
                 result.append((url, title, len(result) + 1))
 
-        print(f"✅ Total vacancies: {len(result)} (from {len(all_vacancies)} across {len(search_urls)} searches)")
+        print(f"✅ Total vacancies: {len(result)} unique (from {len(all_vacancies)} across {len(search_urls)} URL(s), ≤{CONFIG.max_pages} pages each)")
         return result
 
     def _load_search_urls(self) -> List[str]:

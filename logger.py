@@ -47,12 +47,15 @@ class Logger:
         """
         query_id = _extract_vacancy_id(url)
         for entry in applied_log:
+            status = entry.get("status")
+            if status == "dry_run":
+                continue  # dry_run = scored but not applied; allow retry in live mode
             if entry.get("url") == url:
-                return entry.get("status")
+                return status
             if query_id:
                 stored_id = entry.get("vacancy_id") or _extract_vacancy_id(entry.get("url", ""))
                 if stored_id == query_id:
-                    return entry.get("status")
+                    return status
         return None
     
     def log_result(self, applied_log: List[Dict[str, Any]], **kwargs) -> None:
