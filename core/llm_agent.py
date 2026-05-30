@@ -29,7 +29,7 @@ class LLMAgent:
         if not api_key:
             raise RuntimeError("LLM_API_KEY not set — add it to .env")
 
-        self.model = os.getenv("LLM_MODEL", "anthropic/claude-3-5-haiku")
+        self.model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
         self.cover_model = os.getenv("COVER_MODEL", self.model)
         self.client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -89,7 +89,7 @@ class LLMAgent:
         if raw_score is not None and not isinstance(raw_score, int):
             m = re.search(r"\d+", str(raw_score))
             result["score"] = int(m.group()) if m else 50
-        return result
+        return self._sanitize_score_result(result)
 
     def fill_form(self, vacancy_text: str, fields: list[dict]) -> dict[str, str]:
         """
@@ -114,6 +114,35 @@ class LLMAgent:
         )
         raw = (resp.choices[0].message.content or "{}").strip()
         return self._parse_json(raw, fallback={})
+
+    def ask_modal_action(self, modal_text: str, buttons: list[dict]) -> dict:
+        """Decide which button to click for a blocking modal.
+
+        Returns {"action": "click", "button_index": N} or {"action": "skip"}.
+        Lightweight — no candidate context, ~50 output tokens.
+        """
+        prompt = (
+            "A modal dialog is blocking a job application page. "
+            "Choose which button to click to continue the application.\n"
+            "Prefer buttons like 'продолжить', 'ок', 'подтвердить', 'да', 'continue', 'yes'. "
+            'Return {"action": "skip"} only if no button allows continuing the application.\n\n'
+            f"Modal text:\n{modal_text[:500]}\n\n"
+            f"Buttons: {json.dumps(buttons, ensure_ascii=False)}\n\n"
+            'Reply with JSON only: {"action": "click", "button_index": N} or {"action": "skip"}'
+        )
+        try:
+            resp = self.client.chat.completions.create(
+                model=self.model,
+                max_tokens=50,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            raw = (resp.choices[0].message.content or "{}").strip()
+            result = self._parse_json(raw, fallback={"action": "skip"})
+            if result.get("action") == "click" and isinstance(result.get("button_index"), int):
+                return result
+            return {"action": "skip"}
+        except Exception:
+            return {"action": "skip"}
 
     def answer_question(self, question: str) -> str:
         resp = self.client.chat.completions.create(
@@ -183,6 +212,23 @@ class LLMAgent:
     def _load_prompt(self, filename: str) -> str:
         path = _PROMPTS_DIR / filename
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
+
+    def _sanitize_score_result(self, result: dict) -> dict:
+        """Type-guards scoring output — protects log and downstream code from LLM garbage.
+
+        signals/matched_skills/gaps must be list[str]; stop_match must be str or None.
+        Passes through unchanged when LLM output is well-formed.
+        """
+        for key in ("signals", "matched_skills", "gaps"):
+            val = result.get(key, [])
+            if not isinstance(val, list):
+                result[key] = []
+            else:
+                result[key] = [str(x) for x in val if isinstance(x, (str, int, float)) and str(x).strip()]
+        sm = result.get("stop_match")
+        if sm is not None and not isinstance(sm, str):
+            result["stop_match"] = None
+        return result
 
     def _parse_json(self, raw: str, fallback: dict) -> dict:
         raw = raw.strip()
