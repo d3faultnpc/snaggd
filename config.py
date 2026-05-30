@@ -45,6 +45,9 @@ class Config:
     cache_size: int = 15
     cache_file: str = str(DATA_DIR / "llm_cache.json")
 
+    # Search pagination — how many pages to scrape per search URL (50 vacancies/page)
+    max_pages: int = int(os.getenv("MAX_PAGES", "2"))
+
     # Browser
     headless: bool = os.getenv("HEADLESS", "false").lower() == "true"
 
