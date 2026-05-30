@@ -96,8 +96,7 @@ class HHAdapter(SiteAdapter):
             existing = logger.is_processed(url, applied_log)
             if existing:
                 print(f"⏭ #{index} already processed ({existing})")
-                skip_count += 1
-                continue
+                continue  # dedup hit doesn't count toward consecutive skip budget
 
             # ── Level 0: title keyword filter (no LLM, no page open) ────────────
             title_lower = title.lower()
