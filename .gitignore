@@ -37,5 +37,8 @@ hh_cookies.json
 llm_cache.json
 applied_log.json
 pending_actions.json
-.claude/
+.claude/settings.local.json
+.claude/worktrees/
+.claude/working-notes/
+CLAUDE.local.md
 !data/.gitkeep

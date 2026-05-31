@@ -17,7 +17,9 @@ class CoverOnlyHandler(BaseHandler):
                 success=False,
                 status="skipped_no_textarea",
                 reason="Cover letter field not found",
-                scenario="cover_error"
+                scenario="cover_error",
+                is_terminal=True,
+                goal_reached=False
             )
 
         # Guard against misdetected salary fields
@@ -26,7 +28,9 @@ class CoverOnlyHandler(BaseHandler):
                 success=False,
                 status="skipped_salary_form",
                 reason="Salary expectations field detected instead of cover letter",
-                scenario="salary_detection"
+                scenario="salary_detection",
+                is_terminal=True,
+                goal_reached=False
             )
 
         try:
@@ -43,7 +47,9 @@ class CoverOnlyHandler(BaseHandler):
                     success=False,
                     status="skipped_no_send_button",
                     reason="Submit button not found",
-                    scenario="cover_error"
+                    scenario="cover_error",
+                    is_terminal=True,
+                    goal_reached=False
                 )
 
             print("   🔹 Submitting application...")
@@ -57,7 +63,9 @@ class CoverOnlyHandler(BaseHandler):
                 status="applied",
                 reason="Cover letter submitted",
                 scenario="cover_only",
-                details={'cover_length': len(cover_letter)}
+                details={'cover_length': len(cover_letter)},
+                is_terminal=True,
+                goal_reached=True
             )
 
         except Exception as e:
@@ -65,7 +73,9 @@ class CoverOnlyHandler(BaseHandler):
                 success=False,
                 status="skipped_error",
                 reason=f"Form fill error: {str(e)}",
-                scenario="cover_error"
+                scenario="cover_error",
+                is_terminal=True,
+                goal_reached=False
             )
     
     def verify_submission(self, page) -> bool:
