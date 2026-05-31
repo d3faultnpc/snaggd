@@ -34,13 +34,15 @@ class TestFormHandler(BaseHandler):
                         success=False,
                         status="skipped_test_form",
                         reason="Test mandatory — LLM fill not yet implemented (FILL_TESTS=true noted)",
-                        scenario="test_form_fill_pending"
+                        scenario="test_form_fill_pending",
+                        is_terminal=True, goal_reached=False
                     )
                 return ProcessResult(
                     success=False,
                     status="skipped_test_form",
                     reason="No skip-questions link found — test is mandatory",
-                    scenario="test_form_required"
+                    scenario="test_form_required",
+                    is_terminal=True, goal_reached=False
                 )
 
             print("   🔹 Clicking 'Apply without answering questions'...")
@@ -51,7 +53,8 @@ class TestFormHandler(BaseHandler):
                 success=False,
                 status="skipped_test_form",
                 reason=f"Error clicking no-questions link: {e}",
-                scenario="test_form_error"
+                scenario="test_form_error",
+                is_terminal=True, goal_reached=False
             )
 
         # 2. A cover letter toggle may appear after the click — expand it
@@ -77,7 +80,8 @@ class TestFormHandler(BaseHandler):
                 success=True,
                 status="applied_no_cover",
                 reason="Test skipped, employer questions filled; page auto-navigated (cover letter skipped)",
-                scenario="test_form_auto_submitted"
+                scenario="test_form_auto_submitted",
+                is_terminal=False, goal_reached=True
             )
 
         # 3. Fill cover letter — use specific selectors first, then fallback that
@@ -127,7 +131,8 @@ class TestFormHandler(BaseHandler):
                             success=False,
                             status="skipped_form_validation_error",
                             reason="Form has a required field that failed validation after submit",
-                            scenario="test_form_validation_error"
+                            scenario="test_form_validation_error",
+                            is_terminal=True, goal_reached=False
                         )
                 except Exception:
                     pass
@@ -138,20 +143,23 @@ class TestFormHandler(BaseHandler):
                         success=True,
                         status="applied",
                         reason="Test skipped, cover letter submitted",
-                        scenario="test_form_skipped_cover_sent"
+                        scenario="test_form_skipped_cover_sent",
+                        is_terminal=True, goal_reached=True
                     )
                 return ProcessResult(
                     success=True,
                     status="applied_no_cover",
                     reason="Test skipped, application submitted without cover letter",
-                    scenario="test_form_skipped_no_cover"
+                    scenario="test_form_skipped_no_cover",
+                    is_terminal=False, goal_reached=True
                 )
 
         return ProcessResult(
             success=False,
             status="skipped_test_form",
             reason="Test skipped but submit button not found",
-            scenario="test_form_no_submit"
+            scenario="test_form_no_submit",
+            is_terminal=True, goal_reached=False
         )
 
     def _fill_employer_questions(self, page, vacancy_text: str) -> None:

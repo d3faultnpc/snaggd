@@ -41,7 +41,9 @@ class HHModalHandler(BaseHandler):
                 success=False,
                 status="skipped_hh_modal",
                 reason="Navigation buttons not found in HH modal",
-                scenario="hh_modal_error"
+                scenario="hh_modal_error",
+                is_terminal=True,
+                goal_reached=False
             )
 
         button_text = nav_button.inner_text().strip()
@@ -62,14 +64,18 @@ class HHModalHandler(BaseHandler):
                 status="applied",
                 reason=f"Cover letter submitted, button: '{button_text}'",
                 scenario="hh_modal_with_cover",
-                details={'button_text': button_text}
+                details={'button_text': button_text},
+                is_terminal=True,
+                goal_reached=True
             )
         return ProcessResult(
             success=True,
             status="hh_modal_navigation",
             reason=f"HH modal navigation: '{button_text}'",
             scenario="hh_modal_no_cover",
-            details={'button_text': button_text}
+            details={'button_text': button_text},
+            is_terminal=False,
+            goal_reached=False
         )
 
     # ------------------------------------------------------------------
@@ -168,7 +174,9 @@ class HHModalHandler(BaseHandler):
                     success=False,
                     status="skipped_no_cover_filled",
                     reason=f"Cover letter not filled: {error_text}",
-                    scenario="hh_modal_cover_required"
+                    scenario="hh_modal_cover_required",
+                    is_terminal=True,
+                    goal_reached=False
                 )
 
             if 'просмотрен' not in error_text.lower() and 'уже' not in error_text.lower():
@@ -186,7 +194,9 @@ class HHModalHandler(BaseHandler):
                     status="chat_redirect",
                     reason=f"Edge case: {error_text} → redirected to chat",
                     scenario="edge_case_chat",
-                    details={'error_text': error_text}
+                    details={'error_text': error_text},
+                    is_terminal=False,
+                    goal_reached=False
                 )
 
             return ProcessResult(
@@ -194,7 +204,9 @@ class HHModalHandler(BaseHandler):
                 status="skipped_edge_case_no_chat",
                 reason=f"Edge case: {error_text}, chat button not found",
                 scenario="edge_case_no_chat",
-                details={'error_text': error_text}
+                details={'error_text': error_text},
+                is_terminal=True,
+                goal_reached=False
             )
 
         except Exception as e:

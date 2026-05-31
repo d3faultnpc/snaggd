@@ -10,7 +10,7 @@ from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
 from adapters.hh.detector import FormDetector
 from adapters.hh.handlers import FormHandlers
-from adapters.hh.handlers.base import FormType
+from adapters.hh.handlers.base import FormType, ProcessResult
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover, get_agent as _get_llm_agent
 from utils.helpers import random_delay
@@ -291,7 +291,6 @@ class HHAdapter(SiteAdapter):
                 'template_name': template_name,
                 'company': company or '',
                 'employer_rating': employer_rating,
-                'cover_letter': cover_letter,
             }
 
             # ── Level 2: semantic stop_match from LLM ───────────────────────────
@@ -359,62 +358,19 @@ class HHAdapter(SiteAdapter):
             except Exception:
                 pass
 
-            print("   🔹 Analysing application form...")
-            form_info = self.detector.detect(current_page)
-            print(f"   📋 Form type: {form_info.form_type.value}")
-            print(f"   📊 Fields: {form_info.input_count}, Salary: {form_info.has_salary_field}")
-
-            if form_info.form_type in (FormType.SALARY_FORM, FormType.UNKNOWN):
-                if debug and session_dir:
-                    self._debug_snapshot(current_page, session_dir, f"03_skip_{form_info.form_type.value}")
-                return {
-                    'status': f'skipped_{form_info.form_type.value}',
-                    'reason': f'Form skipped: {form_info.form_type.value}',
-                    'scenario': 'skip',
-                    'details': {'form_type': form_info.form_type.value, **score_details}
-                }
-
-            handler = self.handlers.get_handler(form_info.form_type)
-            result = handler.process(current_page, cover_letter,
-                                     vacancy_text=vacancy_text)
-
-            # F2: DOM щуп — verify submit actually succeeded
-            if result.success:
-                verified = handler.verify_submission(current_page)
-                if not verified:
-                    print("   ⚠️ DOM verification failed — marking as applied_unverified")
-                    result.status = "applied_unverified"
-                    result.success = False
-                    self._unverified_count += 1
-                    if self._unverified_count >= 3:
-                        print(f"   🚨 {self._unverified_count} unverified submissions — saving auto-snapshot")
-                        auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-                        self._debug_snapshot(current_page, auto_dir, "unverified")
-
-            # F3: post-handler chat check — some flows (e.g. questionnaire submit)
-            # navigate back to the vacancy page where chatik then becomes available.
-            # Send cover letter via chat if the link appeared and we didn't come from ChatHandler.
-            if result.success and cover_letter and form_info.form_type != FormType.CHAT_INTERFACE:
-                try:
-                    chat_el = current_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
-                    if chat_el and chat_el.is_visible():
-                        print("   💬 Chat link appeared after form submit — routing cover to chatik...")
-                        chat_handler = self.handlers.get_handler(FormType.CHAT_INTERFACE)
-                        result = chat_handler.process(current_page, cover_letter, vacancy_text=vacancy_text)
-                except Exception as e:
-                    print(f"   ⚠️ Post-handler chat check failed: {e}")
-
-            if debug and session_dir:
-                self._debug_snapshot(current_page, session_dir, f"03_after_handler_{result.status}")
+            loop_result, first_form_type = self._process_vacancy_loop(
+                current_page, cover_letter, vacancy_text, debug, session_dir
+            )
 
             return {
-                'status': result.status,
-                'reason': result.reason,
-                'scenario': result.scenario,
+                'status': loop_result.status,
+                'reason': loop_result.reason,
+                'scenario': loop_result.scenario,
                 'details': {
-                    'form_type': form_info.form_type.value,
+                    'form_type': first_form_type,
+                    'goal_reached': loop_result.goal_reached,
                     **score_details,
-                    **(result.details or {})
+                    **(loop_result.details or {})
                 }
             }
 
@@ -433,6 +389,132 @@ class HHAdapter(SiteAdapter):
 
         finally:
             self.browser.close_vacancy()
+
+    # ── Goal-directed loop ────────────────────────────────────────────────────
+
+    def _process_vacancy_loop(
+        self, page, cover_letter: str, vacancy_text: str, debug: bool, session_dir
+    ):
+        """Detect form type → run handler → repeat until terminal result or MAX_LAYERS.
+
+        Replaces the old flat single-handler dispatch + ad-hoc post-handler chat check.
+        Returns (ProcessResult, first_form_type_str).
+        """
+        MAX_LAYERS = 5
+        first_form_type = 'unknown'
+        result = None
+        prev_form_type = None
+
+        for layer in range(MAX_LAYERS):
+            self._dismiss_blocking_modal(page)
+
+            form_info = self.detector.detect(page)
+            form_type = form_info.form_type
+
+            if layer == 0:
+                first_form_type = form_type.value
+                print("   🔹 Analysing application form...")
+            else:
+                print(f"   🔄 Loop layer {layer}: detecting next form layer...")
+
+            print(f"   📋 Form type: {form_type.value}")
+            print(f"   📊 Fields: {form_info.input_count}, Salary: {form_info.has_salary_field}")
+
+            # Salary: hard stop, always skip
+            if form_type == FormType.SALARY_FORM:
+                if debug and session_dir:
+                    self._debug_snapshot(page, session_dir, f"0{3 + layer}_skip_{form_type.value}")
+                return ProcessResult(
+                    success=False,
+                    status='skipped_salary_form',
+                    reason='Salary form — always skipped',
+                    scenario='skip',
+                    is_terminal=True,
+                    goal_reached=False
+                ), first_form_type
+
+            # UNKNOWN at layer 0: skip immediately
+            if form_type == FormType.UNKNOWN and layer == 0:
+                if debug and session_dir:
+                    self._debug_snapshot(page, session_dir, "03_skip_unknown")
+                return ProcessResult(
+                    success=False,
+                    status='skipped_unknown',
+                    reason='Form type not recognized',
+                    scenario='skip',
+                    is_terminal=True,
+                    goal_reached=False
+                ), first_form_type
+
+            # UNKNOWN mid-loop: wait 1.5s and retry detector once
+            if form_type == FormType.UNKNOWN:
+                print("   ⏳ UNKNOWN mid-loop — waiting 1.5s and retrying detector...")
+                page.wait_for_timeout(1500)
+                self._dismiss_blocking_modal(page)
+                form_info = self.detector.detect(page)
+                form_type = form_info.form_type
+                if form_type == FormType.UNKNOWN:
+                    print("   ⚠️ Still UNKNOWN after retry — stopping loop")
+                    break
+
+            # Deadlock protection: same form type on consecutive layers
+            if prev_form_type is not None and form_type == prev_form_type:
+                print(f"   ⚠️ {form_type.value} repeated on layer {layer} — deadlock, stopping")
+                break
+
+            prev_form_type = form_type
+
+            # Run handler
+            handler = self.handlers.get_handler(form_type)
+            result = handler.process(page, cover_letter, vacancy_text=vacancy_text)
+
+            # DOM щуп: verify submit succeeded
+            if result.success:
+                verified = handler.verify_submission(page)
+                if not verified:
+                    print("   ⚠️ DOM verification failed — marking as applied_unverified")
+                    result.status = "applied_unverified"
+                    result.success = False
+                    result.goal_reached = False
+                    self._unverified_count += 1
+                    if self._unverified_count >= 3:
+                        print(f"   🚨 {self._unverified_count} unverified — saving auto-snapshot")
+                        auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                        self._debug_snapshot(page, auto_dir, "unverified")
+
+            if debug and session_dir:
+                self._debug_snapshot(page, session_dir, f"0{3 + layer}_layer{layer}_{result.status}")
+
+            if result.is_terminal:
+                break
+
+        else:
+            # for-else: all MAX_LAYERS exhausted without a terminal break
+            print(f"   ⚠️ Goal-directed loop exhausted after {MAX_LAYERS} layers")
+            if result is not None:
+                result.status = 'skipped_loop_exhausted'
+                result.goal_reached = False
+            else:
+                result = ProcessResult(
+                    success=False,
+                    status='skipped_loop_exhausted',
+                    reason=f'Loop exhausted after {MAX_LAYERS} layers',
+                    scenario='error',
+                    is_terminal=True,
+                    goal_reached=False
+                )
+
+        if result is None:
+            result = ProcessResult(
+                success=False,
+                status='skipped_unknown',
+                reason='No form layer processed',
+                scenario='error',
+                is_terminal=True,
+                goal_reached=False
+            )
+
+        return result, first_form_type
 
     # ── Modal dismissal ───────────────────────────────────────────────────────
 

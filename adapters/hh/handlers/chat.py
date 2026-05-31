@@ -86,7 +86,9 @@ class ChatHandler(BaseHandler):
                 success=False,
                 status="skipped_no_chat_button",
                 reason="Chat button not found (vacancy-response-link-view-topic)",
-                scenario="chat_error"
+                scenario="chat_error",
+                is_terminal=True,
+                goal_reached=False
             )
 
         print("   🔹 Clicking 'Go to chat'...")
@@ -110,7 +112,9 @@ class ChatHandler(BaseHandler):
                 success=True,
                 status="applied_via_chat_no_cover",
                 reason="Chat application submitted; cover letter button not available",
-                scenario="chat_no_cover"
+                scenario="chat_no_cover",
+                is_terminal=True,
+                goal_reached=True
             )
 
         print("   🔹 Clicking 'Добавить сопроводительное'...")
@@ -125,7 +129,9 @@ class ChatHandler(BaseHandler):
                 success=True,
                 status="applied_via_chat_no_cover",
                 reason="Cover letter textarea not found after 'Добавить сопроводительное'",
-                scenario="chat_no_cover"
+                scenario="chat_no_cover",
+                is_terminal=True,
+                goal_reached=True
             )
 
         # 6. Focus + type cover letter
@@ -147,7 +153,9 @@ class ChatHandler(BaseHandler):
                 success=False,
                 status="skipped_chat_fill_error",
                 reason=f"Cover letter fill error: {e}",
-                scenario="chat_fill_error"
+                scenario="chat_fill_error",
+                is_terminal=True,
+                goal_reached=False
             )
 
         # 7. Send cover letter
@@ -160,21 +168,27 @@ class ChatHandler(BaseHandler):
                     status="applied_via_chat",
                     reason="Auto-read employer: cover letter sent via chatik",
                     scenario="chat_cover_sent",
-                    details={'cover_length': len(cover_letter)}
+                    details={'cover_length': len(cover_letter)},
+                    is_terminal=True,
+                    goal_reached=True
                 )
             else:
                 return ProcessResult(
                     success=False,
                     status="skipped_chat_send_error",
                     reason="Send button not found in chatik cover form",
-                    scenario="chat_send_error"
+                    scenario="chat_send_error",
+                    is_terminal=True,
+                    goal_reached=False
                 )
         except Exception as e:
             return ProcessResult(
                 success=False,
                 status="skipped_chat_send_error",
                 reason=f"Chatik send error: {e}",
-                scenario="chat_send_error"
+                scenario="chat_send_error",
+                is_terminal=True,
+                goal_reached=False
             )
 
     # ── Private helpers ───────────────────────────────────────────────────────

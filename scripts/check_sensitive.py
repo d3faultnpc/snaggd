@@ -15,7 +15,8 @@ ROOT = Path(__file__).parent.parent
 
 # Files and dirs to skip entirely
 SKIP_DIRS = {"venv", ".venv", "__pycache__", ".git", "debug_screenshots",
-             "logs", "data", ".claude", "_docs", "sandbox"}
+             "logs", "data", ".claude", "_docs", "sandbox",
+             "design", "user artifacts"}
 SKIP_FILES = {".env", "DEVLOG.md"}  # gitignored files — never pushed
 SKIP_EXTENSIONS = {".pyc", ".pyo", ".png", ".jpg", ".jpeg", ".gif", ".ico",
                    ".pdf", ".docx", ".zip"}
