@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git branch *)",
+      "Bash(venv/bin/python3 -m py_compile *)",
+      "Bash(venv/bin/python3 -c *)",
+      "Bash(venv/bin/python3 main.py --dry-run *)",
+      "Bash(venv/bin/python3 main.py --debug *)",
+      "WebSearch",
+      "WebFetch(domain:hh.ru)",
+      "WebFetch(domain:github.com)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/py-syntax-check.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
