@@ -2,7 +2,8 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-05-22 (session 7). Keep updated after major architecture changes.
+> Updated: 2026-05-31 (infra sprint, session 22). Keep updated after major architecture changes.
+> **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
 
@@ -61,14 +62,15 @@ main.py (orchestrator)
 │       └── base.py         ← FormType enum, FormInfo, ProcessResult, BaseHandler ABC
 ├── LLMCover (llm_cover.py)                   ← cover letter + scoring with MD5 cache
 │   └── LLMAgent (core/llm_agent.py)          ← OpenRouter gateway, system prompt cache
-├── HRMatcher (hr_matcher.py)                 ← HR question answering via LLMAgent
 └── Logger (logger.py)                        ← applied_log.json + daily logs
 
-parsers/
-├── resume_parser.py     ← multimodal PDF/DOCX/image/md → ResumeData
-└── resume_data.py       ← ResumeData dataclass
+api.py                                        ← FastAPI REST wrapper (uvicorn api:app)
+                                                 Endpoints: /health, /session/start|status|stop,
+                                                 /log, /config. Auth: X-API-Key header.
 
 onboarding/
+├── resume_parser.py     ← multimodal PDF/DOCX/image/md → ResumeData + ResumeData dataclass
+│                           (both class and dataclass live here — no separate parsers/ dir)
 ├── wizard.py            ← setup CLI: Blocks A → B → C → D
 └── url_builder.py       ← job prefs → HH search URL
 ```
@@ -198,8 +200,8 @@ Priority | Signal                                              | FormType
 
 ## 6. LLM Integration
 
-**Gateway:** OpenRouter (configured via `LLM_API_KEY` + `LLM_MODEL` in .env)
-**Default model:** `google/gemini-2.5-flash-lite` (fast, cheap) — override via `LLM_MODEL` env var
+**Gateway:** OpenRouter (configured via `OPENROUTER_API_KEY` + `LLM_MODEL` in .env)
+**Default model:** `deepseek/deepseek-v3.2` — override via `LLM_MODEL` env var. Cover letter model: `COVER_MODEL` env var (defaults to `LLM_MODEL`).
 **BYOK:** User brings their own OpenRouter key. Phase 4: managed keys with margin.
 
 ### System Prompt (cached per session)
@@ -239,13 +241,14 @@ Static fallback if LLM unavailable: `"Добрый день. Заинтерес�
 
 ## 7. Resume Parser
 
-**File:** `parsers/resume_parser.py`
-**Supported formats:** PDF, DOCX, PNG/JPG (multimodal), .md
+**File:** `onboarding/resume_parser.py` (contains both `ResumeParser` class and `ResumeData` dataclass — no separate `parsers/` directory)
+**Supported formats:** PDF, DOCX, PNG/JPG (multimodal via LLM image call), .md
+**PDF parsing:** multimodal LLM only — no local PDF library (PyMuPDF removed). PDF bytes sent as base64 image to LLM.
 
 **Flow:**
 ```
 input file → detect format → extract content (text or image bytes)
-          → LLM call (with prompts/resume_parser.md)
+          → LLM call (_extraction_prompt() — prompt is inline, no prompts/resume_parser.md file)
           → parse JSON → ResumeData dataclass
           → write data/resume_facts.md
 ```
@@ -296,7 +299,8 @@ Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_fiel
 ```bash
 # .env (gitignored, created by wizard Block D)
 OPENROUTER_API_KEY=sk-or-...    # required — OpenRouter key
-LLM_MODEL=google/gemini-2.5-flash-lite  # override for different model
+LLM_MODEL=deepseek/deepseek-v3.2  # scoring + form fill model
+COVER_MODEL=                    # optional override for cover letter generation (defaults to LLM_MODEL)
 HEADLESS=false                  # false = visible browser (recommended for debugging)
 MAX_VACANCIES=10                # max vacancies to process per run
 MIN_SCORE=60                    # skip vacancies below this score (0–100)
@@ -377,7 +381,10 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 | `prompts/cover_letter.md` | code | no |
 | `prompts/match_scoring.md` | code | no |
 | `prompts/form_fill.md` | code | no |
-| `prompts/resume_parser.md` | code | no |
+| `docs/status_codes.md` | code | no |
+| `docs/phase2-prompts/cv_extractor.md` | code | no — Phase 2 design artifact, not runtime |
+| `docs/phase2-prompts/resume_enhancer.md` | code | no — Phase 2 design artifact, not runtime |
+| `api.py` | code | no |
 
 > `data/` is created by wizard. Never committed. One folder per user installation.
 
@@ -465,11 +472,11 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 | 4 — SaaS | Managed LLM, subscriptions, multi-tenant | Future |
 
 **Phase 1 remaining tasks:**
-- `suggested_queries` in ResumeData (P0)
+- `suggested_queries` in ResumeData (P0) — code ready on feature/suggested-queries, pending user test
 - `search_field=everywhere` (P0)
 - P0 bugs live verification
-- HH pagination (P1)
-- test_form behavior decision (P1)
+- test_form behavior decision (P1) — code ready on feature/fill-tests-schedule, pending user test
+- Architecture refactor: goal-directed loop for process_vacancy() (task #20)
 
 **Phase 3 site priority:** Greenhouse + Lever (API, easy) → Workday (stable selectors) → LinkedIn (Patchright, fragile).
 **Skip:** Indeed (DataDome), Zarplata.ru (HH redirect wrapper).
