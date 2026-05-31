@@ -15,5 +15,7 @@ class SalaryHandler(BaseHandler):
             success=False,
             status="skipped_salary_form",
             reason="Form contains a salary expectations field",
-            scenario="skip_salary"
+            scenario="skip_salary",
+            is_terminal=True,
+            goal_reached=False
         )
