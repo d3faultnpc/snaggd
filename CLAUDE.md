@@ -66,13 +66,53 @@ Mark a task ✅✅ in L2 only after the user accepts it — not when you think i
 
 ---
 
-## Sub-agents
+## Delegation protocol
 
-Sub-agents work in `sandbox/*` branches — disposable, hypothesis-driven.
-After a sub-agent run: log outcome in L2_decisions_log.md before acting on the result.
-A working sub-agent solution merges to `dev` for local user testing first.
-It goes to GitHub only after explicit user approval in that session.
-Never present a sub-agent finding as a decision — it is evidence for grooming.
+Named agents are the default for bounded, stateless analysis tasks.
+Do not inline work that has a defined agent.
+
+### Mandatory delegation
+| Task | Agent |
+|------|-------|
+| Memory staleness check | `memory-curator` |
+| Pre-commit code review | `code-reviewer` |
+| Form detection failure | `debug-analyst` |
+| `prompts/*.md` changed | `prompt-evaluator` |
+| After any test run | `test-log-analyst` |
+| Pre-PR on public branch | `security-auditor` |
+| Start of refactor sprint | `refactor-planner` |
+| File structure health | `file-auditor` |
+
+### When to run file-auditor
+- Cadence: every 5–7 sessions
+- When `sprint-close` reports a threshold breach
+- On user request at any time
+
+### What agents cannot do
+- Edit or write project files (`disallowedTools: [Edit, Write]` enforced)
+- Commit, merge, push (Gate 4 applies to main session)
+- Spawn other agents
+
+### Agent output protocol
+1. Agent writes output to `.claude/working-notes/<agent>-<ISO_TIMESTAMP>.md`
+2. Main session reads the report and acts on it
+3. Gate 3 still applies before any git operation
+
+## File ownership rules
+
+**CHANGELOG.md** — release notes only. User-facing changes per version tag.
+Infra changes, refactors, session details do not belong here.
+
+**L2_tasks.md** — active tasks with DoD only.
+Session summaries → `.claude/working-notes/session-NN-close.md`. Never append sessions to L2.
+
+**L2_decisions_log.md** — archive when ≥300 lines (built into its own header).
+
+**MEMORY.md** — rolling window: last 2 session highlights + current state.
+Older highlights → working-notes archive.
+
+**CONTEXT.md** — authoritative technical map (in repo). L1_project.md summarises it for session load.
+When they diverge, CONTEXT.md wins.
 
 ---
 
