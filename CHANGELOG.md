@@ -1,5 +1,67 @@
 # Changelog
 
+## [0.3.3] — 2026-05-31 · Goal-Directed Loop
+
+### Summary
+Architecture sprint: the flat single-handler dispatch is replaced with a
+generic goal-directed loop. The agent now traverses multiple form layers in
+one vacancy cycle (e.g. questions → chatik) without ad-hoc stitching.
+Employer questionnaires gain radio button support. Cover letter removed from
+the application log (PII reduction).
+
+---
+
+### New: Goal-directed loop (`_process_vacancy_loop`)
+`process_vacancy()` now runs a `for layer in range(MAX_LAYERS)` loop instead
+of a flat dispatch + hardcoded post-handler chat check. Each handler signals
+whether the loop should continue (`is_terminal=False`) or stop (`is_terminal=True`).
+The loop chains form layers automatically — e.g. an employer questionnaire
+followed by chatik is handled end-to-end with no special-casing in the adapter.
+Deadlock protection (same FormType on consecutive layers) and UNKNOWN mid-loop
+retry (1.5 s wait + re-detect) are built in. `skipped_loop_exhausted` status
+logged when MAX_LAYERS is exceeded without a terminal result.
+
+### New: `ProcessResult` goal tracking fields
+Three new fields on all handlers' `ProcessResult`:
+- `is_terminal` — whether the loop should stop after this result (default `True`,
+  preserving all existing handler behavior)
+- `goal_reached` — whether an application was successfully submitted
+- `next_hint` — optional string hint for the next handler (reserved, unused)
+
+`goal_reached` is written to `applied_log.json` for every processed vacancy.
+
+### New: Radio button support in QuestionsHandler
+Employer questionnaires with radio groups (single-choice questions) are now
+filled correctly. Each radio group is collected by `name` attribute into a
+single field spec with all option texts. The LLM picks one option by returning
+the exact option text, or `open: <free text>` for "Свой вариант" (free-form
+answer — the agent clicks the radio then types into the animated textarea).
+
+### Changed: Questionnaire field limit raised
+`max_questions_per_form` raised from 5 to 10. Previously the field slice cut
+off fields beyond position 5, causing salary/timing fields and later radio
+options to be silently skipped.
+
+### Changed: `form_fill.md` — radio_group rule
+New rule: for `radio_group` type fields, return the exact option text to
+select. "Свой вариант" path: return `"open: <custom answer>"`.
+
+### Security: Cover letter removed from applied_log
+`cover_letter` body removed from `score_details` / `applied_log.json`. The
+field was added in 0.3.0 for debugging; it is candidate PII and adds no value
+once the session ends. Cover letters remain visible in HH chatik history.
+
+### Security: `check_sensitive.py` false positive fix
+`design/` and `user artifacts/` added to `SKIP_DIRS` in `scripts/check_sensitive.py`.
+Both directories are gitignored; scanning them caused the pre-push gate to
+exit 1 on every clean run, making the gate unusable.
+
+### Changed: `.gitignore` — `.claude/working-notes/`
+Added explicit entry for `.claude/working-notes/` (belt-and-suspenders;
+the directory contains raw audit output with local system paths).
+
+---
+
 ## [0.3.2] — 2026-05-30 · Obstacle Navigation
 
 ### Summary

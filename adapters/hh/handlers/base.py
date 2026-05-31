@@ -49,6 +49,9 @@ class ProcessResult:
     reason: str
     scenario: str = "unknown"  # A, B, C for logging
     details: Optional[dict] = None
+    is_terminal: bool = True    # stop the goal-directed loop after this result
+    goal_reached: bool = False  # application successfully submitted
+    next_hint: Optional[str] = None  # optional hint for next handler selection
 
 class BaseHandler(ABC):
     """Base class for form handlers."""

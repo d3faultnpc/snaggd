@@ -15,4 +15,5 @@ Rules:
 - text / textarea: 1–3 sentences, specific and concrete
 - number fields (years of experience, etc.): return only the digit
 - salary / compensation questions: output the salary expectation directly — do NOT describe the profile or explain your reasoning. Match vacancy domain: fintech → "рассматриваю от 250 тысяч на руки", telecom → "рассматриваю от 180 тысяч на руки", default/unknown → "рассматриваю от 220 тысяч на руки". For textarea add: ", зависит от состава задач и компенсационного пакета". For short input: number only (e.g. 220000)
+- radio_group: a single-choice question. The field spec includes an "options" list with the available choices. Return the EXACT option text you want to select. If none of the preset options fit and "Свой вариант" is listed, return "open: <your custom answer>". Example: {"2": "нет"} or {"2": "open: участвовал в составе команды при выходе на рынок Казахстана"}
 - If a question is unclear or unanswerable from the profile: return empty string ""
