@@ -532,6 +532,14 @@ class HHAdapter(SiteAdapter):
             if not dialog or not dialog.is_visible():
                 return False
 
+            # Modal with a fillable textarea is a form layer — let the loop handle it
+            try:
+                ta = dialog.query_selector('textarea')
+                if ta and ta.is_visible():
+                    return False
+            except Exception:
+                pass
+
             try:
                 modal_text = dialog.inner_text().strip()[:600]
             except Exception:

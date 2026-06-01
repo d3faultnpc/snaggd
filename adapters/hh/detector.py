@@ -77,6 +77,16 @@ class FormDetector:
         except Exception:
             info.has_test_form = False
 
+        # Cover-required response modal: role="dialog" overlay with a fillable textarea
+        # (verified 2026-05-31 — "Сопроводительное обязательное", Откликнуться disabled until filled)
+        try:
+            dialog = page.query_selector('[role="dialog"], [role="alertdialog"]')
+            if dialog and dialog.is_visible():
+                ta = dialog.query_selector('textarea')
+                info.has_modal_form = bool(ta and ta.is_visible())
+        except Exception:
+            info.has_modal_form = False
+
         info.form_type = self._classify_form(info, combined_text)
 
         return info
@@ -135,6 +145,10 @@ class FormDetector:
     
     def _classify_form(self, info: FormInfo, combined_text: str) -> FormType:
         """Classifies form type based on collected DOM signals."""
+
+        # 0e. Cover-required response modal (verified 2026-05-31)
+        if info.has_modal_form:
+            return FormType.HH_MODAL_STEP1
 
         # 0a. Employer test header present — but if task-questions are also visible,
         # it's a fillable questionnaire (not a true skip-or-die test).
