@@ -26,7 +26,7 @@ class QuestionsHandler(BaseHandler):
         # ── Step 1: collect text fields, radio groups, checkboxes ────────────
         text_fields = []     # (i, element, label)
         radio_groups = {}    # name → {question, options, elements, has_free_text}
-        checkbox_fields = [] # (i, element, label)
+        checkbox_groups = {} # question_text → {idx, question, elements: [(i, inp, opt_text)], has_free_text}
 
         for i, inp in enumerate(inputs):
             if not inp.is_visible():
@@ -49,9 +49,20 @@ class QuestionsHandler(BaseHandler):
                 if val == "open":
                     radio_groups[name]["has_free_text"] = True
             elif itype == "checkbox":
-                label = self._extract_label(inp)
-                if label:
-                    checkbox_fields.append((i, inp, label))
+                question = self._extract_label(inp)
+                option = self._extract_radio_option_text(inp)
+                if question:
+                    if question not in checkbox_groups:
+                        checkbox_groups[question] = {
+                            "idx": f"cbgroup_{len(checkbox_groups)}",
+                            "question": question,
+                            "elements": [],
+                            "has_free_text": False,
+                        }
+                    opt_text = option or f"option_{i}"
+                    checkbox_groups[question]["elements"].append((i, inp, opt_text))
+                    if opt_text.lower() in ("свой вариант", "другое", "other"):
+                        checkbox_groups[question]["has_free_text"] = True
             else:
                 label = self._extract_label(inp)
                 if label:
@@ -75,8 +86,17 @@ class QuestionsHandler(BaseHandler):
             }
             fields.append(spec)
 
-        for i, inp, label in checkbox_fields[:CONFIG.max_questions_per_form]:
-            fields.append({"idx": f"checkbox_{i}", "label": label, "type": "checkbox"})
+        for question, grp in checkbox_groups.items():
+            if len(grp["elements"]) == 1:
+                i, inp, _ = grp["elements"][0]
+                fields.append({"idx": f"checkbox_{i}", "label": question, "type": "checkbox"})
+            else:
+                fields.append({
+                    "idx": grp["idx"],
+                    "label": question,
+                    "type": "checkbox_group",
+                    "options": [opt for _, _, opt in grp["elements"]],
+                })
 
         if not fields:
             return ProcessResult(
@@ -90,7 +110,7 @@ class QuestionsHandler(BaseHandler):
         cover_field_keys: set[str] = set()
         if cover_letter:
             for f in fields:
-                if f["type"] == "radio_group":
+                if f["type"] in ("radio_group", "checkbox_group"):
                     continue
                 label_lower = f["label"].lower()
                 if "сопроводительное" in label_lower or "cover letter" in label_lower:
@@ -111,7 +131,7 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 5: fill text / textarea fields ───────────────────────────────
         filled_count = 0
-        total = len(text_fields) + len(radio_groups) + len(checkbox_fields)
+        total = len(text_fields) + len(radio_groups) + len(checkbox_groups)
         print(f"   🔹 Filling questionnaire ({len(fields)} questions)...")
 
         for i, inp, label in text_fields:
@@ -181,18 +201,70 @@ class QuestionsHandler(BaseHandler):
                 print(f"   ⚠️ Radio '{name}': no match for '{answer[:60]}'")
 
         # ── Step 7: fill checkboxes ───────────────────────────────────────────
-        for i, inp, label in checkbox_fields:
-            answer = answers.get(f"checkbox_{i}", "").strip().lower()
-            if answer.startswith(("yes", "да")):
-                try:
-                    inp.check()
-                    filled_count += 1
-                    print(f"   ✅ Checkbox '{label[:50]}': checked")
-                    page.wait_for_timeout(400)
-                except Exception as e:
-                    print(f"   ⚠️ Checkbox '{label[:50]}' error: {e}")
+        for question, grp in checkbox_groups.items():
+            elems = grp["elements"]
+            if len(elems) == 1:
+                # Single boolean checkbox
+                i, inp, _ = elems[0]
+                answer = answers.get(f"checkbox_{i}", "").strip().lower()
+                if answer.startswith(("yes", "да")):
+                    try:
+                        inp.check()
+                        filled_count += 1
+                        print(f"   ✅ Checkbox '{question[:50]}': checked")
+                        page.wait_for_timeout(400)
+                    except Exception as e:
+                        print(f"   ⚠️ Checkbox '{question[:50]}' error: {e}")
+                else:
+                    print(f"   ⏭ Checkbox '{question[:50]}': unchecked ({answer or 'no answer'})")
             else:
-                print(f"   ⏭ Checkbox '{label[:50]}': unchecked ({answer or 'no answer'})")
+                # Mutually exclusive group — pick exactly one option
+                answer = answers.get(grp["idx"], "").strip()
+                if not answer:
+                    print(f"   ⏭ Checkbox group '{question[:50]}': no answer")
+                    continue
+                free_text = None
+                if answer.lower().startswith("open:"):
+                    free_text = answer[5:].strip()
+                    target = "open"
+                else:
+                    target = answer.lower()
+                clicked = False
+                for i, inp, opt_text in elems:
+                    is_free = opt_text.lower() in ("свой вариант", "другое", "other")
+                    matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
+                    matches_opt = not is_free and opt_text.strip().lower() == target
+                    if matches_free or matches_opt:
+                        try:
+                            inp.check()
+                            page.wait_for_timeout(600)
+                            if is_free and free_text:
+                                try:
+                                    ta = inp.evaluate_handle("""el => {
+                                        const body = el.closest('[data-qa="task-body"]');
+                                        if (!body) return null;
+                                        for (const ta of body.querySelectorAll('textarea')) {
+                                            if (ta.offsetParent !== null) return ta;
+                                        }
+                                        return null;
+                                    }""")
+                                    ta_el = ta.as_element()
+                                    if ta_el and ta_el.is_visible():
+                                        ta_el.type(free_text, delay=10)
+                                        print(f"   ✅ Checkbox group '{question[:50]}': Свой вариант + text")
+                                    else:
+                                        print(f"   ⚠️ Checkbox group '{question[:50]}': Свой вариант — textarea not found")
+                                except Exception as e:
+                                    print(f"   ⚠️ Свой вариант textarea: {e}")
+                            else:
+                                print(f"   ✅ Checkbox group '{question[:50]}': {opt_text}")
+                            filled_count += 1
+                            clicked = True
+                        except Exception as e:
+                            print(f"   ⚠️ Checkbox group click error: {e}")
+                        break
+                if not clicked:
+                    print(f"   ⚠️ Checkbox group '{question[:50]}': no match for '{answer[:60]}'")
 
         print(f"   ✅ Filled {filled_count}/{total} questions")
         self._wait_and_random_delay(page, 2000, 4000)
