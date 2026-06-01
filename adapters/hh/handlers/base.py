@@ -27,6 +27,7 @@ class FormInfo:
     has_popup_questions: bool = False
     has_task_questions: bool = False
     has_test_form: bool = False
+    has_modal_form: bool = False  # role="dialog" with visible textarea → cover-required response modal
     has_progress: bool = False
     progress_step: Optional[int] = None
     labels: list = None
