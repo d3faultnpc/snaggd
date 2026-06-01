@@ -25,7 +25,7 @@ class HHModalHandler(BaseHandler):
             try:
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
-                textarea.type(cover_letter, delay=10)
+                textarea.type(cover_letter, delay=5, timeout=60000)
                 filled = True
                 print("   ✅ Cover letter filled")
                 self._wait_and_random_delay(page, 2000, 3000)
