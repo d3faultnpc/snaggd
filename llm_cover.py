@@ -70,15 +70,21 @@ class LLMCover:
         except Exception as e:
             print(f"   ⚠️ LLM error: {e}")
             result = self._fallback_cover()
+            self.last_score = 0
+            self.last_matched_skills = []
+            self.last_gaps = []
             self.last_stop_match = None
             print("   📝 LLM unavailable — using static fallback")
 
-        # Cache v2: cover + template + signals + score + skills + gaps + stop_match
-        self.cache[text_hash] = list(result) + [
-            self.last_score, self.last_matched_skills,
-            self.last_gaps, self.last_stop_match,
-        ]
-        self._save_cache()
+        # Don't cache static_fallback — a transient LLM error should not block
+        # future sessions from getting a real cover for the same vacancy.
+        cover, template_name_result, _ = result
+        if template_name_result != "static_fallback":
+            self.cache[text_hash] = list(result) + [
+                self.last_score, self.last_matched_skills,
+                self.last_gaps, self.last_stop_match,
+            ]
+            self._save_cache()
 
         return result
     
