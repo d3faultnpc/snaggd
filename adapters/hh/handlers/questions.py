@@ -15,7 +15,7 @@ class QuestionsHandler(BaseHandler):
         return form_type == FormType.EMPLOYER_QUESTIONS
 
     def process(self, page, cover_letter: str, vacancy_text: str = "", **kwargs) -> ProcessResult:
-        inputs = page.query_selector_all('input[type="text"], input[type="radio"], textarea')
+        inputs = page.query_selector_all('input[type="text"], input[type="radio"], input[type="checkbox"], textarea')
         if not inputs:
             return ProcessResult(
                 success=False, status="skipped_no_inputs",
@@ -23,9 +23,10 @@ class QuestionsHandler(BaseHandler):
                 is_terminal=True, goal_reached=False
             )
 
-        # ── Step 1: collect text fields and radio groups ──────────────────────
-        text_fields = []    # (i, element, label)
-        radio_groups = {}   # name → {question, options, elements, has_free_text}
+        # ── Step 1: collect text fields, radio groups, checkboxes ────────────
+        text_fields = []     # (i, element, label)
+        radio_groups = {}    # name → {question, options, elements, has_free_text}
+        checkbox_fields = [] # (i, element, label)
 
         for i, inp in enumerate(inputs):
             if not inp.is_visible():
@@ -47,6 +48,10 @@ class QuestionsHandler(BaseHandler):
                 radio_groups[name]["elements"].append((i, inp, val, opt_text))
                 if val == "open":
                     radio_groups[name]["has_free_text"] = True
+            elif itype == "checkbox":
+                label = self._extract_label(inp)
+                if label:
+                    checkbox_fields.append((i, inp, label))
             else:
                 label = self._extract_label(inp)
                 if label:
@@ -69,6 +74,9 @@ class QuestionsHandler(BaseHandler):
                 "options": grp["options"],
             }
             fields.append(spec)
+
+        for i, inp, label in checkbox_fields[:CONFIG.max_questions_per_form]:
+            fields.append({"idx": f"checkbox_{i}", "label": label, "type": "checkbox"})
 
         if not fields:
             return ProcessResult(
@@ -103,7 +111,7 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 5: fill text / textarea fields ───────────────────────────────
         filled_count = 0
-        total = len(text_fields) + len(radio_groups)
+        total = len(text_fields) + len(radio_groups) + len(checkbox_fields)
         print(f"   🔹 Filling questionnaire ({len(fields)} questions)...")
 
         for i, inp, label in text_fields:
@@ -171,6 +179,20 @@ class QuestionsHandler(BaseHandler):
 
             if not clicked:
                 print(f"   ⚠️ Radio '{name}': no match for '{answer[:60]}'")
+
+        # ── Step 7: fill checkboxes ───────────────────────────────────────────
+        for i, inp, label in checkbox_fields:
+            answer = answers.get(f"checkbox_{i}", "").strip().lower()
+            if answer.startswith(("yes", "да")):
+                try:
+                    inp.check()
+                    filled_count += 1
+                    print(f"   ✅ Checkbox '{label[:50]}': checked")
+                    page.wait_for_timeout(400)
+                except Exception as e:
+                    print(f"   ⚠️ Checkbox '{label[:50]}' error: {e}")
+            else:
+                print(f"   ⏭ Checkbox '{label[:50]}': unchecked ({answer or 'no answer'})")
 
         print(f"   ✅ Filled {filled_count}/{total} questions")
         self._wait_and_random_delay(page, 2000, 4000)
