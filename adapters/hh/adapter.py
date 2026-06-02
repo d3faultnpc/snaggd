@@ -293,6 +293,19 @@ class HHAdapter(SiteAdapter):
                 'employer_rating': employer_rating,
             }
 
+            # ── LLM unavailable guard ────────────────────────────────────────────
+            # static_fallback means the LLM call failed entirely (connection error,
+            # timeout, etc.). Skip rather than send an 83-char boilerplate cover.
+            # Vacancy is retryable — will be picked up again when LLM recovers.
+            if template_name == "static_fallback":
+                print("   ⚠️ LLM unavailable — skipping vacancy (no cover letter generated)")
+                return {
+                    'status': 'skipped_llm_unavailable',
+                    'reason': 'LLM unavailable — no cover letter generated',
+                    'scenario': 'skip',
+                    'details': score_details
+                }
+
             # ── Level 2: semantic stop_match from LLM ───────────────────────────
             if stop_match:
                 print(f"   🚫 semantic_blocked: LLM detected '{stop_match}'")
@@ -531,6 +544,14 @@ class HHAdapter(SiteAdapter):
             dialog = page.query_selector(_MODAL_SELECTORS)
             if not dialog or not dialog.is_visible():
                 return False
+
+            # Modal with a fillable textarea is a form layer — let the loop handle it
+            try:
+                ta = dialog.query_selector('textarea')
+                if ta and ta.is_visible():
+                    return False
+            except Exception:
+                pass
 
             try:
                 modal_text = dialog.inner_text().strip()[:600]

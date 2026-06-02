@@ -25,7 +25,7 @@ class HHModalHandler(BaseHandler):
             try:
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
-                textarea.type(cover_letter, delay=10)
+                textarea.type(cover_letter, delay=5, timeout=60000)
                 filled = True
                 print("   ✅ Cover letter filled")
                 self._wait_and_random_delay(page, 2000, 3000)
@@ -57,16 +57,17 @@ class HHModalHandler(BaseHandler):
         if edge_result:
             return edge_result
 
-        # 4. Success
+        # 4. Cover filled — continue loop so chatik provides the terminal status.
+        # Modal is an unstable HH experiment; chatik is the only reliable ground truth.
         if filled:
             return ProcessResult(
                 success=True,
-                status="applied",
-                reason=f"Cover letter submitted, button: '{button_text}'",
+                status="hh_modal_cover_sent",
+                reason=f"Cover letter submitted via modal, button: '{button_text}'",
                 scenario="hh_modal_with_cover",
                 details={'button_text': button_text},
-                is_terminal=True,
-                goal_reached=True
+                is_terminal=False,
+                goal_reached=False
             )
         return ProcessResult(
             success=True,
