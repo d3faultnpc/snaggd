@@ -48,8 +48,8 @@ class Logger:
         query_id = _extract_vacancy_id(url)
         for entry in applied_log:
             status = entry.get("status")
-            if status == "dry_run":
-                continue  # dry_run = scored but not applied; allow retry in live mode
+            if status in ("dry_run", "skipped_llm_unavailable"):
+                continue  # retryable: scored-only or transient LLM failure
             if entry.get("url") == url:
                 return status
             if query_id:
