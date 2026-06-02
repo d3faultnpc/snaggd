@@ -21,7 +21,8 @@ class Config:
     data_dir: Path = field(default_factory=lambda: DATA_DIR)
     applied_log_path: Path = field(default_factory=lambda: DATA_DIR / "applied_log.json")
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
-    cookies_path: Path = field(default_factory=lambda: DATA_DIR / "hh_cookies.json")
+    cookies_path: Path = field(default_factory=lambda: Path(
+        os.getenv("HH_COOKIES_PATH", DATA_DIR / "hh_cookies.json")))
 
     # Processing limits
     max_vacancies_per_session: int = int(os.getenv("MAX_VACANCIES", "3"))
@@ -58,8 +59,8 @@ class Config:
     fill_tests: bool = os.getenv("FILL_TESTS", "false").lower() == "true"
 
     def __post_init__(self):
-        self.logs_dir.mkdir(exist_ok=True)
-        self.data_dir.mkdir(exist_ok=True)
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(parents=True, exist_ok=True)
 
 
 CONFIG = Config()

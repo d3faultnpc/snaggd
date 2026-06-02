@@ -5,16 +5,20 @@ from typing import Tuple, List, Optional
 from pathlib import Path
 from config import CONFIG
 
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception as _e:
-    _agent = None
-    print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
+from core.llm_agent import LLMAgent
 
-def get_agent():
-    """Returns the shared LLMAgent singleton (None if init failed)."""
-    return _agent
+
+def get_agent(data_dir: "Path | None" = None) -> "LLMAgent | None":
+    """Returns a fresh LLMAgent for the given data_dir (or CONFIG default).
+
+    Used by adapter code that needs a one-off agent (e.g. modal dismissal).
+    Not a singleton — each call creates a new instance.
+    """
+    try:
+        return LLMAgent(data_dir=data_dir)
+    except Exception as _e:
+        print(f"   ⚠️ LLMAgent not available: {_e}")
+        return None
 
 
 class LLMCover:
@@ -28,8 +32,14 @@ class LLMCover:
     cache hit restores every attribute (including stop_match) at zero cost.
     """
 
-    def __init__(self):
-        self.cache_file = Path(CONFIG.cache_file)
+    def __init__(self, data_dir: Path = None):
+        self._data_dir = data_dir or CONFIG.data_dir
+        self.cache_file = self._data_dir / "llm_cache.json"
+        try:
+            self._agent = LLMAgent(data_dir=self._data_dir)
+        except Exception as _e:
+            self._agent = None
+            print(f"   ⚠️ LLMAgent not initialized: {_e} — using static fallback")
         self._profile_hash = self._compute_profile_hash()
         self.cache = self._load_cache()
         self.last_score: int = 0
@@ -94,15 +104,15 @@ class LLMCover:
         Any change to model, candidate profile, or vacancy text produces a new key.
         Stale entries from old models or profiles are ignored automatically.
         """
-        cover_model = _agent.cover_model if _agent else ""
-        llm_model = _agent.model if _agent else ""
+        cover_model = self._agent.cover_model if self._agent else ""
+        llm_model = self._agent.model if self._agent else ""
         compound = f"{cover_model}|{llm_model}|{self._profile_hash}|{text}"
         return hashlib.md5(compound.encode('utf-8')).hexdigest()[:16]
 
     def _compute_profile_hash(self) -> str:
         """Short hash of candidate.md — changes when the user updates their profile."""
         try:
-            profile_path = Path(CONFIG.data_dir) / "candidate.md"
+            profile_path = self._data_dir / "candidate.md"
             content = profile_path.read_text(encoding="utf-8")[:500] if profile_path.exists() else ""
             return hashlib.md5(content.encode('utf-8')).hexdigest()[:8]
         except Exception:
@@ -139,12 +149,12 @@ class LLMCover:
             print(f"   ⚠️ Cache save error: {e}")
     
     def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        if _agent is None:
+        if self._agent is None:
             raise RuntimeError("LLMAgent not available")
         # Score first: may reveal stop_match before spending tokens on cover letter.
         # If stop_match is set, the adapter will skip apply — cover is still cached
         # so the next encounter of the same vacancy costs 0 extra calls.
-        score_data = _agent.score_vacancy(vacancy_text)
+        score_data = self._agent.score_vacancy(vacancy_text)
         self.last_score = score_data.get("score", 0)
         self.last_matched_skills = score_data.get("matched_skills", [])
         self.last_gaps = score_data.get("gaps", [])
@@ -152,7 +162,7 @@ class LLMCover:
         signals = score_data.get("signals", [])
         # Generate cover with scoring context: matched skills + signals + vacancy role type
         # so the model writes precisely to the real overlap, not from scratch.
-        cover = _agent.generate_cover(vacancy_text, match_context=score_data)
+        cover = self._agent.generate_cover(vacancy_text, match_context=score_data)
         return cover, "llm", signals
     
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:

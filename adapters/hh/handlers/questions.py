@@ -1,15 +1,20 @@
+from pathlib import Path
+
 from .base import BaseHandler, FormType, ProcessResult
 from config import CONFIG, SELECTORS
-
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception:
-    _agent = None
 
 
 class QuestionsHandler(BaseHandler):
     """Fills employer question forms: collect all fields → one LLM batch call → fill."""
+
+    def __init__(self, data_dir: Path = None):
+        from core.llm_agent import LLMAgent
+        _dir = data_dir or CONFIG.data_dir
+        try:
+            self._agent = LLMAgent(data_dir=_dir)
+        except Exception as _e:
+            self._agent = None
+            print(f"   ⚠️ QuestionsHandler: LLMAgent not initialized: {_e}")
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.EMPLOYER_QUESTIONS
@@ -120,13 +125,13 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 4: LLM batch call for remaining fields ───────────────────────
         remaining = [f for f in fields if f["idx"] not in cover_field_keys]
-        if remaining and _agent is not None:
+        if remaining and self._agent is not None:
             try:
-                llm_answers = _agent.fill_form(vacancy_text, remaining)
+                llm_answers = self._agent.fill_form(vacancy_text, remaining)
                 answers.update(llm_answers)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
-        elif remaining and _agent is None:
+        elif remaining and self._agent is None:
             print(f"   ⚠️ LLM unavailable — {len(remaining)} field(s) left blank")
 
         # ── Step 5: fill text / textarea fields ───────────────────────────────
