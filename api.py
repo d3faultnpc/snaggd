@@ -5,14 +5,19 @@ Docs: http://127.0.0.1:8000/api/docs
 Auth: X-API-Key header (set API_KEY in .env)
 """
 
+import json
 import threading
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
+
+_BASE_DIR = Path(__file__).parent
+_PROFILES_DIR = _BASE_DIR / "data" / "profiles"
 
 _api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=True)
 
@@ -33,6 +38,7 @@ def _require_key(x_api_key: str = Security(_api_key_scheme)):
 
 # ── Request / response models ─────────────────────────────────────────────────
 class SessionStartRequest(BaseModel):
+    profile: Optional[str] = None
     max_vacancies: Optional[int] = None
     dry_run: bool = False
     debug: bool = False
@@ -53,8 +59,16 @@ def _session_worker(session_id: str, req: SessionStartRequest) -> None:
     session = _sessions[session_id]
     session["state"] = "running"
     try:
-        adapter = HHAdapter()
-        logger = Logger()
+        data_dir = _PROFILES_DIR / req.profile if req.profile else None
+        if req.profile and not (data_dir / "candidate.md").exists():
+            session.update(state="error",
+                           error=f"Profile '{req.profile}' not found or not configured")
+            return
+
+        adapter = HHAdapter(data_dir=data_dir)
+        logger = Logger(
+            applied_log_path=data_dir / "applied_log.json" if data_dir else None,
+        )
 
         if not adapter.verify():
             session.update(state="error", error="Adapter verification failed (cookies or search URLs missing)")
@@ -97,6 +111,7 @@ def session_start(req: SessionStartRequest):
     stop_event = threading.Event()
     _sessions[session_id] = {
         "state": "starting",
+        "profile": req.profile,
         "stop_event": stop_event,
         "started_at": datetime.now().isoformat(),
         "result": None,
@@ -105,7 +120,7 @@ def session_start(req: SessionStartRequest):
     t = threading.Thread(target=_session_worker, args=(session_id, req), daemon=True)
     _sessions[session_id]["thread"] = t
     t.start()
-    return {"id": session_id, "state": "starting"}
+    return {"id": session_id, "state": "starting", "profile": req.profile}
 
 
 @app.get("/api/v1/session/{session_id}/status", dependencies=[Depends(_require_key)])
@@ -116,6 +131,7 @@ def session_status(session_id: str):
     return {
         "id": session_id,
         "state": s["state"],
+        "profile": s.get("profile"),
         "started_at": s["started_at"],
         "result": s["result"],
         "error": s["error"],
@@ -182,3 +198,47 @@ def config_patch(req: ConfigPatchRequest):
         "max_vacancies": CONFIG.max_vacancies_per_session,
         "max_skips": CONFIG.max_skips,
     }
+
+
+# ── Profile endpoints ─────────────────────────────────────────────────────────
+
+def _profile_info(name: str, data_dir: Path) -> dict:
+    """Build profile summary dict from profile directory."""
+    info: dict = {"name": name, "data_dir": str(data_dir), "configured": False}
+    candidate = data_dir / "candidate.md"
+    if candidate.exists():
+        info["configured"] = True
+        first_line = candidate.read_text(encoding="utf-8").splitlines()[0] if candidate.stat().st_size else ""
+        info["candidate_headline"] = first_line.lstrip("#").strip()
+    log_path = data_dir / "applied_log.json"
+    if log_path.exists():
+        try:
+            entries = json.loads(log_path.read_text(encoding="utf-8"))
+            vacancy_entries = [e for e in entries if e.get("type") != "session_end"]
+            info["total_processed"] = len(vacancy_entries)
+            info["total_applied"] = sum(
+                1 for e in vacancy_entries if str(e.get("status", "")).startswith("applied"))
+            last = next((e for e in reversed(entries) if e.get("type") == "session_end"), None)
+            info["last_session"] = last.get("date") if last else None
+        except Exception:
+            pass
+    return info
+
+
+@app.get("/api/v1/profiles", dependencies=[Depends(_require_key)])
+def profiles_list():
+    if not _PROFILES_DIR.exists():
+        return {"profiles": []}
+    result = []
+    for p in sorted(_PROFILES_DIR.iterdir()):
+        if p.is_dir():
+            result.append(_profile_info(p.name, p))
+    return {"profiles": result}
+
+
+@app.get("/api/v1/profiles/{name}", dependencies=[Depends(_require_key)])
+def profile_detail(name: str):
+    data_dir = _PROFILES_DIR / name
+    if not data_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+    return _profile_info(name, data_dir)

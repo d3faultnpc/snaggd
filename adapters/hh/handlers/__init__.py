@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from .base import FormType, ProcessResult, BaseHandler
 from .hh_modal import HHModalHandler
 from .cover_only import CoverOnlyHandler
@@ -7,13 +9,13 @@ from .chat import ChatHandler
 from .test_form import TestFormHandler
 
 class FormHandlers:
-    def __init__(self):
+    def __init__(self, data_dir: Path = None):
         self.handlers = [
             SalaryHandler(),
             TestFormHandler(),
             HHModalHandler(),
             ChatHandler(),
-            QuestionsHandler(),
+            QuestionsHandler(data_dir=data_dir),
             CoverOnlyHandler(),
         ]
     

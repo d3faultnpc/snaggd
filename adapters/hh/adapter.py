@@ -12,7 +12,7 @@ from adapters.hh.detector import FormDetector
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult
 from config import CONFIG, SELECTORS
-from llm_cover import LLMCover, get_agent as _get_llm_agent
+from llm_cover import LLMCover
 from utils.helpers import random_delay
 from utils.filters import StopFilters, load_stop_filters
 
@@ -28,11 +28,13 @@ class HHAdapter(SiteAdapter):
     def auth_method(self) -> str:
         return "cookie"
 
-    def __init__(self):
+    def __init__(self, data_dir=None):
+        from pathlib import Path as _Path
+        self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
         self.browser = HHBrowser()
         self.detector = FormDetector()
-        self.handlers = FormHandlers()
-        self.llm_cover = LLMCover()
+        self.handlers = FormHandlers(data_dir=self._data_dir)
+        self.llm_cover = LLMCover(data_dir=self._data_dir)
         self._unverified_count = 0
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
@@ -577,7 +579,7 @@ class HHAdapter(SiteAdapter):
             print(f"   🔲 Blocking modal: \"{modal_text[:80]}\"")
             print(f"   🔘 Buttons: {[b['label'] for b in buttons]}")
 
-            llm = _get_llm_agent()
+            llm = self.llm_cover._agent
             if llm is None:
                 return False
 

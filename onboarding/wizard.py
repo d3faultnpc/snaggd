@@ -23,6 +23,29 @@ try:
 except ImportError:
     pass
 
+# ── Pre-parse --profile before CONFIG import (same pattern as main.py) ────────
+_BASE_DIR = Path(__file__).parent.parent
+_PROFILES_DIR = _BASE_DIR / "data" / "profiles"
+
+_pre = argparse.ArgumentParser(add_help=False)
+_pre.add_argument("--profile", type=str, default=None)
+_pre.add_argument("--list-profiles", action="store_true")
+_pre_args, _ = _pre.parse_known_args()
+
+if _pre_args.list_profiles:
+    if _PROFILES_DIR.exists():
+        profiles = sorted(p.name for p in _PROFILES_DIR.iterdir() if p.is_dir())
+        print("Available profiles:" if profiles else "No profiles yet.")
+        for p in profiles:
+            cand = _PROFILES_DIR / p / "candidate.md"
+            print(f"  {p:<20} {'configured' if cand.exists() else 'empty'}")
+    else:
+        print("No profiles directory found.")
+    sys.exit(0)
+
+if _pre_args.profile:
+    os.environ["DATA_DIR"] = str(_PROFILES_DIR / _pre_args.profile)
+
 from config import CONFIG
 from onboarding.resume_parser import ResumeParser, ResumeData
 
@@ -228,6 +251,12 @@ def block_a(resume_path: Path | None = None) -> bool:
             "languages":        {},
         })
 
+    # Suggest a profile name from the parsed role when running without --profile
+    if not _pre_args.profile and data.role:
+        suggested_name = data.role.lower().replace(" ", "_")[:20]
+        print(f"\n💡 Profile tip: next time run with --profile {suggested_name}")
+        print(f"   This saves data to data/profiles/{suggested_name}/ keeping profiles isolated.")
+
     out = CONFIG.data_dir / "candidate.md"
     out.write_text(ResumeParser(None).to_md(data), encoding="utf-8")
     print(f"\n✓  Saved → {out}")
@@ -272,9 +301,16 @@ def block_b(append: bool = False) -> bool:
         print()
 
     # Collect one or more search directions
+    # First iteration: prompt for magic link (resume-based HH URL) as primary source
+    _magic_link_hint_shown = False
     searches = []
     while True:
         print(f"\n── Search #{len(searches) + 1} ──")
+        if not _magic_link_hint_shown:
+            print("  💡 Tip: use your HH magic link for best results.")
+            print("     HH → My Resumes → [resume] → 'Подобрать вакансии' → copy URL.")
+            print("     The link has your resume embedded — no CV selection step needed.")
+            _magic_link_hint_shown = True
         default_role = suggested[len(searches)] if len(searches) < len(suggested) else ""
         role   = ask("Target role (e.g. Product Manager)", default_role)
         city   = ask("City (e.g. Moscow, remote)", "Moscow")
@@ -442,6 +478,10 @@ def _patch_env(key: str, value: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Auto-apply agent onboarding wizard")
+    parser.add_argument("--profile", type=str, default=None,
+                        help="Profile name — saves to data/profiles/<name>/ (default: data/)")
+    parser.add_argument("--list-profiles", action="store_true",
+                        help="List existing profiles and exit")
     parser.add_argument("--resume", type=Path, default=None,
                         help="Path to resume file (skips the file prompt in block A)")
     parser.add_argument("--block", choices=["a", "b", "c", "d"], default=None,
@@ -452,8 +492,11 @@ def main():
     args = parser.parse_args()
 
     print("\n🚀 Auto-apply agent — onboarding")
-    print("   Run once before your first session.")
-    print("   All files are saved to data/ (gitignored).\n")
+    if _pre_args.profile:
+        print(f"   Profile: {_pre_args.profile}  ({CONFIG.data_dir})")
+    else:
+        print("   All files are saved to data/ (gitignored).")
+    print()
 
     blocks = {
         "a": lambda: block_a(args.resume),

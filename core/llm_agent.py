@@ -24,11 +24,12 @@ except ImportError:
 
 
 class LLMAgent:
-    def __init__(self):
+    def __init__(self, data_dir: Path = None):
         api_key = os.getenv("LLM_API_KEY")
         if not api_key:
             raise RuntimeError("LLM_API_KEY not set — add it to .env")
 
+        self._data_dir = data_dir or CONFIG.data_dir
         self.model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
         self.cover_model = os.getenv("COVER_MODEL", self.model)
         self.client = OpenAI(
@@ -206,7 +207,7 @@ class LLMAgent:
         )
 
     def _load_profile(self, filename: str) -> str:
-        path = Path(CONFIG.data_dir) / filename
+        path = self._data_dir / filename
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
     def _load_prompt(self, filename: str) -> str:

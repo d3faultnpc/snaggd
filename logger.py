@@ -14,9 +14,10 @@ def _extract_vacancy_id(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 class Logger:
-    def __init__(self):
-        self.applied_log_path = CONFIG.applied_log_path
-        self.logs_dir = CONFIG.logs_dir
+    def __init__(self, applied_log_path: Path = None, logs_dir: Path = None):
+        self.applied_log_path = applied_log_path or CONFIG.applied_log_path
+        self.logs_dir = logs_dir or CONFIG.logs_dir
+        self.logs_dir.mkdir(parents=True, exist_ok=True)
         self.daily_log_path = self._get_daily_log_path()
         
     def _get_daily_log_path(self) -> Path:
