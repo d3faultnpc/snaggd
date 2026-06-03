@@ -1,15 +1,29 @@
+import re
+from pathlib import Path
+
 from .base import BaseHandler, FormType, ProcessResult
 from config import CONFIG, SELECTORS
 
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception:
-    _agent = None
+
+def _norm(s: str) -> str:
+    """Normalize option text for comparison: nbsp, multi-space, space-before-punct."""
+    s = s.replace(' ', ' ')
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(r'\s+([.,!?;:])', r'\1', s)
+    return s.strip().lower()
 
 
 class QuestionsHandler(BaseHandler):
     """Fills employer question forms: collect all fields → one LLM batch call → fill."""
+
+    def __init__(self, data_dir: Path = None):
+        from core.llm_agent import LLMAgent
+        _dir = data_dir or CONFIG.data_dir
+        try:
+            self._agent = LLMAgent(data_dir=_dir)
+        except Exception as _e:
+            self._agent = None
+            print(f"   ⚠️ QuestionsHandler: LLMAgent not initialized: {_e}")
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.EMPLOYER_QUESTIONS
@@ -120,13 +134,13 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 4: LLM batch call for remaining fields ───────────────────────
         remaining = [f for f in fields if f["idx"] not in cover_field_keys]
-        if remaining and _agent is not None:
+        if remaining and self._agent is not None:
             try:
-                llm_answers = _agent.fill_form(vacancy_text, remaining)
+                llm_answers = self._agent.fill_form(vacancy_text, remaining)
                 answers.update(llm_answers)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
-        elif remaining and _agent is None:
+        elif remaining and self._agent is None:
             print(f"   ⚠️ LLM unavailable — {len(remaining)} field(s) left blank")
 
         # ── Step 5: fill text / textarea fields ───────────────────────────────
@@ -161,13 +175,13 @@ class QuestionsHandler(BaseHandler):
                 free_text = answer[5:].strip()
                 target = "open"
             else:
-                target = answer.lower()
+                target = _norm(answer)
 
             clicked = False
             for idx, el, val, opt_text in grp["elements"]:
                 is_open = val == "open"
                 matches_open = is_open and free_text is not None
-                matches_text = not is_open and opt_text.strip().lower() == target
+                matches_text = not is_open and _norm(opt_text) == target
 
                 if matches_open or matches_text:
                     try:
@@ -228,12 +242,13 @@ class QuestionsHandler(BaseHandler):
                     free_text = answer[5:].strip()
                     target = "open"
                 else:
-                    target = answer.lower()
+                    target = _norm(answer)
                 clicked = False
                 for i, inp, opt_text in elems:
-                    is_free = opt_text.lower() in ("свой вариант", "другое", "other")
+                    norm_opt = _norm(opt_text)
+                    is_free = norm_opt in ("свой вариант", "другое", "other")
                     matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
-                    matches_opt = not is_free and opt_text.strip().lower() == target
+                    matches_opt = not is_free and norm_opt == target
                     if matches_free or matches_opt:
                         try:
                             inp.check()
@@ -300,15 +315,22 @@ class QuestionsHandler(BaseHandler):
     def _extract_radio_option_text(self, inp) -> str:
         try:
             return inp.evaluate("""el => {
+                const norm = s => s.replace(/ /g, ' ').trim();
+                // Magritte: option text lives in data-qa="cell-text-content" sibling
+                const cell = el.closest('[data-qa="cell"]');
+                if (cell) {
+                    const t = cell.querySelector('[data-qa="cell-text-content"]');
+                    if (t && norm(t.innerText)) return norm(t.innerText);
+                }
                 const lbl = el.closest('label');
-                if (lbl) return lbl.innerText.trim();
+                if (lbl) return norm(lbl.innerText);
                 const id = el.id;
                 if (id) {
                     const forLbl = document.querySelector('label[for="' + id + '"]');
-                    if (forLbl) return forLbl.innerText.trim();
+                    if (forLbl) return norm(forLbl.innerText);
                 }
                 const next = el.nextElementSibling;
-                if (next) return next.innerText.trim();
+                if (next) return norm(next.innerText);
                 return el.value || '';
             }""")
         except Exception:
@@ -325,7 +347,10 @@ class QuestionsHandler(BaseHandler):
                     btn.click()
                     self._wait_and_random_delay(page, 1000, 1500)
                     try:
-                        invalid = page.query_selector('[aria-invalid="true"]')
+                        # aria-invalid="true" covers standard HTML; Magritte uses a CSS class
+                        invalid = page.query_selector(
+                            '[aria-invalid="true"], span[data-qa="checkbox"][class*="magritte-invalid"]'
+                        )
                         if invalid and invalid.is_visible():
                             return ProcessResult(
                                 success=False, status="skipped_form_validation_error",
