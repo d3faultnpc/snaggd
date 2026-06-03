@@ -472,9 +472,18 @@ class HHAdapter(SiteAdapter):
                     print("   ⚠️ Still UNKNOWN after retry — stopping loop")
                     break
 
-            # Deadlock protection: same form type on consecutive layers
+            # Deadlock protection: same form type on consecutive layers means
+            # the previous submit didn't navigate away (validation error).
             if prev_form_type is not None and form_type == prev_form_type:
-                print(f"   ⚠️ {form_type.value} repeated on layer {layer} — deadlock, stopping")
+                print(f"   ⚠️ {form_type.value} repeated on layer {layer} — submit failed (validation), stopping")
+                result = ProcessResult(
+                    success=False,
+                    status='skipped_form_validation_error',
+                    reason=f'Form type {form_type.value} repeated — submit did not navigate away',
+                    scenario='questions_validation_error',
+                    is_terminal=True,
+                    goal_reached=False
+                )
                 break
 
             prev_form_type = form_type
