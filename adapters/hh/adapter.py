@@ -78,7 +78,7 @@ class HHAdapter(SiteAdapter):
         termination_detail = "All vacancies processed"
         vacancy_limit = max_vacancies if max_vacancies is not None else CONFIG.max_vacancies_per_session
 
-        for url, title, index in vacancies:
+        for url, title, index, search_source in vacancies:
             if stop_event and stop_event.is_set():
                 print(f"⏹ [{self.name()}] Stop requested via API")
                 termination_reason = "stopped"
@@ -112,6 +112,7 @@ class HHAdapter(SiteAdapter):
                     status="title_blocked",
                     reason=f"Title keyword: '{matched_kw}'",
                     scenario="skip",
+                    search_source=search_source,
                 )
                 logger.log_daily(f"[{self.name()}] title_blocked #{index}: {title}")
                 skip_count += 1
@@ -142,6 +143,7 @@ class HHAdapter(SiteAdapter):
                 status=result['status'], reason=result['reason'],
                 scenario=result.get('scenario', 'unknown'),
                 vacancy_id=vacancy_id,
+                search_source=search_source,
                 **result.get('details', {}),
             )
             # Skip-scenario results (dedup hit after page open, blocked by filters) do not

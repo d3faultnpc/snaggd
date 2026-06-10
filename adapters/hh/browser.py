@@ -1,7 +1,10 @@
 import json
+import os
 import re
 import time
+from itertools import zip_longest
 from typing import List, Optional
+from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from config import CONFIG, SELECTORS
 
@@ -47,11 +50,16 @@ class HHBrowser:
         """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
         try:
             self.playwright = sync_playwright().start()
-            # Non-headless + not debug → offscreen window (invisible but detectable as real browser).
-            # Debug mode keeps the window visible so the dev can watch what's happening.
+            # BROWSER_CORNER=true → small window bottom-right (monitor without blocking work).
+            # Non-headless, non-corner, non-debug → offscreen (invisible real browser).
+            # Debug without BROWSER_CORNER → full window at default position.
             launch_args = []
-            if not CONFIG.headless and not debug:
-                launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
+            if not CONFIG.headless:
+                corner = os.getenv("BROWSER_CORNER", "false").lower() == "true"
+                if corner:
+                    launch_args = ["--window-position=1050,650", "--window-size=750,430"]
+                elif not debug:
+                    launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
             self.browser = self.playwright.chromium.launch(
                 headless=CONFIG.headless,
                 args=launch_args,
@@ -95,26 +103,50 @@ class HHBrowser:
 
         self.page.wait_for_timeout(3000)
     
-    def get_vacancy_urls(self) -> List[tuple]:
-        """Visits all search URLs, returns deduplicated list of (url, title, index)."""
+    @staticmethod
+    def _search_source_label(search_url: str) -> str:
+        """Returns a human-readable label for a search URL used as search_source in the log.
+
+        wise link (contains resume= param) → "wise_link"
+        text query (contains text= param)  → the query string, e.g. "product manager"
+        anything else                       → "wise_link" (safe fallback)
+        """
+        params = parse_qs(urlparse(search_url).query)
+        if 'resume' in params:
+            return 'wise_link'
+        text = params.get('text', [''])[0].strip()
+        return text if text else 'wise_link'
+
+    def get_vacancy_urls(self, per_url_limit: int = 0) -> List[tuple]:
+        """Visits all search URLs, returns deduplicated interleaved list of
+        (url, title, index, search_source) tuples.
+
+        per_url_limit > 0: collect at most N vacancies per URL, then interleave round-robin
+        so each search angle is represented evenly in the processed queue.
+        per_url_limit = 0: no cap, pool all vacancies sequentially (legacy behaviour).
+        """
         search_urls = self._load_search_urls()
         if not search_urls:
             print("❌ No search URLs configured (run onboarding/wizard.py --block b)")
             return []
 
-        seen: set = set()
-        all_vacancies: list = []
+        url_buckets: list = []  # one list per search URL
+        source_labels: list = []  # parallel list: search_source label per bucket
 
         for i, search_url in enumerate(search_urls):
-            # Direct vacancy URL — add as-is without scraping search results
+            source = self._search_source_label(search_url)
+
+            # Direct vacancy URL — single-item bucket, no scraping
             if re.search(r'/vacancy/\d+', search_url):
                 vacancy_id = re.search(r'/vacancy/(\d+)', search_url).group(1)
                 clean_url = f'https://hh.ru/vacancy/{vacancy_id}'
-                all_vacancies.append((clean_url, f'vacancy/{vacancy_id}', len(all_vacancies) + 1))
+                url_buckets.append([(clean_url, f'vacancy/{vacancy_id}', 1)])
+                source_labels.append('direct')
                 print(f"🔹 Direct vacancy URL: {clean_url}")
                 continue
 
-            print(f"🔹 Search {i+1}/{len(search_urls)}: {search_url[:80]}...")
+            print(f"🔹 Search {i+1}/{len(search_urls)} [{source}]: {search_url[:80]}...")
+            bucket: list = []
             try:
                 for page_num in range(CONFIG.max_pages):
                     page_url = self._build_page_url(search_url, page_num)
@@ -140,19 +172,34 @@ class HHBrowser:
                         print(f"   ⏹ Page {page_num}: empty — stopping pagination")
                         break
                     print(f"   📄 Page {page_num}: {len(page_vacancies)} vacancies")
-                    all_vacancies.extend(page_vacancies)
+                    bucket.extend(page_vacancies)
+                    if per_url_limit > 0 and len(bucket) >= per_url_limit:
+                        break
             except Exception as e:
                 print(f"   ❌ Error loading search #{i+1}: {e}")
-                continue
 
-        # Deduplicate by URL, reassign sequential index
-        result = []
-        for url, title, _ in all_vacancies:
-            if url not in seen:
-                seen.add(url)
-                result.append((url, title, len(result) + 1))
+            if per_url_limit > 0:
+                bucket = bucket[:per_url_limit]
+            url_buckets.append(bucket)
+            source_labels.append(source)
 
-        print(f"✅ Total vacancies: {len(result)} unique (from {len(all_vacancies)} across {len(search_urls)} URL(s), ≤{CONFIG.max_pages} pages each)")
+        # Interleave buckets round-robin: URL1[0], URL2[0], ..., URL1[1], URL2[1], ...
+        # This gives even coverage across all search angles when the run is cut short.
+        seen: set = set()
+        result: list = []
+        for row in zip_longest(*url_buckets):
+            for bucket_idx, item in enumerate(row):
+                if item is None:
+                    continue
+                url, title, _ = item
+                if url not in seen:
+                    seen.add(url)
+                    source = source_labels[bucket_idx] if bucket_idx < len(source_labels) else 'wise_link'
+                    result.append((url, title, len(result) + 1, source))
+
+        total_collected = sum(len(b) for b in url_buckets)
+        limit_str = f"≤{per_url_limit}/URL" if per_url_limit > 0 else f"≤{CONFIG.max_pages} pages/URL"
+        print(f"✅ Total vacancies: {len(result)} unique (from {total_collected} across {len(url_buckets)} URL(s), {limit_str})")
         return result
 
     def _load_search_urls(self) -> List[str]:

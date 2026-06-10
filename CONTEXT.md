@@ -417,6 +417,7 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
   "matched_skills": ["skill1"],
   "gaps": ["missing_skill"],
   "signals": ["platform", "b2b"],
+  "search_source": "wise_link | <query text>",
   "cover_sent": true,
   "template_name": "cover_letter_v1"
 }

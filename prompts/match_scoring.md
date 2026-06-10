@@ -39,6 +39,14 @@ background as described in CANDIDATE PROFILE.
 Do not apply penalties mechanically by industry label — consider product type overlap
 and how transferable the candidate's actual experience is to this specific context.
 
+Tech/AI alignment boost (apply after domain alignment, before role type):
+If the vacancy domain is AI / automation / agentic / developer-tooling
+AND the candidate profile demonstrates hands-on technical background
+(shipped systems, browser automation, code-level work, agentic products):
+→ +5 to +10 points
+Symmetric counterweight to the domain mismatch penalty above.
+Apply only when BOTH conditions are true — not for standard PM roles.
+
 Role type alignment (apply AFTER domain alignment):
 Look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
 Classify the vacancy's required contribution style and compare it to the candidate's role_type.
