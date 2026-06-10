@@ -22,13 +22,15 @@ class Config:
     applied_log_path: Path = field(default_factory=lambda: DATA_DIR / "applied_log.json")
     logs_dir: Path = field(default_factory=lambda: BASE_DIR / "logs")
     cookies_path: Path = field(default_factory=lambda: Path(
-        os.getenv("HH_COOKIES_PATH", DATA_DIR / "hh_cookies.json")))
+        os.getenv("HH_COOKIES_PATH", BASE_DIR / "data" / "hh_cookies.json")))
 
     # Processing limits
     max_vacancies_per_session: int = int(os.getenv("MAX_VACANCIES", "3"))
     min_score: int = int(os.getenv("MIN_SCORE", "60"))
     max_skips: int = int(os.getenv("MAX_SKIPS", "10"))
     max_questions_per_form: int = 10
+    # Max vacancies to collect per search URL per run (0 = no limit / old behaviour)
+    vacancies_per_url: int = int(os.getenv("VACANCIES_PER_URL", "10"))
 
     # Browser delays (ms)
     min_delay: int = 2000
@@ -139,9 +141,10 @@ SELECTORS = {
     # Fallback checked in order if primary not found.
     'company_name': '[data-qa="vacancy-company-name"]',
     'company_name_fallback': '[data-qa="bloko-header-2"]',
-    # Employer review rating score on vacancy page (confirmed in debug_screenshots 2026-04-05).
-    # Returns a numeric string e.g. "4.3". Present only if the employer has reviews on HH.
-    'employer_rating': '[data-qa="company-review-rating-value"]',
+    # Employer review rating score on vacancy page.
+    # Located in main vacancy block (before featured section). 0 hits = no reviews → None.
+    # Note: text uses comma as decimal separator ("4,6") — handled by replace(",", ".") in browser.py.
+    'employer_rating': '[data-qa="employer-review-small-widget-total-rating"]',
 }
 
 FORM_KEYWORDS = {

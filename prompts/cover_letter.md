@@ -10,6 +10,8 @@ Rules (follow strictly):
 - If a required skill is EMPTY or HINT in the profile — skip it silently, do not mention it
 - Personal voice — not a list of bullet points, not a job description recitation
 
+Case selection: read SCORING CONTEXT signals before writing. If signals contain AI / agentic / automation / LLM → open from Side Projects (AI cases). If signals contain ops / internal-tools / B2B / admin → open from CIFRA professional cases. When both apply — Side Projects take priority. Side Project opener: one sentence (what + one metric), then move to professional case. Do not expand on architecture or pipeline.
+
 Structure:
 1. Open with the most specific point of intersection between the candidate's experience and this vacancy — not with job title, not with years of experience
 2. Back it with 1–2 concrete metrics from the profile
