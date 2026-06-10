@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import time
 from itertools import zip_longest
@@ -49,11 +50,16 @@ class HHBrowser:
         """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
         try:
             self.playwright = sync_playwright().start()
-            # Non-headless + not debug → offscreen window (invisible but detectable as real browser).
-            # Debug mode keeps the window visible so the dev can watch what's happening.
+            # BROWSER_CORNER=true → small window bottom-right (monitor without blocking work).
+            # Non-headless, non-corner, non-debug → offscreen (invisible real browser).
+            # Debug without BROWSER_CORNER → full window at default position.
             launch_args = []
-            if not CONFIG.headless and not debug:
-                launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
+            if not CONFIG.headless:
+                corner = os.getenv("BROWSER_CORNER", "false").lower() == "true"
+                if corner:
+                    launch_args = ["--window-position=1050,650", "--window-size=750,430"]
+                elif not debug:
+                    launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
             self.browser = self.playwright.chromium.launch(
                 headless=CONFIG.headless,
                 args=launch_args,

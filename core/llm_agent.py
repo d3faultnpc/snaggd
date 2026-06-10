@@ -187,9 +187,8 @@ class LLMAgent:
     def _build_match_hint(self, match_context: dict) -> str:
         """Compact context injected between cover_letter prompt and VACANCY block.
 
-        Only score and vacancy role type — NOT matched_skills or gaps.
-        Skill lists cause the model to enumerate them instead of writing creatively.
-        The model already has the full profile; let it find the intersection itself.
+        Passes score, role type, vacancy signals (direction vector), and matched skills
+        (ATS intersection — framed as "weave naturally" to prevent enumeration).
         """
         parts = []
         score = match_context.get("score")
@@ -198,6 +197,15 @@ class LLMAgent:
         role_type = match_context.get("vacancy_role_type")
         if role_type and role_type not in ("unknown", None):
             parts.append(f"Vacancy role type: {role_type}")
+        signals = match_context.get("signals") or []
+        if signals:
+            parts.append(f"What makes this vacancy distinctive: {', '.join(signals)}")
+        skills = match_context.get("matched_skills") or []
+        if skills:
+            parts.append(
+                f"Skills overlap — weave these naturally, do NOT enumerate or list:\n"
+                f"  {', '.join(skills)}"
+            )
         if not parts:
             return ""
         body = "\n".join(f"- {p}" for p in parts)
