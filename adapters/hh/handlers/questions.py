@@ -146,6 +146,7 @@ class QuestionsHandler(BaseHandler):
         # ── Step 5: fill text / textarea fields ───────────────────────────────
         filled_count = 0
         total = len(text_fields) + len(radio_groups) + len(checkbox_groups)
+        cover_filled_keys: set[str] = set()  # keys where cover was successfully typed
         print(f"   🔹 Filling questionnaire ({len(fields)} questions)...")
 
         for i, inp, label in text_fields:
@@ -158,6 +159,8 @@ class QuestionsHandler(BaseHandler):
                 filled_count += 1
                 print(f"   ✅ Field {i+1}: {label[:50]}")
                 page.wait_for_timeout(800)
+                if str(i) in cover_field_keys:
+                    cover_filled_keys.add(str(i))
             except Exception as e:
                 print(f"   ⚠️ Field {i+1} error: {e}")
 
@@ -283,7 +286,13 @@ class QuestionsHandler(BaseHandler):
 
         print(f"   ✅ Filled {filled_count}/{total} questions")
         self._wait_and_random_delay(page, 2000, 4000)
-        return self._submit(page, filled_count, total)
+        result = self._submit(page, filled_count, total)
+        # Signal to the goal-directed loop that cover was successfully typed here,
+        # so ChatHandler (next layer) should recognise goal as reached even if
+        # "Добавить сопроводительное" button is absent.
+        if result.success and cover_filled_keys:
+            result.status = "questions_cover_sent"
+        return result
 
     def verify_submission(self, page) -> bool:
         return self._poll_for_success(page, timeout_s=5)
