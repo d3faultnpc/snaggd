@@ -57,7 +57,7 @@ class HHBrowser:
             if not CONFIG.headless:
                 corner = os.getenv("BROWSER_CORNER", "false").lower() == "true"
                 if corner:
-                    launch_args = ["--window-position=1050,650", "--window-size=750,430"]
+                    launch_args = ["--window-size=750,430"]
                 elif not debug:
                     launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
             self.browser = self.playwright.chromium.launch(
@@ -67,6 +67,18 @@ class HHBrowser:
             self.context = self.browser.new_context()
             self._load_cookies()
             self.page = self.context.new_page()
+            if not CONFIG.headless and corner:
+                x = int(os.getenv("BROWSER_CORNER_X", "1578"))
+                y = int(os.getenv("BROWSER_CORNER_Y", "650"))
+                try:
+                    cdp = self.context.new_cdp_session(self.page)
+                    win_id = cdp.send("Browser.getWindowForTarget", {})["windowId"]
+                    cdp.send("Browser.setWindowBounds", {
+                        "windowId": win_id,
+                        "bounds": {"left": x, "top": y, "width": 750, "height": 430},
+                    })
+                except Exception:
+                    pass
             return True
         except Exception as e:
             print(f"❌ Browser launch error: {e}")

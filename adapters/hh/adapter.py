@@ -36,6 +36,7 @@ class HHAdapter(SiteAdapter):
         self.handlers = FormHandlers(data_dir=self._data_dir)
         self.llm_cover = LLMCover(data_dir=self._data_dir)
         self._unverified_count = 0
+        self._seen_descriptions: dict = {}  # desc_hash → vacancy_id; resets per session
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
@@ -272,6 +273,19 @@ class HHAdapter(SiteAdapter):
             if not vacancy_text:
                 return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text'}
 
+            # ── Duplicate detection (same company + description, different vacancy_id) ──
+            # Marks in applied_log with duplicate_of: <first_vacancy_id>. Does NOT skip —
+            # cover letter is generated fresh (cover_cache keyed by vacancy_id → natural
+            # LLM variation at temperature>0).
+            vacancy_id_local = self.browser.vacancy_id
+            desc_hash = _desc_hash(company, vacancy_text)
+            if desc_hash in self._seen_descriptions:
+                duplicate_of = self._seen_descriptions[desc_hash] or None
+                print(f"   ⚠️ Duplicate description detected (original: {duplicate_of})")
+            else:
+                duplicate_of = None
+                self._seen_descriptions[desc_hash] = vacancy_id_local or ""
+
             # ── Enrich vacancy context with employer metadata ────────────────────
             # Prepend company name + HH rating so LLM can factor them into score
             # and signals (e.g. "high_rated_employer", "no_reviews"). This costs
@@ -279,13 +293,16 @@ class HHAdapter(SiteAdapter):
             llm_context = _build_employer_header(company, employer_rating) + vacancy_text
 
             # Score first, then cover — score may reveal stop_match before cover is used.
-            # llm_context = employer header (~20t) + vacancy_text. Cached by MD5.
+            # Score is cached by text hash; cover is cached by vacancy_id so duplicates
+            # (same description, different URL) receive naturally varying cover letters.
             print("   🔹 Scoring vacancy...")
-            cover_letter, template_name, signals = llm_cover.generate(llm_context)
+            cover_letter, template_name, signals = llm_cover.generate(llm_context,
+                                                                       vacancy_id=vacancy_id_local)
             match_score = llm_cover.last_score
             stop_match = llm_cover.last_stop_match
             print(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}"
-                  + (f", stop_match: {stop_match}" if stop_match else ""))
+                  + (f", stop_match: {stop_match}" if stop_match else "")
+                  + (f", duplicate_of: {duplicate_of}" if duplicate_of else ""))
 
             score_details = {
                 'match_score': match_score,
@@ -296,6 +313,8 @@ class HHAdapter(SiteAdapter):
                 'company': company or '',
                 'employer_rating': employer_rating,
             }
+            if duplicate_of:
+                score_details['duplicate_of'] = duplicate_of
 
             # ── LLM unavailable guard ────────────────────────────────────────────
             # static_fallback means the LLM call failed entirely (connection error,
@@ -421,6 +440,7 @@ class HHAdapter(SiteAdapter):
         first_form_type = 'unknown'
         result = None
         prev_form_type = None
+        cover_sent_in_modal = False
 
         for layer in range(MAX_LAYERS):
             self._dismiss_blocking_modal(page)
@@ -492,7 +512,10 @@ class HHAdapter(SiteAdapter):
 
             # Run handler
             handler = self.handlers.get_handler(form_type)
-            result = handler.process(page, cover_letter, vacancy_text=vacancy_text)
+            result = handler.process(page, cover_letter, vacancy_text=vacancy_text,
+                                     cover_sent_via_modal=cover_sent_in_modal)
+            if result.status in ("hh_modal_cover_sent", "questions_cover_sent"):
+                cover_sent_in_modal = True
 
             # DOM щуп: verify submit succeeded
             if result.success:
@@ -673,3 +696,14 @@ def _build_employer_header(company, rating) -> str:
     else:
         parts.append("HH Employer Rating: no reviews on HH")
     return "\n".join(parts) + "\n\n"
+
+
+def _desc_hash(company: str, vacancy_text: str) -> str:
+    """Short hash of (company, vacancy_text[:2000]) for in-session duplicate detection.
+
+    Uses first 2000 chars of text — enough to distinguish vacancies reliably
+    while tolerating minor footer differences in otherwise identical descriptions.
+    """
+    import hashlib
+    key = f"{(company or '').lower()}|{vacancy_text[:2000]}"
+    return hashlib.md5(key.encode('utf-8')).hexdigest()[:12]
