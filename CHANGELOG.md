@@ -1,5 +1,104 @@
 # Changelog
 
+## [0.3.5] — 2026-06-16 · Cover Intelligence
+
+### Summary
+Four sessions of prompting and reliability work. The cover letter pipeline gains domain-aware
+case selection, split caching, deterministic post-processing, and an AI-signal scoring modifier.
+The browser layer adds stable corner-mode positioning and a new `applied_via_modal` status.
+Duplicate vacancies are now detected and handled gracefully.
+
+---
+
+### New: Domain-proximity case selection (`prompts/cover_letter.md`)
+Replaced keyword-based case selection with a 3-tier meta-rule. Before writing, the model
+evaluates genuine domain proximity — same domain, same product mechanics, same user type,
+or same problem pattern. Tier 1: open with the proximate case and its strongest metric.
+Tier 2: partial overlap — use the nearest metric as execution evidence only.
+Tier 3: no proximity — open with a specific observation about a real tension in this vacancy's
+domain (must name a concrete mechanism, metric, or user behavior — never a vague category),
+then demonstrate transferable methodology.
+
+Proximity shortcuts: AI/agentic signals → evaluate Side Projects first; ops/internal-tooling
+signals → evaluate professional cases first. When both qualify, Side Projects take priority.
+
+Closes the class of errors where a mismatch case (e.g. AML/fintech metrics) was injected into
+a cover for a dating or gaming product purely because the vacancy appeared after a domain match.
+
+### New: AI transferability modifier (`prompts/match_scoring.md`)
+When a vacancy contains AI/automation as a secondary signal (feature or tooling choice within
+a non-AI primary domain) AND the candidate has shipped hands-on AI systems — reduce the domain
+mismatch penalty by 5–10 points (–10..–20 instead of –20..–30).
+
+Distinct from the existing AI/tech boost (which fires when AI is the primary domain).
+Does not apply to hard-blocked categories. Specifically handles cases like "ecom platform with
+an LLM feature" that were previously penalised identically to a plain ecom vacancy.
+
+### New: Cover cache split (`llm_cover.py`)
+`llm_cache.json` (score cache) and `cover_cache.json` (cover cache) are now separate files.
+Score cache is keyed by compound text hash — same description always returns a cached score,
+zero extra LLM calls. Cover cache is keyed by `vacancy_id` — each vacancy gets its own letter,
+so duplicate vacancies (same description, different ID) receive naturally varying text instead
+of the same cached letter. `_generate_cover_only()` handles the score-hit / cover-miss path.
+
+### New: `_humanize()` post-processing (`llm_cover.py`)
+Deterministic replacement after every LLM generation call, applied before caching:
+`ё`/`Ё` → `е`/`Е`, em-dash `—` → `-`, en-dash `–` → `-`.
+
+Prompt-level rules alone cannot override model training priors for high-frequency tokens
+like `ё` and `—` (embedded in millions of Russian training examples). Post-processing
+guarantees clean output regardless of model behaviour or temperature.
+
+### New: Corner browser mode (`adapters/hh/browser.py`)
+`BROWSER_CORNER=true` positions the browser window in the bottom-right corner of the screen
+via CDP `Browser.setWindowBounds` after page creation. Configurable with `BROWSER_CORNER_X`
+and `BROWSER_CORNER_Y` env vars. Replaces the old `--window-position` launch argument that
+caused macOS window-snapping and required accessibility permissions.
+
+### New: `applied_via_modal` status (`adapters/hh/adapter.py`, `handlers/chat.py`)
+When a cover letter is submitted in the `hh_modal_step1` layer and the subsequent chatik
+opens without an "Добавить сопроводительное" button, the agent confirms the goal was already
+reached in the prior layer and logs `applied_via_modal`. Goal-directed loop is preserved —
+chatik still runs as a verification step rather than being skipped.
+
+### New: Duplicate vacancy detection (`adapters/hh/adapter.py`)
+Per-session `_seen_descriptions` dict keyed by `MD5(company + vacancy_text[:2000])`.
+Duplicate vacancies are not skipped — they receive a fresh cover letter (via the cover cache
+miss path) and are logged normally with a `duplicate_of: <vacancy_id>` field in `applied_log`.
+
+### New: Resume UUID auto-extract + wizard Block B (`login.py`, `onboarding/wizard.py`)
+After cookie capture, `login.py` opens a headless Playwright session, navigates to
+`/applicant/resumes`, and saves all found resume UUIDs to `data/hh_resumes.json`.
+Wizard Block B reads this file: auto-selects if one resume exists, shows a numbered list
+if multiple. Eliminates manual UUID lookup from browser URLs.
+
+---
+
+### Also
+
+- **`vacancy_role_type` in score cache v3** — field now stored in slot 7 of `llm_cache.json`
+  entries. Duplicate vacancy covers receive the same `_build_match_hint()` context as the
+  first-encounter vacancy (role type was previously lost on cache hit).
+- **Scoring context enriched** — `signals` + `matched_skills` now passed to cover generator
+  alongside `score` and `role_type`. Cover model writes to the verified overlap, not from scratch.
+- **Hallucination guard extended** — "and case narratives" added to the never-invent rule.
+  Closes the case where the model invented a plausible-sounding narrative (e.g. a LinkedIn
+  profile detail) around a real metric without inventing the metric itself.
+- **`applied_via_chat_no_cover` bug fixed** — `QuestionsHandler` now tracks `cover_filled_keys`
+  (set only after successful `inp.type()`) separately from field label scan. Loop checks both
+  cover paths before setting `cover_sent_in_modal=True`. Previously the flag was only wired for
+  the HH modal path, not the employer questions path.
+- **Cover char range relaxed** — `500–750 characters with spaces` (was `550–700`).
+  Target remains ~600; hard enforcement removed in favour of model judgment on complex vacancies.
+- **`scripts/dump_chatik.py`** — dev utility: opens a chatik URL with saved cookies, dumps all
+  frame DOM to `tmp/`. Requires chat URL as argument.
+- **`scripts/explore_resumes_page.py`** — dev utility: navigates `/applicant/resumes` and
+  saves screenshot + HTML to `tmp/`. Useful for debugging the resume UUID extraction.
+- **`check_sensitive.py` fixed** — now scans only `git ls-files` output instead of full
+  `rglob`, so gitignored `tmp/` and `data/` directories are correctly excluded.
+
+---
+
 ## [0.3.3] — 2026-05-31 · Goal-Directed Loop
 
 ### Summary
