@@ -105,8 +105,19 @@ class ChatHandler(BaseHandler):
         self._handle_hr_bot_loop(chatik_scope, page)
 
         # 4. Click "Добавить сопроводительное" to open the cover letter field
+        cover_sent_via_modal = kwargs.get("cover_sent_via_modal", False)
         add_cover = self._find_add_cover_btn(chatik_scope)
         if not add_cover:
+            if cover_sent_via_modal:
+                print("   ✅ Cover was sent in a prior form layer — chatik confirms goal reached")
+                return ProcessResult(
+                    success=True,
+                    status="applied_via_modal",
+                    reason="Cover letter sent in prior form layer; chatik opened, goal verified",
+                    scenario="hh_modal_with_cover",
+                    is_terminal=True,
+                    goal_reached=True
+                )
             print("   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter")
             return ProcessResult(
                 success=True,

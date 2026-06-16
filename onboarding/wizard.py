@@ -273,6 +273,39 @@ def block_a(resume_path: Path | None = None) -> bool:
 
 # ── Block B: Job preferences → job_preferences.md + .env ─────────────────────
 
+def _pick_auto_wise_link() -> dict | None:
+    """Reads hh_resumes.json (written by login.py) and returns a resolved wise-link entry.
+
+    Returns {"url": ..., "title": ...} or None if file missing / user skips.
+    """
+    resumes_path = Path(CONFIG.cookies_path).parent / "hh_resumes.json"
+    if not resumes_path.exists():
+        return None
+    try:
+        resumes = json.loads(resumes_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not resumes:
+        return None
+
+    if len(resumes) == 1:
+        r = resumes[0]
+        print(f"✅ Resume auto-detected: {r['title']}")
+    else:
+        print("Multiple resumes found — choose which one to use for vacancy search:")
+        for i, r in enumerate(resumes, 1):
+            print(f"  {i}. {r['title']}")
+        choice = ask("Resume number", "1")
+        try:
+            r = resumes[int(choice.strip()) - 1]
+        except (ValueError, IndexError):
+            print("⚠  Invalid choice — falling back to manual URL input")
+            return None
+
+    url = f"https://hh.ru/search/vacancy?resume={r['uuid']}&from=resumelist"
+    return {"url": url, "title": r["title"]}
+
+
 def block_b(append: bool = False) -> bool:
     section("Block B — Job preferences")
     print("This shapes the search URLs and helps the agent score vacancies.")
@@ -301,16 +334,34 @@ def block_b(append: bool = False) -> bool:
         print()
 
     # Collect one or more search directions
-    # First iteration: prompt for magic link (resume-based HH URL) as primary source
-    _magic_link_hint_shown = False
+    _auto = _pick_auto_wise_link()
     searches = []
     while True:
         print(f"\n── Search #{len(searches) + 1} ──")
-        if not _magic_link_hint_shown:
+
+        # First iteration with auto-detected wise link: skip URL building, just collect prefs
+        if not searches and _auto:
+            print(f"  🔗 Wise link: {_auto['url'][:72]}...")
+            default_role = suggested[0] if suggested else _auto["title"]
+            role   = ask("Target role (for vacancy scoring)", default_role)
+            salary = ask("Minimum salary, RUB (press Enter to skip)")
+            remote = ask("Work format: office / remote / hybrid", "hybrid")
+            searches.append({
+                "role": role, "city": "", "salary": salary,
+                "remote": remote, "scope": "everywhere", "flexible": False,
+                "url": _auto["url"],
+            })
+            print(f"✓  URL: {_auto['url']}")
+            another = ask("\nAdd keyword-based search directions too? yes / no", "no")
+            if not another.lower().startswith("y"):
+                break
+            continue
+
+        # Normal text-based search (no auto-detect, or additional directions)
+        if not searches:
             print("  💡 Tip: use your HH magic link for best results.")
             print("     HH → My Resumes → [resume] → 'Подобрать вакансии' → copy URL.")
             print("     The link has your resume embedded — no CV selection step needed.")
-            _magic_link_hint_shown = True
         default_role = suggested[len(searches)] if len(searches) < len(suggested) else ""
         role   = ask("Target role (e.g. Product Manager)", default_role)
         city   = ask("City (e.g. Moscow, remote)", "Moscow")
