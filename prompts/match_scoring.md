@@ -47,6 +47,16 @@ AND the candidate profile demonstrates hands-on technical background
 Symmetric counterweight to the domain mismatch penalty above.
 Apply only when BOTH conditions are true — not for standard PM roles.
 
+AI transferability modifier (distinct from the boost above, apply after domain alignment):
+If the vacancy contains an AI/automation component as a secondary signal (present in signals but not the primary domain)
+AND the candidate profile demonstrates hands-on AI delivery (shipped AI systems, agentic products, automation pipelines):
+→ Reduce the clear domain mismatch penalty by 5–10 points (apply –10..–20 instead of –20..–30)
+→ This reduces the penalty only — it does NOT add points when there is no mismatch
+→ Do NOT apply when AI is the primary domain (the boost above already handles that).
+   AI is primary when the product itself is an AI system, model, or AI-first tool.
+   AI is secondary when AI is a feature or tooling choice within a product whose primary domain is something else (e-commerce, fintech, logistics, dating, etc.).
+→ Do NOT apply to hard-blocked categories (gambling, MLM, or any stop_match category)
+
 Role type alignment (apply AFTER domain alignment):
 Look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
 Classify the vacancy's required contribution style and compare it to the candidate's role_type.
