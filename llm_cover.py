@@ -178,8 +178,20 @@ class LLMCover:
         """Calls generate_cover() using pre-computed match_context (score cached)."""
         if self._agent is None:
             raise RuntimeError("LLMAgent not available")
-        cover = self._agent.generate_cover(vacancy_text, match_context=match_context)
+        cover = self._humanize(self._agent.generate_cover(vacancy_text, match_context=match_context))
         return cover, "llm"
+
+    def _humanize(self, text: str) -> str:
+        """Post-process LLM output: replace typographic characters not on a standard keyboard.
+
+        Prompt-level rules alone cannot override model training priors for these
+        high-frequency tokens. Deterministic replacement here guarantees output
+        regardless of model behaviour.
+        """
+        return (text
+                .replace('ё', 'е').replace('Ё', 'Е')
+                .replace('—', '-')   # em-dash
+                .replace('–', '-'))  # en-dash
 
     def _load_cache(self) -> dict:
         """Loads score cache. Returns empty dict if file is from a previous day."""
@@ -250,7 +262,7 @@ class LLMCover:
         signals = score_data.get("signals", [])
         # Generate cover with scoring context: matched skills + signals + vacancy role type
         # so the model writes precisely to the real overlap, not from scratch.
-        cover = self._agent.generate_cover(vacancy_text, match_context=score_data)
+        cover = self._humanize(self._agent.generate_cover(vacancy_text, match_context=score_data))
         return cover, "llm", signals
 
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:
