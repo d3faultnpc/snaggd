@@ -98,6 +98,9 @@ HEADLESS=false                     # true = no browser window
 FILL_TESTS=false                   # true = attempt LLM fill for employer tests
 DATA_DIR=./data                    # override data directory
 PROXY_URL=                         # socks5://... (optional)
+BROWSER_CORNER=false               # true = position browser in bottom-right corner
+BROWSER_CORNER_X=1578              # corner X offset in pixels — tune for your screen
+BROWSER_CORNER_Y=650               # corner Y offset in pixels — tune for your screen
 ```
 
 ---
@@ -169,6 +172,19 @@ scripts/                ← dev utilities (vacancy inspector, label tester)
 - **Russian job board** — cover letters are generated in the vacancy's language (Russian or English)
 - **Cookie-based auth** — if cookies expire, re-run `login.py`
 - **Tested on macOS** — should work on Linux; Windows untested
+
+---
+
+## Roadmap
+
+**Phase 2 — Desktop app (planned)**
+A native desktop app (Tauri + Python backend) wrapping the current CLI with a UI: profile manager, live session monitor, application history dashboard. No App Store dependency.
+
+**Multi-site support**
+The adapter framework (`adapters/base.py`) is already in place. LinkedIn and other CIS job boards are in scope for Phase 2.
+
+**Resume enhancement**
+ATS optimizer: takes your existing resume and suggests targeted edits to improve match rates against a specific job description.
 
 ---
 
