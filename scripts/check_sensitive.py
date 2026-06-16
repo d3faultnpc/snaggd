@@ -79,12 +79,29 @@ def check_file(path: Path) -> List[Tuple[int, str, str]]:
     return issues
 
 
+def _git_tracked_files() -> list:
+    """Returns list of absolute paths for all files tracked by git."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return [ROOT / p for p in result.stdout.splitlines() if p]
+    except Exception as e:
+        print(f"Warning: git ls-files failed ({e}), falling back to rglob")
+        return [p for p in ROOT.rglob("*") if p.is_file()]
+
+
 def main():
-    print("Scanning for sensitive data...\n")
+    print("Scanning for sensitive data (git-tracked files only)...\n")
     total_issues = 0
     files_checked = 0
 
-    for path in sorted(ROOT.rglob("*")):
+    for path in sorted(_git_tracked_files()):
         if path.is_dir() or should_skip(path):
             continue
         files_checked += 1
@@ -97,7 +114,7 @@ def main():
                 total_issues += 1
             print()
 
-    print(f"Checked {files_checked} files.")
+    print(f"Checked {files_checked} git-tracked files.")
     if total_issues == 0:
         print("No sensitive data found. Safe to push.")
         return 0
