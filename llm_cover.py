@@ -53,6 +53,7 @@ class LLMCover:
         self.last_matched_skills: list = []
         self.last_gaps: list = []
         self.last_stop_match: Optional[str] = None
+        self.last_vacancy_role_type: Optional[str] = None
 
     def generate(self, vacancy_text: str, vacancy_id: str = None) -> Tuple[str, str, List[str]]:
         """Score vacancy + generate cover letter.
@@ -79,6 +80,7 @@ class LLMCover:
                 "gaps": self.last_gaps,
                 "stop_match": self.last_stop_match,
                 "signals": signals,
+                "vacancy_role_type": self.last_vacancy_role_type,
             }
 
             # ── Cover lookup ──────────────────────────────────────────────────
@@ -121,7 +123,8 @@ class LLMCover:
         if template_name_result != "static_fallback":
             self.cache[text_hash] = [cover, template_name_result, signals,
                                       self.last_score, self.last_matched_skills,
-                                      self.last_gaps, self.last_stop_match]
+                                      self.last_gaps, self.last_stop_match,
+                                      self.last_vacancy_role_type]
             self._save_cache()
             self.cover_cache[cover_key] = [cover, template_name_result]
             self._save_cover_cache()
@@ -151,8 +154,9 @@ class LLMCover:
             return "noprofile"
 
     def _restore_score_from_cache(self, entry: list) -> list:
-        """Restores last_score / skills / gaps / stop_match from a cache entry.
+        """Restores last_score / skills / gaps / stop_match / vacancy_role_type from cache.
 
+        Cache format v3: [cover, template, signals, score, skills, gaps, stop_match, role_type]
         Cache format v2: [cover, template, signals, score, skills, gaps, stop_match]
         Cache format v1: [cover, template, signals, score, skills, gaps]
         Returns: signals list.
@@ -162,6 +166,7 @@ class LLMCover:
             self.last_matched_skills = entry[4]
             self.last_gaps = entry[5]
             self.last_stop_match = entry[6]
+            self.last_vacancy_role_type = entry[7] if len(entry) >= 8 else None
         elif len(entry) >= 6:
             self.last_score = entry[3]
             self.last_matched_skills = entry[4]
@@ -259,6 +264,7 @@ class LLMCover:
         self.last_matched_skills = score_data.get("matched_skills", [])
         self.last_gaps = score_data.get("gaps", [])
         self.last_stop_match = score_data.get("stop_match", None)
+        self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
         signals = score_data.get("signals", [])
         # Generate cover with scoring context: matched skills + signals + vacancy role type
         # so the model writes precisely to the real overlap, not from scratch.
