@@ -1,5 +1,11 @@
 ![header](./assets/header.png)
 
+[![License](https://img.shields.io/badge/license-MIT-1E2124?style=flat-square&labelColor=141518)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-1E2124?style=flat-square&labelColor=141518&logo=python&logoColor=4CAF50)](https://python.org)
+[![Playwright](https://img.shields.io/badge/playwright-powered-1E2124?style=flat-square&labelColor=141518&logo=playwright&logoColor=4CAF50)](https://playwright.dev)
+[![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-1E2124?style=flat-square&labelColor=141518)](https://openrouter.ai)
+[![Status](https://img.shields.io/badge/status-alpha-1E2124?style=flat-square&labelColor=141518)](#)
+
 # snaggd
 
 > Automated job application agent for [HH.ru](https://hh.ru) — the largest job board in Russia and CIS.
