@@ -66,6 +66,8 @@ Use the same vocabulary as the candidate's role_type where possible.
 Set vacancy_role_type to the classified type.
 Set role_type_match to true/false. Use null only if candidate's role_type is absent.
 
+Final score after all modifiers: floor at 0, cap at 100.
+
 Baseline skills common to most vacancies in this field are NOT differentiators.
 Do NOT use them as strong match signals — they are table stakes, not evidence of fit.
 Focus on domain depth, specific product or context expertise, and the candidate's actual

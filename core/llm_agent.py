@@ -226,8 +226,16 @@ class LLMAgent:
         """Type-guards scoring output — protects log and downstream code from LLM garbage.
 
         signals/matched_skills/gaps must be list[str]; stop_match must be str or None.
+        score is clamped to [0, 100] — LLM modifier arithmetic can exceed the stated range.
         Passes through unchanged when LLM output is well-formed.
         """
+        score = result.get("score", 50)
+        if not isinstance(score, int):
+            try:
+                score = int(score)
+            except (TypeError, ValueError):
+                score = 50
+        result["score"] = max(0, min(100, score))
         for key in ("signals", "matched_skills", "gaps"):
             val = result.get(key, [])
             if not isinstance(val, list):
