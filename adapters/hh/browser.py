@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import re
@@ -11,12 +12,14 @@ from config import CONFIG, SELECTORS
 class HHBrowser:
     def __init__(self):
         self.playwright = None
+        self._pw_manager = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
         self.vacancy_page: Optional[Page] = None
         self._canonical_url: Optional[str] = None
         self._vacancy_id: Optional[str] = None
+        atexit.register(self.close)
 
     @property
     def canonical_url(self) -> Optional[str]:
@@ -49,7 +52,8 @@ class HHBrowser:
     def start(self, debug: bool = False) -> bool:
         """Launches browser and loads cookies. Navigation happens in get_vacancy_urls()."""
         try:
-            self.playwright = sync_playwright().start()
+            self._pw_manager = sync_playwright()
+            self.playwright = self._pw_manager.start()
             # BROWSER_CORNER=true → small window bottom-right (monitor without blocking work).
             # Non-headless, non-corner, non-debug → offscreen (invisible real browser).
             # Debug without BROWSER_CORNER → full window at default position.
@@ -82,6 +86,7 @@ class HHBrowser:
             return True
         except Exception as e:
             print(f"❌ Browser launch error: {e}")
+            self.close()
             return False
     
     def _load_cookies(self) -> None:
@@ -393,11 +398,20 @@ class HHBrowser:
             time.sleep(3)
     
     def close(self) -> None:
-        """Closes the browser."""
+        """Closes browser and Playwright driver. Idempotent — safe to call multiple times."""
         if self.browser:
-            self.browser.close()
-        if self.playwright:
-            self.playwright.stop()
+            try:
+                self.browser.close()
+            except Exception:
+                pass
+            self.browser = None
+        if self._pw_manager:
+            try:
+                self._pw_manager.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._pw_manager = None
+            self.playwright = None
     
     def wait_for_timeout(self, ms: int) -> None:
         """Waits for the given duration in milliseconds."""
