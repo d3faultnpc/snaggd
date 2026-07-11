@@ -1,16 +1,20 @@
 """
-Resume parser: PDF / DOCX / image / markdown → ResumeData → resume_facts.md
+Resume parser: PDF / DOCX / image / markdown → ResumeData → candidate.md + candidate.json
 
 - PDF + images → base64 image_url → Gemini reads both natively (no local extraction)
 - DOCX → python-docx text → LLM text mode (no image representation available)
 - MD/TXT → LLM text mode
 - json_repair as fallback for malformed LLM JSON output
 - OpenRouter as unified gateway (RESUME_PARSE_MODEL / LLM_MODEL env vars)
+
+Schema: see .claude/working-notes/tz-pre-app-wizard-sprint.md Task 1. ResumeData mirrors the
+candidate.json shape directly (nested dicts/lists) so dataclasses.asdict() round-trips cleanly.
 """
 
 import base64
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -22,51 +26,60 @@ try:
 except ImportError:
     _HAS_JSON_REPAIR = False
 
+_BLOCK_START = "<!-- snaggd:start -->"
+_BLOCK_END = "<!-- snaggd:end -->"
+_TOKEN_GUARD_CHARS = 6000
+
 
 @dataclass
 class ResumeData:
-    # Tier 1 — Critical: cover generation degrades without these
-    name: Optional[str] = None
-    role: Optional[str] = None
-    experience_years: Optional[int] = None
-    current_company: Optional[str] = None
-    domain: Optional[str] = None
+    schema_version: str = "1.0"
+    target_market: str = ""
+    locale: str = ""
 
-    # Tier 2 — Structured work history (preferred over legacy flat fields)
-    # jobs: [{company, title, period, domain, projects: [{name, context, results[]}]}]
-    jobs: list = field(default_factory=list)
-    # side_projects: [{name, context, results[]}]  — first-class, same schema
-    side_projects: list = field(default_factory=list)
+    identity: dict = field(default_factory=dict)        # name, role, location, contacts: []
+    pitch: Optional[str] = None
 
-    # Tier 2 — Legacy flat fields (kept for wizard backward compat; to_md() ignores if jobs present)
+    # Wizard-filled only — never extracted from the CV itself (career_profile.role_type/edge
+    # need the candidate's own framing; logistics/search/rules are filter/config data, not CV content)
+    career_profile: dict = field(default_factory=dict)  # role_type, edge
+    logistics: dict = field(default_factory=dict)       # relocation, work_format
+    search: dict = field(default_factory=dict)          # wise_link, queries, salary, region
+    rules: dict = field(default_factory=dict)           # stop, penalize, min_match, min_employer_rating
+
+    cases: list = field(default_factory=list)
     skills: list = field(default_factory=list)
-    achievements: list = field(default_factory=list)
-    key_cases: list = field(default_factory=list)
-
-    # Tier 3 — Nice to have
     tools: list = field(default_factory=list)
-    languages: dict = field(default_factory=dict)
+    languages: list = field(default_factory=list)       # [{lang, level, note}]
+    interests: list = field(default_factory=list)
 
-    # Contacts & personal — used to answer HR form questions (LinkedIn, GitHub, etc.)
-    contacts: dict = field(default_factory=dict)   # linkedin, github, telegram, email, phone
-    personal: dict = field(default_factory=dict)   # age, location, relocation
-
-    # Search
+    # Parser-only convenience field (HH search query suggestions) — NOT part of the
+    # candidate.json schema, excluded when serializing. Feeds the existing job_preferences.md
+    # search-direction flow (wizard.py Block B), unrelated to search{} above.
     suggested_queries: list = field(default_factory=list)
 
-    # Career self-profile — set via wizard, not extracted from CV
-    # role_type: builder | operator | strategic | ops | head
-    role_type: str = ""
-    # professional_edge: one-sentence unique angle vs other candidates in this role
-    professional_edge: str = ""
-    # not_looking_for: role types / work contexts to penalise in scoring
-    not_looking_for: list = field(default_factory=list)
-
-    # Metadata
+    # Operational metadata — not schema content, used directly by Python code
     source_file: str = ""
     parsed_at: str = ""
     completeness: float = 0.0
     hints: list = field(default_factory=list)
+
+
+def _typed_contact_line(raw: str) -> str:
+    """Type-sniff a raw contact string into a labeled line for MD rendering."""
+    low = raw.lower()
+    if "t.me/" in low or raw.startswith("@"):
+        return f"telegram: {raw}"
+    if "github.com" in low:
+        return f"github: {raw}"
+    if "linkedin.com" in low:
+        return f"linkedin: {raw}"
+    if "@" in raw and " " not in raw:
+        return f"email: {raw}"
+    digits = sum(ch.isdigit() for ch in raw)
+    if digits >= 7:
+        return f"phone: {raw}"
+    return raw
 
 
 class ResumeParser:
@@ -109,147 +122,195 @@ class ResumeParser:
         return self._extract_multimodal(path, mime)
 
     def from_wizard(self, answers: dict) -> ResumeData:
+        """Manual-entry fallback (no LLM_API_KEY / parse failure). Minimal by design —
+        full per-case manual entry is Task 6 (wizard 7-step redesign), not this."""
         data = ResumeData(
-            name=answers.get("name"),
-            role=answers.get("role"),
-            experience_years=answers.get("experience_years"),
-            current_company=answers.get("current_company"),
-            domain=answers.get("domain"),
+            identity={
+                "name": answers.get("name"),
+                "role": answers.get("role"),
+                "location": answers.get("location"),
+                "contacts": answers.get("contacts") or [],
+            },
             skills=answers.get("skills") or [],
-            achievements=answers.get("achievements") or [],
-            key_cases=answers.get("key_cases") or [],
             tools=answers.get("tools") or [],
-            languages=answers.get("languages") or {},
-            jobs=answers.get("jobs") or [],
-            side_projects=answers.get("side_projects") or [],
-            contacts=answers.get("contacts") or {},
-            personal=answers.get("personal") or {},
+            languages=answers.get("languages") or [],
+            cases=answers.get("cases") or [],
             source_file="wizard",
             parsed_at=datetime.now().isoformat(),
         )
         return self._finalize(data)
 
-    def to_md(self, data: ResumeData) -> str:
-        """Serialize ResumeData → candidate.md (dense format optimized for LLM tokens)."""
-        lines = [
-            "# candidate.md",
-            f"# completeness: {data.completeness:.0%} | source: {data.source_file} | updated: {data.parsed_at[:10]}",
-            "",
-            "## Career Profile",
-        ]
+    def to_md(self, data: ResumeData, existing_content: str = "") -> str:
+        """Serialize ResumeData → candidate.md (dense format optimized for LLM tokens).
 
-        role_type = data.role_type or "# HINT: fill via wizard — builder | operator | strategic | ops | head"
-        lines.append(f"role_type: {role_type}")
+        existing_content: previous file content, if any. Content after the managed block
+        end-marker is preserved verbatim (user's own free-text annotations survive re-runs).
+        """
+        body = self._render_managed_block(data)
+        if len(body) > _TOKEN_GUARD_CHARS:
+            print(f"⚠️  candidate.md managed block exceeds {_TOKEN_GUARD_CHARS} chars — shortening", file=sys.stderr)
+            body = self._render_managed_block(self._shorten_for_token_guard(data))
 
-        edge = data.professional_edge or "# HINT: fill via wizard — one-sentence unique angle vs other candidates"
-        lines.append(f"edge: {edge}")
+        managed = f"{_BLOCK_START}\n{body}\n{_BLOCK_END}"
 
-        if data.not_looking_for:
-            lines.append(f"not_looking_for: {', '.join(data.not_looking_for)}")
+        user_section = ""
+        if existing_content and _BLOCK_END in existing_content:
+            user_section = existing_content.split(_BLOCK_END, 1)[1]
+
+        return managed + user_section
+
+    # ── Rendering ─────────────────────────────────────────────────────────────
+
+    def _render_managed_block(self, data: ResumeData) -> str:
+        identity = data.identity or {}
+        role = identity.get("role") or "MISSING — add your target role"
+        lines = [f"# {role}"]
+        updated = data.parsed_at[:10] if data.parsed_at else ""
+        lines.append(f"# completeness: {data.completeness:.0%} | source: {data.source_file} | updated: {updated}")
+
+        # ── Identity ───────────────────────────────────────────────────────
+        lines += ["", "## Identity"]
+        lines.append(f"name: {identity.get('name') or 'MISSING — add your name'}")
+        lines.append(f"location: {identity.get('location') or '# HINT: add your city — used for relocation/location HR questions'}")
+        contacts = identity.get("contacts") or []
+        if contacts:
+            for c in contacts:
+                lines.append(_typed_contact_line(c))
         else:
-            lines.append("not_looking_for: # HINT: fill via wizard — e.g. process_management, pmm, outsource")
+            lines.append("# HINT: add LinkedIn/GitHub/Telegram/email — used to answer HR form contact questions")
 
-        lines += [
-            "",
-            "## Identity",
-            f"name: {data.name or 'MISSING — add your name'}",
-            f"role: {data.role or 'MISSING — add your target role'}",
-            f"experience_years: {data.experience_years if data.experience_years is not None else 'MISSING'}",
-            f"current_company: {data.current_company or 'MISSING'}",
-            f"domain: {data.domain or 'MISSING'}",
-            "",
-            "## Skills",
-        ]
+        if data.pitch:
+            lines += ["", data.pitch]
 
+        # ── Career Profile ────────────────────────────────────────────────
+        lines += ["", "## Career Profile"]
+        cp = data.career_profile or {}
+        lines.append(f"role_type: {cp['role_type']}" if cp.get("role_type")
+                     else "role_type: # SKIPPABLE — fill via wizard if useful for scoring (free text, no fixed list)")
+        lines.append(f"edge: {cp['edge']}" if cp.get("edge")
+                     else "edge: # HINT: one-sentence unique angle vs other candidates")
+        lines.append(f"aspiration: {cp['aspiration']}" if cp.get("aspiration")
+                     else "aspiration: # HINT: direction you want to move toward, even if your cases don't show it yet")
+
+        # ── Relocation & Work Format ─────────────────────────────────────
+        lines += ["", "## Relocation & Work Format"]
+        lg = data.logistics or {}
+        if lg.get("relocation") or lg.get("work_format"):
+            if lg.get("relocation"):
+                lines.append(f"relocation: {lg['relocation']}")
+            if lg.get("work_format"):
+                lines.append(f"work_format: {lg['work_format']}")
+        else:
+            lines.append("# — empty · SKIPPABLE, agent uses defaults, never fabricates")
+
+        # ── Desired Salary ────────────────────────────────────────────────
+        lines += ["", "## Desired Salary"]
+        salary = (data.search or {}).get("salary")
+        lines.append(salary if salary else "# — empty · SKIPPABLE, agent uses market average, never fabricates")
+
+        # ── Skills ────────────────────────────────────────────────────────
+        lines += ["", "## Skills"]
         if data.skills:
-            for s in data.skills:
-                lines.append(f"- {s}")
-            if len(data.skills) < 5:
-                lines.append("# HINT: add more specific skills to improve match quality")
+            lines += [f"- {s}" for s in data.skills]
         else:
             lines.append("# EMPTY — add professional skills (e.g. platform thinking, API design, SQL)")
 
-        # ── Work Experience ───────────────────────────────────────────────────
+        # ── Work Experience / Education / Projects & Credentials ─────────
+        _EDU_TYPES = {"education"}
+        _PROJECT_TYPES = {"project", "certification", "publication", "volunteering", "research"}
+        edu_cases = [c for c in data.cases if c.get("type") in _EDU_TYPES]
+        project_cases = [c for c in data.cases if c.get("type") in _PROJECT_TYPES]
+        # Catch-all: anything not education/project-family renders as Work Experience —
+        # including None and any type value outside the known set, so an unrecognized
+        # `type` from LLM output never silently disappears from candidate.md.
+        work_cases = [c for c in data.cases
+                      if c.get("type") not in _EDU_TYPES and c.get("type") not in _PROJECT_TYPES]
+
         lines += ["", "## Work Experience"]
-        if data.jobs:
-            for job in data.jobs:
-                company = job.get("company", "")
-                title   = job.get("title", "")
-                period  = job.get("period", "")
-                domain  = job.get("domain", "")
-                header_parts = [x for x in [company, title, period, domain] if x]
-                lines.append(f"### {' | '.join(header_parts)}")
-                for proj in job.get("projects", []):
-                    lines.append(f"#### {proj.get('name', '')}")
-                    ctx = proj.get("context", "")
-                    if ctx:
-                        lines.append(f"Context: {ctx}")
-                    for r in proj.get("results", []):
-                        lines.append(f"- {r}")
-                lines.append("")
-        elif data.achievements or data.key_cases:
-            # Legacy fallback: flat achievements + key_cases from old wizard/parser
-            lines.append("# (legacy format — re-run wizard or edit directly to add structured work history)")
-            for a in data.achievements:
-                lines.append(f"- {a}")
-            if data.key_cases:
-                lines.append("")
-                for c in data.key_cases:
-                    lines.append(f"- {c}")
+        if work_cases:
+            for case in work_cases:
+                lines += self._render_case(case, data.target_market, include_zone=True)
         else:
             lines.append("# EMPTY — add work history via wizard or edit candidate.md directly")
 
-        # ── Side Projects ─────────────────────────────────────────────────────
-        lines += ["## Side Projects"]
-        if data.side_projects:
-            for sp in data.side_projects:
-                lines.append(f"### {sp.get('name', '')}")
-                ctx = sp.get("context", "")
-                if ctx:
-                    lines.append(f"Context: {ctx}")
-                for r in sp.get("results", []):
-                    lines.append(f"- {r}")
-                lines.append("")
+        if edu_cases:
+            lines += ["", "## Education"]
+            for case in edu_cases:
+                lines += self._render_case(case, data.target_market, include_zone=False)
+
+        lines += ["", "## Projects & Credentials"]
+        if project_cases:
+            for case in project_cases:
+                lines += self._render_case(case, data.target_market, include_zone=False)
         else:
-            lines.append("# EMPTY — add personal/side projects (pet projects, open source, etc.)")
+            lines.append("# SKIPPABLE — add personal/side projects, certifications, publications")
 
-        # ── Tools & Languages ─────────────────────────────────────────────────
-        lines += ["", "## Tools & Languages"]
-        if data.tools:
-            lines.append(f"tools: {', '.join(data.tools)}")
+        # ── Tools ─────────────────────────────────────────────────────────
+        lines += ["", "## Tools"]
+        lines.append(", ".join(data.tools) if data.tools else "# HINT: add tools you use (Jira, Figma, SQL, etc.)")
+
+        # ── Languages ─────────────────────────────────────────────────────
+        lines += ["", "## Languages"]
+        if data.languages:
+            for lang in data.languages:
+                note = f" ({lang['note']})" if lang.get("note") else ""
+                lines.append(f"{lang.get('lang', '')}: {lang.get('level', '')}{note}")
         else:
-            lines.append("tools:  # HINT: add tools you use (Jira, Figma, SQL, etc.)")
-        for lang, level in (data.languages or {}).items():
-            lines.append(f"{lang}: {level}")
+            lines.append("# HINT: add language proficiency (e.g. english: B2, russian: native)")
 
-        # ── Contacts & Personal ───────────────────────────────────────────────
-        lines += ["", "## Contacts & Personal"]
-        contacts = data.contacts or {}
-        personal = data.personal or {}
-
-        if personal.get("age"):
-            lines.append(f"age: {personal['age']}")
-        if personal.get("location"):
-            lines.append(f"location: {personal['location']}")
-        if personal.get("relocation"):
-            lines.append(f"relocation: {personal['relocation']}")
-        for key in ("linkedin", "github", "telegram", "email", "phone"):
-            val = contacts.get(key)
-            if val:
-                lines.append(f"{key}: {val}")
-
-        has_contacts = any(contacts.get(k) for k in ("linkedin", "github", "telegram", "email", "phone"))
-        has_personal = any(personal.get(k) for k in ("age", "location", "relocation"))
-        if not has_contacts and not has_personal:
-            lines.append("# HINT: add LinkedIn, GitHub, Telegram — used to answer HR form questions")
-
-        # ── Completeness hints ────────────────────────────────────────────────
+        # ── Additional ────────────────────────────────────────────────────
+        lines += ["", "## Additional"]
+        added_any = False
+        if data.interests:
+            lines.append(f"interests: {', '.join(data.interests)}")
+            added_any = True
         if data.hints:
-            lines += ["", "## Completeness Hints"]
-            for hint in data.hints:
-                lines.append(f"# - {hint}")
+            lines.append("hints (low-confidence — verify before relying on):")
+            lines += [f"- {h}" for h in data.hints]
+            added_any = True
+        if not added_any:
+            lines.append("# — empty")
 
         return "\n".join(lines)
+
+    def _render_case(self, case: dict, target_market: str, include_zone: bool) -> list:
+        header_parts = [x for x in [case.get("company"), case.get("role"),
+                                     case.get("period"), case.get("domain")] if x]
+        lines = ["", f"### {' | '.join(header_parts) if header_parts else 'MISSING — company/role/period'}"]
+
+        highlights = case.get("highlights") or []
+        responsibilities = case.get("responsibilities") or []
+
+        ctx = case.get("context")
+        if ctx and not highlights and not responsibilities:
+            # Bare context-only case (e.g. an earlier role at the same company, no metrics)
+            lines.append(f"Context: {ctx}")
+
+        if include_zone and target_market != "western" and target_market != "global" and responsibilities:
+            lines += ["", "#### Zone of Responsibility"]
+            lines += [f"- {r}" for r in responsibilities]
+
+        for h in highlights:
+            label, h_ctx, results = h.get("label"), h.get("context"), (h.get("results") or [])
+            if label:
+                lines += ["", f"#### {label}"]
+            if h_ctx:
+                lines.append(f"Context: {h_ctx}")
+            lines += [f"- {r}" for r in results]
+
+        return lines
+
+    def _shorten_for_token_guard(self, data: ResumeData) -> ResumeData:
+        import copy
+        trimmed = copy.deepcopy(data)
+        for case in trimmed.cases:
+            for h in (case.get("highlights") or []):
+                ctx = h.get("context")
+                if ctx and ". " in ctx:
+                    h["context"] = ctx.split(". ")[0].strip().rstrip(".") + "."
+            if case.get("responsibilities"):
+                case["responsibilities"] = case["responsibilities"][:3]
+        return trimmed
 
     # ── Extraction methods ────────────────────────────────────────────────────
 
@@ -297,58 +358,65 @@ class ResumeParser:
             "Extract structured information from this CV/resume.\n\n"
             "Return ONLY valid JSON, no markdown, no wrapper:\n"
             "{\n"
-            '  "name": "Full name or null",\n'
-            '  "role": "Current/target job title or null",\n'
-            '  "experience_years": integer or null,\n'
-            '  "current_company": "Company name or null",\n'
-            '  "domain": "Industry/domain (e.g. fintech, e-commerce) or null",\n'
-            '  "skills": ["skill1", "skill2"],\n'
-            '  "jobs": [\n'
+            '  "target_market": "cis | western | global",\n'
+            '  "locale": "ru | en",\n'
+            '  "identity": {\n'
+            '    "name": "Full name or null",\n'
+            '    "role": "Current/target job title, combined with specialization if the CV states one '
+            '(e.g. \'Product Manager, fintech\') or null",\n'
+            '    "location": "City or null",\n'
+            '    "contacts": ["raw contact strings — URLs, @handles, emails, phone numbers, exactly as found"]\n'
+            '  },\n'
+            '  "pitch": "1-2 sentence narrative summary/elevator pitch, only if the CV has one, else null",\n'
+            '  "cases": [\n'
             '    {\n'
-            '      "company": "Company name",\n'
-            '      "title": "Job title",\n'
+            '      "type": "employment | education | project | certification | publication | volunteering | research",\n'
+            '      "company": "Company / institution / project name",\n'
+            '      "role": "Job title / degree / project role",\n'
             '      "period": "2022–2024",\n'
-            '      "domain": "industry domain",\n'
-            '      "projects": [\n'
-            '        {\n'
-            '          "name": "Exact product/project name verbatim from CV",\n'
-            '          "context": "What it was, who used it, the business problem solved (1-2 sentences)",\n'
-            '          "results": ["quantified metric tied directly to this project"]\n'
-            '        }\n'
+            '      "domain": "industry domain — employment cases only",\n'
+            '      "context": "1-2 sentences, used only when there is no highlight/responsibility to attach it to",\n'
+            '      "url": "URL if present, else null",\n'
+            '      "responsibilities": ["ongoing duty bullets with no single crisp metric"],\n'
+            '      "highlights": [\n'
+            '        {"label": "project/initiative name or null", "context": "1-2 sentences", '
+            '"results": ["quantified metric tied to this highlight"]}\n'
             '      ]\n'
             '    }\n'
             '  ],\n'
-            '  "side_projects": [\n'
-            '    {\n'
-            '      "name": "Project name",\n'
-            '      "context": "What it does, tech stack if relevant",\n'
-            '      "results": ["outcome or current status"]\n'
-            '    }\n'
-            '  ],\n'
-            '  "contacts": {\n'
-            '    "linkedin": "URL or null",\n'
-            '    "github": "URL or null",\n'
-            '    "telegram": "@handle or null",\n'
-            '    "email": "email or null",\n'
-            '    "phone": "phone or null"\n'
-            '  },\n'
-            '  "personal": {\n'
-            '    "age": integer or null,\n'
-            '    "location": "city or null",\n'
-            '    "relocation": "yes/no/open or null"\n'
-            '  },\n'
+            '  "skills": ["skill1", "skill2"],\n'
             '  "tools": ["tool1", "tool2"],\n'
-            '  "languages": {"english": "B2", "russian": "native"},\n'
+            '  "languages": [{"lang": "english", "level": "B2", "note": null}],\n'
+            '  "interests": ["interest1"],\n'
+            '  "hints": ["content that does not clearly fit one bucket above — low-confidence, do not force a classification"],\n'
             '  "suggested_queries": ["product manager b2b", "руководитель продукта"]\n'
             "}\n\n"
             "Rules:\n"
-            "- jobs[].projects[].name: preserve the exact product/project name verbatim from the CV\n"
-            "- jobs[].projects[].context: explain what the product is in 1-2 sentences — include domain, audience, key technical/business context\n"
-            "- jobs[].projects[].results: ONLY quantified results directly tied to THIS specific project (not global career stats)\n"
+            "A — Multi-role: if the candidate held multiple positions at the same company, create a "
+            "separate case entry per role, each with its own role/period/highlights. Do not merge roles "
+            "into one entry.\n"
+            "B — Bullet split: if a bullet has a project/initiative name followed by metrics, put the "
+            "name in highlights[].label and the metrics as separate strings in highlights[].results. "
+            "Do not put the project name inside results.\n"
+            "C — Education: type='education', company=institution name, role=degree/program, "
+            "period=years. Short courses/certifications → type='certification'.\n"
+            "D — Responsibilities vs highlights: explicit responsibility/duty bullets with no single "
+            "crisp metric → responsibilities[]. Bullets with a concrete before/after metric → "
+            "highlights[]. An achievement cluster with several unrelated points and no one metric also "
+            "belongs in responsibilities[] — do not force it into a highlights[] entry with empty results[]. "
+            "Western CVs typically have no responsibilities section — leave responsibilities: [].\n"
+            "E — Target schema, not source format: always map content into the JSON shape above "
+            "regardless of the source CV's own structure, heading levels, or language. Never mirror "
+            "the source document's header depth or section order.\n"
+            "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
+            "it in hints[] instead.\n"
             "- skills: professional skills only — NO metrics (AOV, CAC, TTR are metrics, not skills)\n"
             "- If a field is absent in the CV, use null or empty array/object\n"
             "- Do NOT invent or assume anything not explicitly present\n"
-            "- suggested_queries: 2-3 Russian-language HH.ru search queries matching this candidate's role; use terms job seekers actually type on hh.ru"
+            "- target_market: default to 'cis' unless the CV's structure/content clearly indicates a "
+            "western or global job search context\n"
+            "- suggested_queries: 2-3 Russian-language HH.ru search queries matching this candidate's "
+            "role; use terms job seekers actually type on hh.ru"
         )
 
     def _parse_json_response(self, raw: str, source_file: str) -> ResumeData:
@@ -368,25 +436,22 @@ class ResumeParser:
                     pass
 
         data = ResumeData(
-            name=parsed.get("name"),
-            role=parsed.get("role"),
-            experience_years=parsed.get("experience_years"),
-            current_company=parsed.get("current_company"),
-            domain=parsed.get("domain"),
+            target_market=parsed.get("target_market") or "cis",
+            locale=parsed.get("locale") or "",
+            identity=parsed.get("identity") or {},
+            pitch=parsed.get("pitch"),
+            cases=parsed.get("cases") or [],
             skills=parsed.get("skills") or [],
-            achievements=parsed.get("achievements") or [],
-            key_cases=parsed.get("key_cases") or [],
             tools=parsed.get("tools") or [],
-            languages=parsed.get("languages") or {},
-            jobs=parsed.get("jobs") or [],
-            side_projects=parsed.get("side_projects") or [],
-            contacts=parsed.get("contacts") or {},
-            personal=parsed.get("personal") or {},
+            languages=parsed.get("languages") or [],
+            interests=parsed.get("interests") or [],
+            hints=parsed.get("hints") or [],
             suggested_queries=parsed.get("suggested_queries") or [],
-            # career self-profile fields: not extracted from CV, filled by wizard
-            role_type="",
-            professional_edge="",
-            not_looking_for=[],
+            # wizard-filled only — never parsed from the CV
+            career_profile={},
+            logistics={},
+            search={},
+            rules={},
             source_file=source_file,
             parsed_at=datetime.now().isoformat(),
         )
@@ -396,38 +461,37 @@ class ResumeParser:
 
     def _finalize(self, data: ResumeData) -> ResumeData:
         data.completeness = self._completeness_score(data)
-        data.hints = self._build_hints(data)
+        # Preserve LLM-populated hints[] (Rule F, content-level) and append
+        # completeness-driven structural hints — do not overwrite either.
+        data.hints = list(data.hints or []) + self._build_hints(data)
         return data
 
     def _completeness_score(self, data: ResumeData) -> float:
-        tier1 = [data.name, data.role, data.experience_years, data.current_company, data.domain]
-        t1 = sum(1 for f in tier1 if f is not None) / len(tier1) * 0.35
+        identity = data.identity or {}
+        tier1 = [identity.get("name"), identity.get("role"), identity.get("location")]
+        t1 = sum(1 for f in tier1 if f) / len(tier1) * 0.35
 
-        has_work_history = bool(data.jobs) or bool(data.achievements)
-        has_projects = (
-            bool(data.key_cases)
-            or any(proj for job in data.jobs for proj in job.get("projects", []))
-            or bool(data.side_projects)
-        )
-        tier2 = [len(data.skills) >= 3, has_work_history, has_projects]
+        has_cases = bool(data.cases)
+        has_evidence = any((c.get("highlights") or c.get("responsibilities")) for c in data.cases)
+        tier2 = [len(data.skills) >= 3, has_cases, has_evidence]
         t2 = sum(tier2) / len(tier2) * 0.40
 
-        has_contact = any((data.contacts or {}).get(k) for k in ("linkedin", "github", "telegram", "email"))
+        has_contact = bool(identity.get("contacts"))
         tier3 = [len(data.tools) >= 1, bool(data.languages), has_contact]
         t3 = sum(tier3) / len(tier3) * 0.25
 
         return round(t1 + t2 + t3, 2)
 
     def _build_hints(self, data: ResumeData) -> list:
+        identity = data.identity or {}
         hints = []
-        if not data.name:            hints.append("Add your full name")
-        if not data.role:            hints.append("Add your target job title")
-        if not data.current_company: hints.append("Add your current company name")
-        if not data.domain:          hints.append("Add your industry/domain (e.g. fintech, e-commerce)")
+        if not identity.get("name"):     hints.append("Add your full name")
+        if not identity.get("role"):     hints.append("Add your target job title")
+        if not identity.get("location"): hints.append("Add your city/location")
         if len(data.skills) < 3:
             hints.append("Add at least 3 professional skills")
-        if not data.jobs and not data.achievements:
+        if not data.cases:
             hints.append("Add work history — run wizard or edit candidate.md directly")
-        if not any((data.contacts or {}).get(k) for k in ("linkedin", "github", "telegram")):
+        if not identity.get("contacts"):
             hints.append("Add LinkedIn/GitHub/Telegram — helps LLM answer HR form contact questions")
         return hints
