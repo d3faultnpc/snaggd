@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -86,70 +87,67 @@ def _llm_client():
 # ── Block A helpers ───────────────────────────────────────────────────────────
 
 def _post_parse_enrich(data: ResumeData) -> ResumeData:
-    """After LLM parse: fill missing personal/contact data and career self-profile.
+    """After LLM parse: fill missing identity/contact data and career self-profile.
 
-    Personal/contacts block: runs only when something is missing.
+    Identity/contacts block: runs only when something is missing.
     Career self-profile block: always runs — not extractable from CV, used by
     match scoring (role type penalty) and cover generation (context hint).
     """
-    contacts = dict(data.contacts or {})
-    personal = dict(data.personal or {})
+    identity = dict(data.identity or {})
+    contacts = list(identity.get("contacts") or [])
 
-    missing_personal = not data.name or not personal.get("age") or not personal.get("location")
-    missing_contacts = not any(contacts.get(k) for k in ("linkedin", "github", "telegram", "email"))
+    missing_identity = not identity.get("name") or not identity.get("location")
+    missing_contacts = not contacts
 
-    if missing_personal or missing_contacts:
+    if missing_identity or missing_contacts:
         print("\n📋 A few personal details are missing — answer what you know (Enter to skip):")
 
-        if not data.name:
+        if not identity.get("name"):
             val = ask("Full name")
             if val:
-                data.name = val
+                identity["name"] = val
 
-        if not personal.get("age"):
-            val = ask("Age")
-            if val:
-                try:
-                    personal["age"] = int(val)
-                except ValueError:
-                    pass
-
-        if not personal.get("location"):
+        if not identity.get("location"):
             val = ask("City / location")
             if val:
-                personal["location"] = val
+                identity["location"] = val
 
         if missing_contacts:
             print("\n🔗 Contact links (used to answer HR form questions like 'share your LinkedIn'):")
-            for key, label in [
-                ("linkedin", "LinkedIn URL"),
-                ("github",   "GitHub URL"),
-                ("telegram", "Telegram @handle"),
-                ("email",    "Email"),
-            ]:
+            for label in ["LinkedIn URL", "GitHub URL", "Telegram @handle", "Email"]:
                 val = ask(f"  {label}")
                 if val:
-                    contacts[key] = val
+                    contacts.append(val)
+            identity["contacts"] = contacts
 
-        data.personal = personal
-        data.contacts = contacts
+        data.identity = identity
 
     # Career self-profile — always ask, not extracted from CV.
     # role_type shapes the role-mismatch penalty in scoring.
-    # edge + not_looking_for give the cover model a precise angle to write from.
+    # edge + rules.penalize give the cover model a precise angle to write from.
     print("\n🎯 Career self-profile (shapes scoring and cover letter angle — press Enter to skip):")
-    role_choices = ["builder", "operator", "strategic", "ops", "head"]
-    role_val = ask(f"Role type ({'/'.join(role_choices)})", "builder")
-    if role_val in role_choices:
-        data.role_type = role_val
+    career_profile = dict(data.career_profile or {})
+    # Free text, not a closed picklist — these are PM-specific examples, not universal categories
+    # (the beta list includes barista/driver/warehouse roles this vocabulary doesn't fit).
+    role_examples = ["builder", "operator", "strategic", "ops", "head"]
+    role_val = ask(f"Role type (examples: {'/'.join(role_examples)}, or your own)")
+    if role_val:
+        career_profile["role_type"] = role_val
 
-    edge_val = ask("Your edge vs other PMs in 1 sentence")
+    edge_val = ask("Your edge vs other candidates in 1 sentence")
     if edge_val:
-        data.professional_edge = edge_val
+        career_profile["edge"] = edge_val
 
-    not_for = ask_list("NOT looking for (e.g. process_management, pmm, outsource)")
-    if not_for:
-        data.not_looking_for = not_for
+    aspiration_val = ask("Direction you want to move toward (optional — even if your work history doesn't show it yet)")
+    if aspiration_val:
+        career_profile["aspiration"] = aspiration_val
+    data.career_profile = career_profile
+
+    rules = dict(data.rules or {})
+    penalize = ask_list("NOT looking for (e.g. process_management, pmm, outsource)")
+    if penalize:
+        rules["penalize"] = penalize
+    data.rules = rules
 
     return data
 
@@ -175,11 +173,28 @@ def _patch_filters_json(data_dir: Path, *, stop_companies=None, min_employer_rat
 
 
 def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
-    """Append or replace §Desired Salary section in candidate.md."""
-    path = data_dir / "candidate.md"
-    if not path.exists():
+    """Set search.salary and re-render via to_md() (schema-aware path), or fall back to
+    raw text patching on candidate.md for profiles that predate candidate.json."""
+    json_path = data_dir / "candidate.json"
+    md_path = data_dir / "candidate.md"
+
+    if json_path.exists():
+        try:
+            raw = json.loads(json_path.read_text(encoding="utf-8"))
+            raw.setdefault("search", {})["salary"] = salary_text
+            data = ResumeData(**raw)  # validate BEFORE writing anything to disk
+            existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+            rendered_md = ResumeParser(None).to_md(data, existing_content=existing)
+            json_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            md_path.write_text(rendered_md, encoding="utf-8")
+            return
+        except Exception as e:
+            print(f"⚠  candidate.json update failed ({e}) — falling back to text patch on candidate.md")
+
+    # Legacy fallback: no candidate.json yet — raw text patch on candidate.md's Desired Salary section
+    if not md_path.exists():
         return
-    content = path.read_text(encoding="utf-8")
+    content = md_path.read_text(encoding="utf-8")
     marker = "## Desired Salary"
     new_section = f"\n{marker}\n{salary_text}\n"
     if marker in content:
@@ -193,7 +208,7 @@ def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
             if not skip:
                 lines.append(line)
         content = "\n".join(lines)
-    path.write_text(content.rstrip("\n") + new_section, encoding="utf-8")
+    md_path.write_text(content.rstrip("\n") + new_section, encoding="utf-8")
 
 
 # ── Block A: Resume → candidate.md ────────────────────────────────────────────
@@ -232,34 +247,34 @@ def block_a(resume_path: Path | None = None) -> bool:
 
     if data is None:
         print("\nManual entry — answer what you know, press Enter to skip.")
-        def _parse_years(val: str):
-            try:
-                return int(val) or None
-            except ValueError:
-                return None
+        print("(Full per-case history entry lives in the wizard step redesign — for now, add")
+        print(" your work history/cases directly in candidate.md after this step if needed.)")
 
         data = ResumeParser(None).from_wizard({
-            "name":             ask("Full name"),
-            "role":             ask("Target job title"),
-            "experience_years": _parse_years(ask("Years of experience", "0")),
-            "current_company":  ask("Current company"),
-            "domain":           ask("Industry / domain (e.g. fintech, e-commerce)"),
-            "skills":           ask_list("Professional skills"),
-            "achievements":     ask_list("Quantified achievements (verb + metric + context)"),
-            "key_cases":        ask_list("Key projects / products"),
-            "tools":            ask_list("Tools (Jira, Figma, SQL, ...)"),
-            "languages":        {},
+            "name":     ask("Full name"),
+            "role":     ask("Target job title"),
+            "location": ask("City / location"),
+            "skills":   ask_list("Professional skills"),
+            "tools":    ask_list("Tools (Jira, Figma, SQL, ...)"),
         })
 
     # Suggest a profile name from the parsed role when running without --profile
-    if not _pre_args.profile and data.role:
-        suggested_name = data.role.lower().replace(" ", "_")[:20]
+    parsed_role = (data.identity or {}).get("role")
+    if not _pre_args.profile and parsed_role:
+        suggested_name = parsed_role.lower().replace(" ", "_")[:20]
         print(f"\n💡 Profile tip: next time run with --profile {suggested_name}")
         print(f"   This saves data to data/profiles/{suggested_name}/ keeping profiles isolated.")
 
-    out = CONFIG.data_dir / "candidate.md"
-    out.write_text(ResumeParser(None).to_md(data), encoding="utf-8")
-    print(f"\n✓  Saved → {out}")
+    md_out = CONFIG.data_dir / "candidate.md"
+    existing = md_out.read_text(encoding="utf-8") if md_out.exists() else ""
+    md_out.write_text(ResumeParser(None).to_md(data, existing_content=existing), encoding="utf-8")
+    print(f"\n✓  Saved → {md_out}")
+
+    json_out = CONFIG.data_dir / "candidate.json"
+    payload = dataclasses.asdict(data)
+    payload.pop("suggested_queries", None)  # parser convenience field, not part of the schema
+    json_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"✓  Saved → {json_out}")
 
     if data.suggested_queries:
         sq_out = CONFIG.data_dir / "suggested_queries.txt"
@@ -404,7 +419,7 @@ def block_b(append: bool = False) -> bool:
     # Desired salary — free-form, written to candidate.md for LLM context
     print("\n💰 Desired salary — used when the agent fills salary fields on application forms.")
     print("   Tip: wider range gives the model more freedom to match market rates.")
-    print("   Examples: 'от 220 000 руб.' · 'default 220 000, fintech 250 000' · '200 000–350 000'")
+    print("   Examples: 'от 150 000 руб.' · 'default 150 000, tech 200 000' · '120 000–250 000'")
     salary_hint = ask("Salary expectations (free form, Enter to skip)")
 
     # Save preferences (used by LLM for vacancy scoring)
