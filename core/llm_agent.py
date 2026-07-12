@@ -16,6 +16,24 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 _MAX_VACANCY_CHARS = CONFIG.llm_max_input_chars
 
+# match_scoring.md's own JSON-example placeholder text. Seen live 2026-07-12: on an
+# ambiguous/long vacancy description, the model returned this verbatim instead of real
+# analysis. Used by _sanitize_score_result() to detect and contain template-echo responses.
+_SCORE_PLACEHOLDER_TEXT = {
+    "matched_skills": "skill present in both profile and vacancy",
+    "gaps": "requirement in vacancy missing from profile",
+    "signals": "3–5 short tags characterizing this vacancy's domain, context, and product type",
+    "vacancy_role_type": "contribution style of this vacancy (use the same vocabulary as the candidate's role_type when possible)",
+}
+
+# match_scoring.md's CURRENT JSON example uses <REAL_SKILL_1>-style bracket tokens instead of
+# the sentence placeholders above. Shape-based, not tied to specific wording — catches an
+# unfilled placeholder regardless of how the prompt's example text is phrased. Unanchored
+# (search, not match on the whole string): the current example has 2 tokens per list field
+# (<REAL_SKILL_1>, <REAL_SKILL_2>), so a partial fill could leave one token embedded inside
+# an otherwise-real string rather than being the entire field value.
+_PLACEHOLDER_TOKEN_RE = re.compile(r"<[A-Z0-9_]+>")
+
 try:
     from json_repair import repair_json as _repair_json
     _HAS_JSON_REPAIR = True
@@ -227,8 +245,15 @@ class LLMAgent:
 
         signals/matched_skills/gaps must be list[str]; stop_match must be str or None.
         score is clamped to [0, 100] — LLM modifier arithmetic can exceed the stated range.
+        Template-echo (model returns match_scoring.md's own placeholder text instead of real
+        analysis) makes the whole response untrusted, not just the affected field — a model
+        confused enough to echo one field's schema isn't a reliable source for the rest either.
         Passes through unchanged when LLM output is well-formed.
         """
+        if self._is_template_echo(result):
+            return {"score": 50, "matched_skills": [], "gaps": [], "signals": [],
+                    "stop_match": None, "vacancy_role_type": None}
+
         score = result.get("score", 50)
         if not isinstance(score, int):
             try:
@@ -246,6 +271,24 @@ class LLMAgent:
         if sm is not None and not isinstance(sm, str):
             result["stop_match"] = None
         return result
+
+    def _is_template_echo(self, result: dict) -> bool:
+        """True if any field is match_scoring.md's own JSON-example placeholder — either the
+        old-style literal sentence or an unfilled <TOKEN> from the current bracket-style
+        example — instead of real content. The <TOKEN> check is shape-based (not tied to
+        today's exact wording) so it stays valid if the prompt's placeholder text changes
+        again later without this guard being updated in lockstep.
+        """
+        def _is_placeholder(val) -> bool:
+            return isinstance(val, str) and bool(_PLACEHOLDER_TOKEN_RE.search(val))
+
+        for key, placeholder in _SCORE_PLACEHOLDER_TEXT.items():
+            val = result.get(key)
+            if val == placeholder or _is_placeholder(val):
+                return True
+            if isinstance(val, list) and (placeholder in val or any(_is_placeholder(v) for v in val)):
+                return True
+        return False
 
     def _parse_json(self, raw: str, fallback: dict) -> dict:
         raw = raw.strip()

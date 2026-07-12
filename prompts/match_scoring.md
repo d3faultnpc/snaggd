@@ -13,16 +13,21 @@ Also check if the vacancy belongs to any blocked category listed under
 If a match is found, set stop_match to the matched category name.
 If the stop_categories list is absent or no match is found, set stop_match to null.
 
-Return ONLY valid JSON, no markdown fences:
+Return ONLY valid JSON, no markdown fences. The block below is the SHAPE of your answer only —
+every `<PLACEHOLDER>` must be replaced with your real analysis; never copy a placeholder verbatim:
 {
-  "score": <integer 0–100>,
-  "matched_skills": ["skill present in both profile and vacancy"],
-  "gaps": ["requirement in vacancy missing from profile"],
-  "signals": ["3–5 short tags characterizing this vacancy's domain, context, and product type"],
+  "score": <INTEGER_0_TO_100>,
+  "matched_skills": ["<REAL_SKILL_1>", "<REAL_SKILL_2>"],
+  "gaps": ["<REAL_GAP_1>", "<REAL_GAP_2>"],
+  "signals": ["<REAL_TAG_1>", "<REAL_TAG_2>", "<REAL_TAG_3>"],
   "stop_match": null,
-  "vacancy_role_type": "contribution style of this vacancy (use the same vocabulary as the candidate's role_type when possible)",
+  "vacancy_role_type": "<REAL_CONTRIBUTION_STYLE>",
   "role_type_match": true
 }
+Field meanings: matched_skills = skills present in both profile and vacancy. gaps = requirements
+in the vacancy missing from the profile. signals = 3–5 short tags characterizing this vacancy's
+domain, context, and product type. vacancy_role_type = this vacancy's contribution style, using
+the candidate's role_type vocabulary where possible.
 
 Scoring guide:
 - 80–100: strong match — most key requirements met AND domain aligns with candidate's background
