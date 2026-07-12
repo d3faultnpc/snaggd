@@ -46,7 +46,6 @@ print()
 parser = ResumeParser(client)
 data = parser.parse_file(resume_file)
 
-print(f"completeness: {data.completeness:.0%}")
 print(f"target_market:{data.target_market}")
 print(f"name:         {data.identity.get('name')}")
 print(f"role:         {data.identity.get('role')}")

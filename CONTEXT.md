@@ -2,7 +2,7 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-07-12 (profile resolution law — no flat/legacy DATA_DIR fallback, session 43). Keep updated after major architecture changes.
+> Updated: 2026-07-12 (wizard rewritten to 7-step candidate.json model + migrate_candidate.py + OTA schema check, session 44 — uncommitted, see MEMORY.md branch state). Keep updated after major architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
@@ -161,7 +161,7 @@ per vacancy loop:
   ├─ [if SALARY_FORM or UNKNOWN] → log 'skipped_*', done
   │
   ├─ handler = FormHandlers.get_handler(form_type)
-  ├─ result = handler.process(page, cover_letter, hr_matcher, vacancy_text=vacancy_text)
+  ├─ result = handler.process(page, cover_letter, vacancy_text=vacancy_text, **kwargs)
   └─ Logger.log_result() → <DATA_DIR>/applied_log.json
 ```
 
@@ -184,8 +184,7 @@ class SiteAdapter(ABC):
     def start(self) -> bool         # launch browser / initialize session
     def close(self) -> None
     def get_vacancies(self) -> list # [(url, title, index), ...]
-    def process_vacancy(url, title, index, llm_cover, hr_matcher,
-                        debug, session_dir, dry_run) -> dict
+    def process_vacancy(url, title, index, llm_cover, **kwargs) -> dict
 ```
 
 Current: `adapters/hh/` — Playwright + cookie injection.
@@ -293,11 +292,27 @@ Two separate caches in `DATA_DIR`:
 **Output:** `<DATA_DIR>/candidate.md` (rendered text, system prompt, wrapped in
   `<!-- snaggd:start/end -->` managed-block markers — content after the end marker is a user's own
   free-text and survives re-renders) + `<DATA_DIR>/candidate.json` (structured source of truth,
-  written by wizard.py Block A; `ResumeData` mirrors this shape 1:1 via `dataclasses.asdict()`).
+  written by wizard Step 1; `ResumeData` mirrors this shape 1:1 via `dataclasses.asdict()`).
   Schema rewritten session 42 (2026-07-11): nested `identity/career_profile/logistics/search/
   rules/cases[]` shape, replaces old flat fields (`jobs`/`side_projects`/`contacts: dict`/etc).
+  Rendering fixes session 44 (2026-07-12): `case["url"]` now actually renders (was extracted but
+  silently dropped); bare domains (`github.com/x`) get `https://` prepended via `_ensure_https()`
+  so they auto-link in standard MD viewers; the `# completeness: X% | source: Y | updated: Z`
+  header line was removed entirely — pure metadata already in `candidate.json`'s own fields,
+  no prompt uses it, cost tokens for zero function.
 **Prompt:** inline in `_extraction_prompt()` — no `prompts/resume_parser.md` file.
 **Smoke test:** `python scripts/sanity_parser.py`
+
+**Legacy migration (`scripts/migrate_candidate.py`, session 44):** one-time converter for
+profiles whose `candidate.md` predates this schema. Two independent reads that must stay
+independent (see the script's own docstring): LLM facts-extraction (same pipeline as Step 1,
+with wizard-owned sections stripped from the input text first) for CV content; deterministic
+`## Header`-parsing for wizard-authored preference sections (`career_profile`/`logistics`/
+`search.salary`/`rules.penalize` — never resume-derived, even in the old format). Not every
+legacy profile has both halves — some old `candidate.md` files are closer to a raw resume than
+wizard output; the script detects and says so rather than guessing. Safe by default: writes to
+`candidate.migrated.{json,md}` only, never the live files; `--apply` + an explicit `y` at a
+confirmation prompt (if the live file already exists) required to promote.
 
 > For full ResumeData schema and edge cases: `memory/domain/resume_parser.md` (updated session 42)
 > Full schema spec + rationale: `.claude/working-notes/tz-pre-app-wizard-sprint.md`
@@ -307,26 +322,54 @@ Two separate caches in `DATA_DIR`:
 ## 8. Onboarding Wizard
 
 **File:** `onboarding/wizard.py`
-**Run:** `python onboarding/wizard.py --profile <name>` (full) or add `--block a/b/c/d` (single block)
+**Run:** `python onboarding/wizard.py --profile <name>` (full onboarding, steps 1-7 in order) or
+`--step N` (single step, 1-7) or `--setup-keys` (`.env` only, profile-agnostic)
 
-| Block | What it does | Output |
-|-------|-------------|--------|
-| A | Parse resume (PDF/DOCX/image) → ResumeData; asks `career_profile.aspiration` ("direction you want to move toward") alongside existing `role_type`/`edge` | `data/profiles/<name>/candidate.md` + `candidate.json` |
-| B | Job preferences: role, city, schedule, salary | `data/profiles/<name>/job_preferences.md` + `search_urls.txt` |
-| C | Tone of voice for cover letters | `data/profiles/<name>/tone_of_voice.md` |
-| D | LLM API key, model, headless mode, limits | `.env` patches |
+Rewritten session 44 (2026-07-12) from a 4-block CLI model (Block A/B/C/D) to a 7-step,
+`candidate.json`-first model. The old blocks are gone from the CLI surface entirely — a clean
+cut, not a compat shim: `block_a`/its helpers were deleted outright once steps 1-6 replaced
+them; `block_b`/`block_c`/`block_d` survive only as internal helpers steps 5/6 and `--setup-keys`
+still call, no longer independently reachable from the CLI.
 
-**Profile resolution:** same law as `main.py` (§3, `profiles.py`).
-`--block a/b/c` without `--profile` auto-selects if exactly one profile exists, else errors and
-lists the options — you're editing an *existing* profile, so ambiguity must not resolve silently.
-Full onboarding (no `--block`) without `--profile` prompts once for a new profile name up front —
-it's a create operation, so there's nothing to select among. `--block d` needs no profile at all
-(patches the global `.env`).
+| Step | What it does | Writes |
+|------|--------------|--------|
+| 1. Resume | LLM parse only, no Q&A (that's steps 2/5/6) — cases/skills/tools/languages/interests/hints/target_market/locale/identity/pitch, always freshly overwritten on re-run | `candidate.md` + `candidate.json` |
+| 2. Identity | Review/edit `identity.*` + `pitch` — shows current values as defaults, Enter keeps them | `candidate.json` |
+| 3. History | Review/edit employment + education cases — edit existing by number or `new` to add | `candidate.json` |
+| 4. Projects | Same case-review UI as Step 3, filtered to `project`/`certification`/`publication`/`volunteering`/`research` types — the split mirrors `resume_parser.py`'s own render-time bucketing exactly (`_PROJECT_TYPES`), so wizard-side and render-side classification can't drift apart | `candidate.json` |
+| 5. Skills | `skills[]`/`tools[]`/`languages[]` + `career_profile` (`role_type`/`edge`/`aspiration`), optional tone-of-voice tail | `candidate.json` (+ `tone_of_voice.md` if opted in) |
+| 6. Search & Rules | Wraps the pre-existing job-prefs flow unchanged (stop lists, wise-link auto-detect, search directions, salary) — writes the same real files it always did, then additionally dual-writes `search`/`rules`/`logistics` into `candidate.json` | `job_preferences.md` + `search_urls.txt` + `filters.json` + `candidate.md` (salary patch) + `candidate.json` |
+| 7. HH Connect | Subprocess wrapper around `login.py` (unmodified) — asks for confirmation first, verifies `hh_resumes.json` actually has entries afterward rather than trusting `login.py`'s exit code alone (that code only reflects the cookie-save phase) | `data/hh_cookies.json` + `data/hh_resumes.json` (shared across profiles, not written to the profile dir) |
+
+**Design principles:**
+- Steps 2-7 all require Step 1 to have already produced a `candidate.json` (`_require_candidate()`
+  fails cleanly with a message otherwise, no traceback).
+- `career_profile`/`logistics`/`search`/`rules` are wizard-filled ONLY — Step 1's LLM pass never
+  writes them; re-running Step 1 preserves them verbatim from the existing `candidate.json`.
+- No manual-entry fallback in Step 1 (unlike the old Block A) — Step 1 is LLM-only by design;
+  manual field entry now lives in steps 2-6's own review/edit flow instead.
+- Full onboarding with no flags: `--setup-keys` (was Block D) runs first, then steps 1-7 in
+  order; stops after Step 1 if it didn't produce a `candidate.json` rather than running five
+  steps that would each just report nothing to edit.
+
+**Known open items (not bugs, deliberate follow-ups):**
+- Step 6's `rules.stop` / `rules.min_employer_rating` / `logistics.*` are additive-only —
+  `adapter.py` still reads `filters.json` / `job_preferences.md` directly (§9), not
+  `candidate.json.rules.*`. Wiring that up is unscheduled.
+- `rules.min_match` (per-profile `MIN_SCORE` override) is collected but not read by anything —
+  `MIN_SCORE` is still a global env var at runtime.
+- Step 6's wise-link auto-detect needs `hh_resumes.json`, which Step 7 produces — running the
+  full 1-7 sequence for a brand-new profile means Step 6 won't have auto-detect data yet on
+  a first pass.
 
 **URL Builder (`onboarding/url_builder.py`):**
 Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_field=name` (title only) — pending change to `everywhere` (task #2).
 
-**Critical:** `data/search_urls.txt` must contain `/search/vacancy?text=...` URLs. Never use `from=resumelist` URLs — those are HH's recommendation feed, not search results.
+**Critical:** `data/search_urls.txt` must contain `/search/vacancy?text=...` URLs for
+keyword-based searches. One deliberate exception: the auto-detected wise link
+(`_pick_auto_wise_link()`, Step 6) uses `?resume=<uuid>&from=resumelist` on purpose — that's
+the correct shape for a resume-tied link, not the generic recommendation-feed problem this
+rule exists to prevent.
 
 ---
 
@@ -364,6 +407,19 @@ CONFIG.min_score           → int (default 60)
 **SELECTORS dict** — all Playwright selectors live here, not in handler files.
 **FORM_KEYWORDS dict** — navigation button text patterns for fallback matching.
 
+**OTA schema check (session 44, Task 8):** right after `CONFIG = Config()`, `config.py` calls
+`_check_candidate_schema(CONFIG.data_dir)` once per process start. Advisory only — never
+raises, never exits, never writes. Prints a note if `candidate.json` is missing (but
+`candidate.md` exists — a pre-schema profile, points at the exact `migrate_candidate.py`
+command) or if its `schema_version` doesn't match `CURRENT_SCHEMA_VERSION` ("1.0" today, no
+migration path exists yet since no v2 has ever shipped). Silent for a brand-new profile
+(neither file yet) and for the flat/legacy dir (`--setup-keys`, no active profile — guarded by
+`data_dir.parent.name != "profiles"`). Deliberately does NOT auto-run the migration script —
+`candidate.json` isn't read by the live apply loop yet (system prompt still comes from
+`candidate.md` directly, see §6), so an absent/stale file can't break a running session; auto-
+migrating would mean a silent LLM call + disk write on every startup, which is exactly what
+`migrate_candidate.py`'s own `--apply` gate exists to prevent.
+
 ---
 
 ## 10. Run Modes & CLI Flags
@@ -387,8 +443,11 @@ python main.py --dry-run --debug --max 3
 # Sandbox (isolated data directory, safe for testing)
 DATA_DIR=sandbox/data python main.py --debug --max 1
 
-# Single wizard block
-python onboarding/wizard.py --block b
+# Single wizard step (1-7, see §8)
+python onboarding/wizard.py --profile pm --step 6
+
+# Legacy candidate.md -> candidate.json migration (dry-run by default, see §7/§8)
+python scripts/migrate_candidate.py --profile pm
 ```
 
 ---
@@ -411,15 +470,20 @@ Each profile lives in `data/profiles/<name>/`. Created by `wizard.py --profile <
 
 | File | Created by | Notes |
 |------|-----------|-------|
-| `data/profiles/<name>/candidate.md` | wizard Block A | candidate profile for LLM system prompt |
-| `data/profiles/<name>/job_preferences.md` | wizard Block B | role, city, salary, stop filters |
-| `data/profiles/<name>/search_urls.txt` | wizard Block B | HH search URLs for this profile |
-| `data/profiles/<name>/tone_of_voice.md` | wizard Block C | cover letter tone (optional) |
+| `data/profiles/<name>/candidate.md` | wizard Step 1 | candidate profile for LLM system prompt |
+| `data/profiles/<name>/candidate.json` | wizard Step 1 (+ steps 2-6 edit it) | structured source of truth, session 44. Not yet read by the live apply loop (§9) |
+| `data/profiles/<name>/job_preferences.md` | wizard Step 6 | role, city, salary, stop filters |
+| `data/profiles/<name>/search_urls.txt` | wizard Step 6 | HH search URLs for this profile |
+| `data/profiles/<name>/tone_of_voice.md` | wizard Step 5 (optional tail) | cover letter tone (optional) |
 | `data/profiles/<name>/applied_log.json` | runtime (logger.py) | per-profile application log |
 | `data/profiles/<name>/llm_cache.json` | runtime (llm_cover.py) | MD5 cache per profile |
 | `data/profiles/<name>/cover_cache.json` | runtime (llm_cover.py) | cover letter cache keyed by vacancy_id |
-| `data/hh_cookies.json` | login.py | **shared** across profiles (one HH account) |
-| `data/hh_resumes.json` | login.py (post-login) | [{title, uuid}] for all HH resumes; used by wizard Block B for auto-wise-link |
+| `data/hh_cookies.json` | login.py (via wizard Step 7) | **shared** across profiles (one HH account) |
+| `data/hh_resumes.json` | login.py (via wizard Step 7) | [{title, uuid}] for all HH resumes; used by wizard Step 6 for auto-wise-link |
+
+As of session 44: neither `pm` nor `support` has a real `candidate.json` yet (only `candidate.md`,
+pre-schema format) — migration to the new schema is a deliberate, explicit, user-run action
+(`scripts/migrate_candidate.py`), not automatic. See §7/§8/§9.
 
 Current profiles: `pm`, `support`.
 
@@ -450,6 +514,7 @@ Current profiles: `pm`, `support`.
 | `api.py` | code | no |
 | `tests/test_score_clamp.py` | session 40 | unit tests for score clamping (9 cases, no LLM) |
 | `tests/test_browser_close.py` | session 40 | unit tests for HHBrowser.close() idempotency (3 cases) |
+| `scripts/migrate_candidate.py` | session 44 | legacy `candidate.md` → `candidate.json`; see §7 |
 
 > `data/` is created by wizard. Never committed. One folder per user installation.
 
@@ -476,7 +541,7 @@ Current profiles: `pm`, `support`.
 - DOM only, no LLM, must complete < 1s
 - Returns `FormInfo(form_type, input_count, has_salary_field)`
 
-### BaseHandler.process(page, cover_letter, hr_matcher, **kwargs) → ProcessResult
+### BaseHandler.process(page, cover_letter, **kwargs) → ProcessResult
 - All handlers accept `**kwargs` (including `vacancy_text` for QuestionsHandler)
 - Returns `ProcessResult(success, status, reason, scenario, details)`
 

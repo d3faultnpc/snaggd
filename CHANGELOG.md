@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.4.1] — 2026-07-12 · 7-Step Wizard
+
+### Summary
+The onboarding wizard is rebuilt around `candidate.json` as the single source of truth: a
+7-step flow (`--step 1-7`) replaces the old 4-block CLI, plus a one-time migration path for
+profiles created before this schema existed.
+
+---
+
+### New: 7-step wizard (`onboarding/wizard.py`)
+Replaces the old `--block a/b/c/d` model with `--step 1-7`: resume parse → identity → work
+history → projects → skills & career profile → search & rules → HH connect. Each step reads
+and edits `candidate.json` directly; re-running any step never touches fields owned by another
+step. `--setup-keys` (API key/model/headless/limits) is unchanged, profile-agnostic as before.
+
+### New: legacy profile migration (`scripts/migrate_candidate.py`)
+Converts a profile's pre-schema `candidate.md` into the new `candidate.json` shape — splits
+portable career facts (LLM-extracted, same pass as Step 1) from wizard-only preferences
+(deterministically parsed, never resume-derived). Safe by default: writes to
+`candidate.migrated.{json,md}`, never touches the live profile without `--apply` and an
+explicit confirmation.
+
+### New: startup schema-version check (`config.py`)
+On every run, prints an advisory note if a profile's `candidate.json` is missing or its schema
+is out of date, pointing at the migration command above. Never blocks or fails a run.
+
+### Fix: URL rendering for `mailto:`/`tel:` links (`onboarding/resume_parser.py`)
+Contact fields using a slashless URI scheme (`mailto:`, `tel:`) were incorrectly getting
+`https://` prepended in rendered `candidate.md`. Only bare domains without any scheme get one
+now.
+
+### Fix: reject malformed hand-edited `candidate.json` cleanly
+A `candidate.json` edited by hand with a wrong-shaped field (e.g. `identity` as a string
+instead of an object) used to pass silently and crash later, mid-step, with a raw traceback.
+Now caught up front with a clear message pointing back at Step 1 or a manual fix.
+
+---
+
 ## [0.4.0] — 2026-07-12 · Structured Profiles
 
 ### Summary
