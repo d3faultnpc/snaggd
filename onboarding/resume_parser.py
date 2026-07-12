@@ -94,7 +94,7 @@ class ResumeParser:
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 
-    # Gemini Flash reads PDF and images natively via image_url — same as Health-concierge
+    # Gemini Flash reads PDF and images natively via image_url
     MULTIMODAL_MODEL = os.getenv("RESUME_PARSE_MODEL", "google/gemini-2.0-flash-001")
     TEXT_MODEL       = os.getenv("LLM_MODEL", "anthropic/claude-3-5-haiku")
 

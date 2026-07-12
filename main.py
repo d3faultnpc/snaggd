@@ -3,56 +3,57 @@
 HH Auto — autonomous job application agent.
 
 Usage:
-    python main.py                        # normal run (ACTIVE_SITES=hh by default)
+    python main.py                        # auto-selects the profile if exactly one exists
     python main.py --profile pm           # run with named profile (data/profiles/pm/)
     python main.py --list-profiles        # show all available profiles and exit
     python main.py --debug                # debug: screenshots + HTML at each step
     python main.py --dry-run              # score vacancies, do NOT submit
     python main.py --max 3                # limit to 3 vacancies
     python main.py --url <hh-url>         # one-shot debug on a single vacancy URL
+
+Profile resolution (same rule everywhere — CLI, wizard, API): one profile ->
+auto-selected; zero or several -> --profile <name> is required. See profiles.py.
 """
 
 import argparse
 import os
 import sys
-from pathlib import Path
 
 # ── Pre-parse --profile before any project imports ────────────────────────────
 # DATA_DIR must be set in os.environ before config.py is first imported,
 # because Config reads DATA_DIR at dataclass field evaluation time.
+from profiles import PROFILES_DIR, list_profiles, resolve_profile
+
 _pre = argparse.ArgumentParser(add_help=False)
 _pre.add_argument("--profile", type=str, default=None)
 _pre.add_argument("--list-profiles", action="store_true")
 _pre_args, _ = _pre.parse_known_args()
 
-_BASE = Path(__file__).parent
-_PROFILES_DIR = _BASE / "data" / "profiles"
-
 if _pre_args.list_profiles:
-    if _PROFILES_DIR.exists():
-        profiles = sorted(p.name for p in _PROFILES_DIR.iterdir() if p.is_dir())
-        if profiles:
-            print("Available profiles:")
-            for p in profiles:
-                log = _PROFILES_DIR / p / "applied_log.json"
-                count = 0
-                if log.exists():
-                    import json as _j
-                    try:
-                        entries = _j.loads(log.read_text())
-                        count = sum(1 for e in entries
-                                    if str(e.get("status", "")).startswith("applied"))
-                    except Exception:
-                        pass
-                print(f"  {p:<20} applied: {count}")
-        else:
-            print("No profiles found. Run: python onboarding/wizard.py --profile <name>")
+    profiles = list_profiles()
+    if profiles:
+        print("Available profiles:")
+        for p in profiles:
+            log = PROFILES_DIR / p / "applied_log.json"
+            count = 0
+            if log.exists():
+                import json as _j
+                try:
+                    entries = _j.loads(log.read_text())
+                    count = sum(1 for e in entries
+                                if str(e.get("status", "")).startswith("applied"))
+                except Exception:
+                    pass
+            print(f"  {p:<20} applied: {count}")
     else:
-        print("No profiles directory. Run: python onboarding/wizard.py --profile <name>")
+        print("No profiles found. Run: python onboarding/wizard.py --profile <name>")
     sys.exit(0)
 
-if _pre_args.profile:
-    os.environ["DATA_DIR"] = str(_PROFILES_DIR / _pre_args.profile)
+# No fallback to a flat/legacy data dir: with one profile it's auto-selected,
+# with several a name is required, with none the run stops here. Same rule
+# regardless of how many resumes/profiles this installation has.
+_active_profile = resolve_profile(_pre_args.profile)
+os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
 
 from logger import Logger
 
@@ -73,7 +74,8 @@ def load_active_adapters() -> list:
 def main() -> int:
     parser = argparse.ArgumentParser(description="HH Auto — job application agent")
     parser.add_argument("--profile", type=str, default=None,
-                        help="Named profile from data/profiles/<name>/ (default: data/)")
+                        help="Named profile from data/profiles/<name>/. Omit to auto-select "
+                             "when exactly one profile exists (required if zero or several).")
     parser.add_argument("--list-profiles", action="store_true",
                         help="List available profiles and exit")
     parser.add_argument("--debug",   action="store_true",
@@ -97,9 +99,8 @@ def main() -> int:
         CONFIG.max_vacancies_per_session = 1
 
     print("🦾 HH Auto")
-    if _pre_args.profile:
-        from config import CONFIG as _cfg
-        print(f"👤 Profile: {_pre_args.profile}  ({_cfg.data_dir})")
+    from config import CONFIG as _cfg
+    print(f"👤 Profile: {_active_profile}  ({_cfg.data_dir})")
     if args.url:
         print(f"🔗 URL mode: {args.url} (debug + max 1 implied)")
     if dry_run:

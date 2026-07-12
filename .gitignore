@@ -27,7 +27,8 @@ venv/
 .venv/
 *.egg-info/
 
-# Phase 2 design artifacts — not ready for public repo yet
+# Design artifacts — personal work product, not for public distribution
+# Contains Claude Design session outputs, hi-fi prototypes, design tokens, handoff files.
 design/
 
 # User dropbox — personal insights/files passed to Claude, never committed

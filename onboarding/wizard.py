@@ -1,12 +1,19 @@
 #!/usr/bin/env python3
 """
-Onboarding wizard — run once before first main.py session.
-Produces: data/candidate.md, data/job_preferences.md, data/tone_of_voice.md
+Onboarding wizard — run once per profile before first main.py session.
+Produces: data/profiles/<name>/{candidate.md, candidate.json, job_preferences.md, tone_of_voice.md}
 
 Usage:
-    python onboarding/wizard.py
-    python onboarding/wizard.py --resume path/to/cv.pdf   # skip file prompt
-    python onboarding/wizard.py --block a                  # run single block
+    python onboarding/wizard.py                            # prompts for a profile name
+    python onboarding/wizard.py --profile pm                # full onboarding, named up front
+    python onboarding/wizard.py --resume path/to/cv.pdf     # skip file prompt
+    python onboarding/wizard.py --profile pm --block a      # redo a single block (name required if 2+ profiles)
+    python onboarding/wizard.py --list-profiles
+
+Profile resolution (same rule as main.py / api.py, see profiles.py): editing an
+existing profile auto-selects when there's only one and requires --profile when
+there are several; creating a new one always asks for (or takes) a name — there
+is no flat/legacy data dir fallback.
 """
 
 import argparse
@@ -25,27 +32,44 @@ except ImportError:
     pass
 
 # ── Pre-parse --profile before CONFIG import (same pattern as main.py) ────────
-_BASE_DIR = Path(__file__).parent.parent
-_PROFILES_DIR = _BASE_DIR / "data" / "profiles"
+from profiles import PROFILES_DIR, list_profiles, resolve_profile
 
 _pre = argparse.ArgumentParser(add_help=False)
 _pre.add_argument("--profile", type=str, default=None)
 _pre.add_argument("--list-profiles", action="store_true")
+_pre.add_argument("--block", choices=["a", "b", "c", "d"], default=None)
 _pre_args, _ = _pre.parse_known_args()
 
 if _pre_args.list_profiles:
-    if _PROFILES_DIR.exists():
-        profiles = sorted(p.name for p in _PROFILES_DIR.iterdir() if p.is_dir())
-        print("Available profiles:" if profiles else "No profiles yet.")
-        for p in profiles:
-            cand = _PROFILES_DIR / p / "candidate.md"
-            print(f"  {p:<20} {'configured' if cand.exists() else 'empty'}")
-    else:
-        print("No profiles directory found.")
+    profiles = list_profiles()
+    print("Available profiles:" if profiles else "No profiles yet.")
+    for p in profiles:
+        print(f"  {p:<20} configured")
     sys.exit(0)
 
-if _pre_args.profile:
-    os.environ["DATA_DIR"] = str(_PROFILES_DIR / _pre_args.profile)
+# Same profile law as main.py — no writes to a flat/legacy data dir, ever.
+# The three branches below cover every entry point into this file:
+if _pre_args.block == "d":
+    # Block D only patches .env (global — not profile-scoped), nothing to resolve.
+    _active_profile = None
+elif _pre_args.block:
+    # Editing a single block of an EXISTING profile: same selection rule as main.py
+    # (auto-select if there's only one, otherwise --profile <name> is required).
+    _active_profile = resolve_profile(_pre_args.profile)
+    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
+elif _pre_args.profile:
+    # Full onboarding with an explicit name — create it (or reuse if it exists).
+    _active_profile = _pre_args.profile
+    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
+else:
+    # Full onboarding, no name given — ask once, up front. This is a create
+    # operation, so there's nothing to auto-select among; better to ask now
+    # than to silently write into a legacy flat data/ directory.
+    _name = input("Profile name for this resume (used as data/profiles/<name>/, e.g. 'pm'): ").strip()
+    while not _name:
+        _name = input("Profile name (required): ").strip()
+    _active_profile = _name
+    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
 
 from config import CONFIG
 from onboarding.resume_parser import ResumeParser, ResumeData
@@ -257,13 +281,6 @@ def block_a(resume_path: Path | None = None) -> bool:
             "skills":   ask_list("Professional skills"),
             "tools":    ask_list("Tools (Jira, Figma, SQL, ...)"),
         })
-
-    # Suggest a profile name from the parsed role when running without --profile
-    parsed_role = (data.identity or {}).get("role")
-    if not _pre_args.profile and parsed_role:
-        suggested_name = parsed_role.lower().replace(" ", "_")[:20]
-        print(f"\n💡 Profile tip: next time run with --profile {suggested_name}")
-        print(f"   This saves data to data/profiles/{suggested_name}/ keeping profiles isolated.")
 
     md_out = CONFIG.data_dir / "candidate.md"
     existing = md_out.read_text(encoding="utf-8") if md_out.exists() else ""
@@ -545,7 +562,8 @@ def _patch_env(key: str, value: str):
 def main():
     parser = argparse.ArgumentParser(description="Auto-apply agent onboarding wizard")
     parser.add_argument("--profile", type=str, default=None,
-                        help="Profile name — saves to data/profiles/<name>/ (default: data/)")
+                        help="Profile name — saves to data/profiles/<name>/. Omit to be prompted "
+                             "(full onboarding) or auto-selected (single-block edit, only profile).")
     parser.add_argument("--list-profiles", action="store_true",
                         help="List existing profiles and exit")
     parser.add_argument("--resume", type=Path, default=None,
@@ -558,10 +576,10 @@ def main():
     args = parser.parse_args()
 
     print("\n🚀 Auto-apply agent — onboarding")
-    if _pre_args.profile:
-        print(f"   Profile: {_pre_args.profile}  ({CONFIG.data_dir})")
+    if _active_profile:
+        print(f"   Profile: {_active_profile}  ({CONFIG.data_dir})")
     else:
-        print("   All files are saved to data/ (gitignored).")
+        print("   Block D only — patches the global .env, not profile-scoped.")
     print()
 
     blocks = {

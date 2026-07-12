@@ -1,5 +1,11 @@
 # /sprint-close
 
+**Triggers:**
+- User calls `/sprint-close` explicitly
+- Semantic session-end signal detected (see Gate 0 in CLAUDE.md for full list):
+  "щас клиарну", "все я пошел", "последний вопрос", "все на сегодня", etc.
+  → /clear itself is TOO LATE — trigger on the precursor phrase, in that same response turn
+
 Run at the end of a sprint before any commit. Enforces Gate 3 + Gate 5.
 
 ## Steps
@@ -43,6 +49,15 @@ Thresholds:
 ### 5. Memory update
 - Update branch state table in MEMORY.md (run `git log --oneline <branch> | head -1` first — never from memory).
 - If any task reached DoD this sprint: mark as `✅✅` in L2_tasks.md **only after explicit user acceptance**.
+- **CONTEXT.md drift check:** if this session touched any file map, data path, CLI flag, handler, or config —
+  read CONTEXT.md header date and compare to today. If the relevant section is stale, update it now.
+  Sections to check by change type:
+  - New/renamed files → §12 File Registry
+  - New CLI flag or env var → §9 Config, §10 Run Modes
+  - New handler or FormType → §5 FormDetector & Handlers
+  - Data path / profile change → §3 Data Flow, §12
+  After any CONTEXT.md edit: bump the "Updated:" date in the header.
+- **MEMORY.md rolling window:** keep only last 2 session highlights. Archive older ones to working-notes.
 
 ### 6. Gate 4 reminder
 Do NOT push or open a PR without explicit user instruction.

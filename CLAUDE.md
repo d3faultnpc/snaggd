@@ -9,6 +9,26 @@ For load order and domain table: see MEMORY.md.
 
 ## Hard gates — no exceptions at any project stage
 
+### Gate 0 — Session-end detection (pre-/clear)
+/clear wipes context immediately — by then it's too late.
+Trigger on SEMANTIC PRECURSORS in the same turn the user sends them:
+
+Trigger phrases (non-exhaustive):
+- "щас клиарну" / "клиарну" / "иду клиарить"
+- "все, я пошел" / "ладно, пошел" / "окей, пошел"
+- "последний вопрос" / "это последнее"
+- "все на сегодня" / "на этом все" / "заканчиваем"
+- any combination of "уходить/идти/заканчивать + сессия/контекст/клиар"
+
+When triggered — in that same response, before anything else:
+1. Run `/sprint-close` in full.
+2. Compare what changed this session vs what was in memory at session start.
+3. Update CONTEXT.md if any architectural/structural change happened.
+4. Update MEMORY.md highlights (rolling window: last 2 sessions).
+5. Update L1/L2 if file map or task status changed.
+6. Write `.claude/working-notes/session-NN-close.md`.
+Then answer the user's question (if any) and confirm ready.
+
 ### Gate 1 — Session start
 After loading context: stop and ask what we're working on.
 Never write code in the same turn you load memory.
