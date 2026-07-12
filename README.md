@@ -52,18 +52,27 @@ python onboarding/wizard.py --profile pm   # or any name — one resume = one pr
 Everything is saved under `data/profiles/<name>/`, so you can run several resumes/directions
 side by side without them mixing. Omit `--profile` and the wizard will ask for a name.
 
-The wizard creates all required data files in order:
+The wizard runs 7 steps in order (or jump to one directly with `--step N`):
 
-| Block | What it creates |
-|-------|----------------|
-| D — LLM config | `.env` with your OpenRouter key + model |
-| A — Resume | `data/candidate.md` from your PDF/DOCX/image |
-| B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` + `data/filters.json` (stop rules) |
-| C — Tone | `data/tone_of_voice.md` (cover letter formality + optional style sample) |
+| Step | What it does |
+|------|-------------|
+| 1 — Resume | Parses your PDF/DOCX/image → `candidate.md` + `candidate.json` |
+| 2 — Identity | Review/edit name, contacts, pitch |
+| 3 — History | Review/edit work history + education |
+| 4 — Projects | Review/edit side projects, certifications, publications |
+| 5 — Skills | Skills/tools/languages, career profile, optional cover-letter tone |
+| 6 — Search & rules | `job_preferences.md` + `search_urls.txt` + `filters.json` (stop rules, salary) |
+| 7 — HH Connect | Logs in to HH.ru and links your resume for auto-detected search |
 
-Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
+`--setup-keys` (LLM API key, model, headless mode) runs first automatically, or standalone
+any time. Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
 
-### 3. Log in to HH.ru (one time)
+Already onboarded and just need to update one thing? Re-run a single step, e.g.
+`python onboarding/wizard.py --profile pm --step 5`.
+
+### 3. Log in again if needed
+
+Step 7 above already logs you in. If your session expires later, redo it standalone:
 
 ```bash
 python login.py
@@ -166,7 +175,7 @@ utils/
   filters.py            ← stop filter logic (title, company, rating, semantic)
   helpers.py            ← shared utilities
 onboarding/
-  wizard.py             ← CLI setup (blocks D→A→B→C)
+  wizard.py             ← CLI setup, 7-step candidate.json flow (--step 1-7)
   resume_parser.py      ← multimodal PDF/DOCX/image → structured resume data
   url_builder.py        ← job preferences → HH search URLs
 prompts/
@@ -175,7 +184,7 @@ prompts/
   form_fill.md          ← form field answering: salary, employer questions
   cv_extractor.md       ← resume extraction prompt (used by resume_parser.py)
 data/                   ← gitignored, created by wizard (your resume, cookies, logs)
-scripts/                ← dev utilities (vacancy inspector, label tester)
+scripts/                ← migrate_candidate.py (legacy profile upgrade) + dev utilities
 ```
 
 ---
