@@ -46,7 +46,6 @@ class Config:
     # LLM settings
     llm_max_input_chars: int = 5000
     cache_size: int = 15
-    cache_file: str = str(DATA_DIR / "llm_cache.json")
 
     # Search pagination — how many pages to scrape per search URL (50 vacancies/page)
     max_pages: int = int(os.getenv("MAX_PAGES", "2"))
