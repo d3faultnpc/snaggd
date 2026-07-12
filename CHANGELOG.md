@@ -1,5 +1,40 @@
 # Changelog
 
+## [0.4.0] — 2026-07-12 · Structured Profiles
+
+### Summary
+`candidate.md` gets a structured `candidate.json` source of truth behind it, and profile
+selection becomes a single explicit rule everywhere (CLI, wizard, REST API) instead of an
+optional flag with a silent fallback. A scoring-output containment fix closes a rare LLM
+failure mode before it can reach a cover letter.
+
+---
+
+### New: `candidate.json` schema (`onboarding/resume_parser.py`)
+Structured, nested source of truth behind `candidate.md`: `identity` / `career_profile`
+(`role_type`, `edge`, `aspiration`) / `logistics` / `search` / `rules` / `cases[]` — replaces
+the old flat `jobs[]` / `side_projects[]` / `contacts: dict` shape. `candidate.md` keeps its
+managed-block markers (`<!-- snaggd:start/end -->`) so hand-edited content below the marker
+survives re-renders. `career_profile.aspiration` is a new freeform field (symmetric to
+`role_type`/`edge`) capturing the direction a candidate wants to grow toward, used by the
+scoring prompt as a generic counterweight to a domain mismatch — replaces several
+candidate-specific hardcodes that only worked for one profile.
+
+### New: one profile-resolution rule everywhere (`profiles.py`)
+`--profile <name>` is no longer optional-with-a-silent-fallback. One profile → auto-selected;
+zero or several → a name is required, loudly. No more falling back to a flat, unscoped data
+directory. Same rule now backs `main.py`, `onboarding/wizard.py`, and the REST API
+(`api.py`'s `/api/v1/session/start`) — whichever you use, the answer to "which profile is this
+run for" is computed the same way.
+
+### Fix: contain LLM template-echo in scoring output (`core/llm_agent.py`)
+On an ambiguous or unusually long vacancy description, the scoring model can occasionally
+return the scoring prompt's own JSON-example placeholder text instead of real analysis.
+`_sanitize_score_result()` now detects this and resets the whole response to safe neutral
+defaults rather than letting placeholder text reach the applied log or a cover letter.
+
+---
+
 ## [0.3.5] — 2026-06-16 · Cover Intelligence
 
 ### Summary

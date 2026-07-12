@@ -16,12 +16,13 @@ from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
+from profiles import PROFILES_DIR, ProfileError, resolve_profile
+
 _BASE_DIR = Path(__file__).parent
-_PROFILES_DIR = _BASE_DIR / "data" / "profiles"
 
 _api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=True)
 
-app = FastAPI(title="snaggd", version="0.3.1", docs_url="/api/docs")
+app = FastAPI(title="snaggd", version="0.4.0", docs_url="/api/docs")
 
 # ── In-memory session store ───────────────────────────────────────────────────
 # {id: {state, thread, stop_event, started_at, result, error}}
@@ -59,16 +60,15 @@ def _session_worker(session_id: str, req: SessionStartRequest) -> None:
     session = _sessions[session_id]
     session["state"] = "running"
     try:
-        data_dir = _PROFILES_DIR / req.profile if req.profile else None
-        if req.profile and not (data_dir / "candidate.md").exists():
-            session.update(state="error",
-                           error=f"Profile '{req.profile}' not found or not configured")
+        try:
+            active_profile = resolve_profile(req.profile, exit_on_error=False)
+        except ProfileError as e:
+            session.update(state="error", error=str(e))
             return
+        data_dir = PROFILES_DIR / active_profile
 
         adapter = HHAdapter(data_dir=data_dir)
-        logger = Logger(
-            applied_log_path=data_dir / "applied_log.json" if data_dir else None,
-        )
+        logger = Logger(applied_log_path=data_dir / "applied_log.json")
 
         if not adapter.verify():
             session.update(state="error", error="Adapter verification failed (cookies or search URLs missing)")
@@ -102,7 +102,7 @@ def _session_worker(session_id: str, req: SessionStartRequest) -> None:
 @app.get("/api/v1/health")
 def health():
     from config import CONFIG
-    return {"status": "ok", "version": "0.3.1", "headless": CONFIG.headless}
+    return {"status": "ok", "version": "0.4.0", "headless": CONFIG.headless}
 
 
 @app.post("/api/v1/session/start", dependencies=[Depends(_require_key)])
@@ -227,10 +227,10 @@ def _profile_info(name: str, data_dir: Path) -> dict:
 
 @app.get("/api/v1/profiles", dependencies=[Depends(_require_key)])
 def profiles_list():
-    if not _PROFILES_DIR.exists():
+    if not PROFILES_DIR.exists():
         return {"profiles": []}
     result = []
-    for p in sorted(_PROFILES_DIR.iterdir()):
+    for p in sorted(PROFILES_DIR.iterdir()):
         if p.is_dir():
             result.append(_profile_info(p.name, p))
     return {"profiles": result}
@@ -238,7 +238,7 @@ def profiles_list():
 
 @app.get("/api/v1/profiles/{name}", dependencies=[Depends(_require_key)])
 def profile_detail(name: str):
-    data_dir = _PROFILES_DIR / name
+    data_dir = PROFILES_DIR / name
     if not data_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     return _profile_info(name, data_dir)

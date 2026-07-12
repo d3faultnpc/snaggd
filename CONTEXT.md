@@ -2,7 +2,7 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-05-31 (infra sprint, session 22). Keep updated after major architecture changes.
+> Updated: 2026-07-12 (profile resolution law — no flat/legacy DATA_DIR fallback, session 43). Keep updated after major architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
@@ -78,7 +78,7 @@ onboarding/
 **Two independent agents:**
 - **Playwright agent** — all browser interaction, zero LLM tokens
 - **LLM agent** (core/llm_agent.py) — cover / score / form fill / HR answers
-  - System prompt (cached per session): resume_facts + job_preferences + tone_of_voice ≈ 1300 tok
+  - System prompt (cached per session): candidate.md + job_preferences.md + tone_of_voice.md ≈ 1300 tok
   - Per vacancy user message: vacancy_text ≈ 600 tok
 
 ---
@@ -88,21 +88,48 @@ onboarding/
 ### One-time setup (onboarding)
 
 ```
-python onboarding/wizard.py
+python onboarding/wizard.py --profile <name>
 
-  Block A → parsers/resume_parser.py → data/resume_facts.md
-  Block B → data/job_preferences.md + data/search_urls.txt
-  Block C → data/tone_of_voice.md
+  Block A → parsers/resume_parser.py → data/profiles/<name>/candidate.md
+  Block B → data/profiles/<name>/job_preferences.md + data/profiles/<name>/search_urls.txt
+  Block C → data/profiles/<name>/tone_of_voice.md  (optional)
   Block D → .env  (API keys, HEADLESS, MAX_VACANCIES, MIN_SCORE, ...)
 
-python login.py → browser login → data/hh_cookies.json
+python login.py → browser login → data/hh_cookies.json  (shared across profiles)
 ```
+
+**Profile isolation:** each profile has its own
+`candidate.md`, `applied_log.json`, `job_preferences.md`, `search_urls.txt`, `llm_cache.json`.
+Cookies (`hh_cookies.json`) are shared — one HH account = one cookie file.
+
+**Profile resolution law (2026-07-12, `profiles.py`) — same rule everywhere (CLI, wizard, API):**
+there is no flat/legacy `data/` fallback in any code path. `DATA_DIR` always ends up as
+`data/profiles/<name>/`:
+- `--profile <name>` given → use it (must already exist for a run; created on demand by the wizard)
+- omitted, exactly one profile exists → auto-selected, announced on stdout, not silent
+- omitted, zero or several profiles exist → hard error naming what's missing/ambiguous; for
+  brand-new onboarding (wizard, no existing profiles) the wizard prompts for a name once instead
+- Rationale: an app user shouldn't need to know "attributes" exist at all — one resume ⇒ zero
+  friction, several ⇒ the app/CLI must ask, never guess. See `L2_tasks.md` #24 for the app-side plan.
+
+**Legacy flat files** (`data/*.md`, `data/*.json` at the root, pre-profiles era) — still present on
+disk, no code path reads or writes there anymore since the law above landed:
+- `data/candidate.md` — original PM profile (updated 2026-05-29). Historical PM
+  application context; will be merged into profile log at app launch.
+- `data/applied_log.json` — legacy PM log (pre-profiles). Holds PM applications before the
+  profiles refactor. Source of truth for historical PM statistics.
+  **Do not delete.** To be merged with `data/profiles/pm/applied_log.json` when app ships.
+- `data/llm_cache.json` / `data/cover_cache.json` — deleted 2026-07-12: pure regenerable cache
+  (unlike the two files above), stale since before the profiles split, no data lost.
 
 ### Runtime (main.py)
 
 ```
+python main.py --profile pm        # selects data/profiles/pm/ as DATA_DIR
+python main.py --list-profiles     # lists all available profiles
+
 LLMAgent._build_system_prompt()
-  ← resume_facts.md + job_preferences.md + tone_of_voice.md
+  ← candidate.md + job_preferences.md + tone_of_voice.md  (all from DATA_DIR)
   → cached system prompt for session
 
 HHAdapter.verify()
@@ -135,8 +162,13 @@ per vacancy loop:
   │
   ├─ handler = FormHandlers.get_handler(form_type)
   ├─ result = handler.process(page, cover_letter, hr_matcher, vacancy_text=vacancy_text)
-  └─ Logger.log_result() → data/applied_log.json
+  └─ Logger.log_result() → <DATA_DIR>/applied_log.json
 ```
+
+**Active applied logs:**
+- `data/profiles/pm/applied_log.json` — current PM profile (post-profiles refactor)
+- `data/profiles/support/applied_log.json` — support profile log
+- `data/applied_log.json` — LEGACY pre-profiles PM log (historical, do not delete)
 
 **Why scoring before Apply click:** HH tracks Apply button clicks. Clicking without submitting leaves a trace. Score first → click only if score passes and it's not a dry-run.
 
@@ -165,26 +197,39 @@ Phase 3 targets: `adapters/greenhouse/` (API), `adapters/lever/` (API), `adapter
 
 ### Detection Priority (detector.py)
 
+`IMMEDIATE` is caught in adapter.py before FormDetector runs (no form = instant success notification).
+Everything below is FormDetector._classify_form():
+
 ```
-Priority | Signal                                              | FormType
----------|-----------------------------------------------------|------------------
-  0a     | applied_immediate notification visible              | → IMMEDIATE
-  0b     | form-helper-error + vacancy-response-link-view-topic visible | → CHAT_INTERFACE
-  0c     | vacancy-response-question elements in popup         | → EMPLOYER_QUESTIONS
-  1      | standard popup with textarea                        | → HH_MODAL
-  2      | inline textarea                                     | → COVER_ONLY
-  3      | employer-asking-for-test marker                     | → TEST_FORM
-  4      | salary input field visible                          | → SALARY_FORM (skip)
-  5      | nothing matched                                     | → UNKNOWN (skip)
+Priority | Signal                                                  | FormType
+---------|-----------------------------------------------------------|-----------------
+  0e     | role=dialog overlay with visible textarea               | → HH_MODAL_STEP1  (cover-required gate)
+  0a     | has_test_form + has_task_questions                      | → EMPLOYER_QUESTIONS
+  0a     | has_test_form only                                      | → TEST_FORM
+  0c     | has_popup_questions or has_task_questions               | → EMPLOYER_QUESTIONS
+  0b     | has_form_error + has_chat_link (auto-read/Sber pattern) | → CHAT_INTERFACE
+  0d     | has_response_submit (post-apply cover letter flow)      | → COVER_ONLY
+  1      | has_progress or hh_modal/navigation keywords            | → HH_MODAL_STEP1 / HH_MODAL_STEP2
+  2      | has_salary_field                                        | → SALARY_FORM (skip)
+  3      | has_chat_link (verified data-qa only, not button text)  | → CHAT_INTERFACE
+  4      | input_count > 1 or questions keywords                   | → EMPLOYER_QUESTIONS
+  5      | input_count == 1 + cover field or cover keywords        | → COVER_ONLY
+  6      | input_count == 1 (fallback)                             | → COVER_ONLY
+  —      | nothing matched                                         | → UNKNOWN (skip)
 ```
+
+**FormType enum values:** `hh_modal_step1`, `hh_modal_step2`, `cover_only`, `employer_questions`,
+`salary_form`, `chat_interface`, `test_form`, `unknown`
+
+**HH_MODAL_STEP1 vs STEP2:** STEP1 = first modal (cover letter entry). STEP2 = progress > 1, a subsequent modal step in a multi-step HH application flow.
 
 ### Handler Behaviors
 
 | Handler | What it does | Selectors used |
 |---------|-------------|----------------|
-| `hh_modal.py` | Fills cover textarea in popup → waits for submit to enable → submits | `vacancy-response-submit-popup`, `vacancy-response-popup-form-letter-input` |
-| `cover_only.py` | Fills inline textarea → submits | `vacancy-response-letter-submit`, `vacancy-response-letter-informer` |
-| `questions.py` | Extracts Q&A fields → LLM batch fill → submits | `vacancy-response-question`, `add-cover-letter` |
+| `hh_modal.py` | Multi-step: fills cover in modal → waits for submit to enable → submits. `delay=5`, `timeout=60000`. | `vacancy-response-submit-popup`, `vacancy-response-popup-form-letter-input` |
+| `cover_only.py` | Fills inline cover textarea → submits | `vacancy-response-letter-submit`, `vacancy-response-letter-informer` |
+| `questions.py` | Extracts text/radio/checkbox fields → LLM batch fill → submits. Radio: grouped by `name`. Checkbox: `el.check()` per yes/no LLM answer. | `vacancy-response-question`, `add-cover-letter` |
 | `test_form.py` | Clicks "apply without questions" link → fills cover → submits | `vacancy-response-link-no-questions` |
 | `chat.py` | Clicks chat link → types cover in chatik input | `vacancy-response-link-view-topic`, `chatik-new-message-text` |
 | `salary.py` | Always skips | — |
@@ -206,13 +251,14 @@ Priority | Signal                                              | FormType
 
 ### System Prompt (cached per session)
 
-Built by `LLMAgent._build_system_prompt()` from three files:
+Built by `LLMAgent._build_system_prompt()` from three files in `DATA_DIR`:
 ```
-data/resume_facts.md      → "CANDIDATE PROFILE" section
-data/job_preferences.md   → "JOB PREFERENCES" section
-data/tone_of_voice.md     → "TONE & STYLE" section
+candidate.md          → "CANDIDATE PROFILE" section
+job_preferences.md    → "JOB PREFERENCES" section
+tone_of_voice.md      → "TONE & STYLE" section  (optional)
 Total: ≈ 1300 tokens
 ```
+`DATA_DIR` = `data/profiles/<name>/`, always — see the profile resolution law in §3.
 
 ### Per-Vacancy Calls
 
@@ -234,56 +280,48 @@ Cover letters are generated in the same language as the vacancy. Instruction in 
 
 ### Cache
 
-`LLMCover` caches responses by MD5 hash of vacancy_text in `data/llm_cache.json`.
-Static fallback if LLM unavailable: `"Добрый день. Заинтересован..."` (minimal cover letter).
+Two separate caches in `DATA_DIR`:
+- `llm_cache.json` — score cache, keyed by MD5(vacancy_text + model + candidate_hash)
+- `cover_cache.json` — cover letter cache, keyed by vacancy_id (duplicates always get fresh cover at temp>0)
 
 ---
 
 ## 7. Resume Parser
 
-**File:** `onboarding/resume_parser.py` (contains both `ResumeParser` class and `ResumeData` dataclass — no separate `parsers/` directory)
-**Supported formats:** PDF, DOCX, PNG/JPG (multimodal via LLM image call), .md
-**PDF parsing:** multimodal LLM only — no local PDF library (PyMuPDF removed). PDF bytes sent as base64 image to LLM.
-
-**Flow:**
-```
-input file → detect format → extract content (text or image bytes)
-          → LLM call (_extraction_prompt() — prompt is inline, no prompts/resume_parser.md file)
-          → parse JSON → ResumeData dataclass
-          → write data/resume_facts.md
-```
-
-**ResumeData fields:**
-```python
-name: str
-target_role: str
-skills: List[str]
-experience: List[dict]   # {company, role, duration, description}
-education: List[dict]
-languages: List[str]
-summary: str
-suggested_queries: List[str]  # [PENDING task #1] LLM-generated HH search queries
-```
-
-**Edge cases:**
-- Scanned PDFs (no text) → falls back to image rendering → multimodal LLM
-- DOCX tables → python-docx may miss them → LLM recovers from partial text
-
+**File:** `onboarding/resume_parser.py` — both `ResumeParser` class and `ResumeData` dataclass live here.
+**Formats:** PDF (multimodal LLM, no local lib), DOCX (python-docx), PNG/JPG (multimodal), .md
+**Output:** `<DATA_DIR>/candidate.md` (rendered text, system prompt, wrapped in
+  `<!-- snaggd:start/end -->` managed-block markers — content after the end marker is a user's own
+  free-text and survives re-renders) + `<DATA_DIR>/candidate.json` (structured source of truth,
+  written by wizard.py Block A; `ResumeData` mirrors this shape 1:1 via `dataclasses.asdict()`).
+  Schema rewritten session 42 (2026-07-11): nested `identity/career_profile/logistics/search/
+  rules/cases[]` shape, replaces old flat fields (`jobs`/`side_projects`/`contacts: dict`/etc).
+**Prompt:** inline in `_extraction_prompt()` — no `prompts/resume_parser.md` file.
 **Smoke test:** `python scripts/sanity_parser.py`
+
+> For full ResumeData schema and edge cases: `memory/domain/resume_parser.md` (updated session 42)
+> Full schema spec + rationale: `.claude/working-notes/tz-pre-app-wizard-sprint.md`
 
 ---
 
 ## 8. Onboarding Wizard
 
 **File:** `onboarding/wizard.py`
-**Run:** `python onboarding/wizard.py` (full) or `--block a/b/c/d` (single block)
+**Run:** `python onboarding/wizard.py --profile <name>` (full) or add `--block a/b/c/d` (single block)
 
 | Block | What it does | Output |
 |-------|-------------|--------|
-| A | Parse resume (PDF/DOCX/image) → ResumeData | `data/resume_facts.md` |
-| B | Job preferences: role, city, schedule, salary | `data/job_preferences.md` + `data/search_urls.txt` |
-| C | Tone of voice for cover letters | `data/tone_of_voice.md` |
+| A | Parse resume (PDF/DOCX/image) → ResumeData; asks `career_profile.aspiration` ("direction you want to move toward") alongside existing `role_type`/`edge` | `data/profiles/<name>/candidate.md` + `candidate.json` |
+| B | Job preferences: role, city, schedule, salary | `data/profiles/<name>/job_preferences.md` + `search_urls.txt` |
+| C | Tone of voice for cover letters | `data/profiles/<name>/tone_of_voice.md` |
 | D | LLM API key, model, headless mode, limits | `.env` patches |
+
+**Profile resolution:** same law as `main.py` (§3, `profiles.py`).
+`--block a/b/c` without `--profile` auto-selects if exactly one profile exists, else errors and
+lists the options — you're editing an *existing* profile, so ambiguity must not resolve silently.
+Full onboarding (no `--block`) without `--profile` prompts once for a new profile name up front —
+it's a create operation, so there's nothing to select among. `--block d` needs no profile at all
+(patches the global `.env`).
 
 **URL Builder (`onboarding/url_builder.py`):**
 Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_field=name` (title only) — pending change to `everywhere` (task #2).
@@ -304,16 +342,23 @@ COVER_MODEL=                    # optional override for cover letter generation 
 HEADLESS=false                  # false = visible browser (recommended for debugging)
 MAX_VACANCIES=10                # max vacancies to process per run
 MIN_SCORE=60                    # skip vacancies below this score (0–100)
-DATA_DIR=./data                 # override data directory location
+VACANCIES_PER_URL=10            # max vacancies collected per search URL per run (even rotation)
+DATA_DIR=./data                 # low-level override; normally set automatically by profiles.py
 PROXY_URL=                      # socks5://... for users who need proxy
+BROWSER_CORNER=false            # true → 750×430 window at bottom-right corner (work alongside)
+BROWSER_CORNER_X=1578           # corner window X position (default: bottom-right of 2560px screen)
+BROWSER_CORNER_Y=650            # corner window Y position
 ```
 
 **Config object** (`config.py`):
 ```python
-CONFIG.cookies_path        → data/hh_cookies.json
-CONFIG.search_urls_path    → data/search_urls.txt
-CONFIG.applied_log_path    → data/applied_log.json
+CONFIG.cookies_path        → data/hh_cookies.json  (shared; not inside profile dir)
+CONFIG.search_urls_path    → <DATA_DIR>/search_urls.txt
+CONFIG.applied_log_path    → <DATA_DIR>/applied_log.json
 CONFIG.min_score           → int (default 60)
+
+`DATA_DIR` env var: set by `profiles.py`'s `resolve_profile()` before `config` is first imported
+(main.py, wizard.py) or passed as `data_dir=` directly (api.py) — always a real profile path, see §3.
 ```
 
 **SELECTORS dict** — all Playwright selectors live here, not in handler files.
@@ -350,41 +395,61 @@ python onboarding/wizard.py --block b
 
 ## 11. Debug Mode
 
-When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` is called at key pipeline steps.
-
-**Output per vacancy:** `snapshots/{timestamp}/`
-- `{label}.png` — full-page screenshot
-- `{label}.html` — modal HTML (or full body if no modal)
-- `{label}_data_qa.txt` — all `data-qa` attribute values on the page
-
-**Labels:**
-- `01_vacancy_page` — before Apply click
-- `02_after_apply_click` — form/popup visible
-- `03_after_handler_{status}` — after handler finishes
-- `error` — on unexpected exception
+`--debug` → `HHAdapter._debug_snapshot()` saves per-vacancy to `snapshots/{timestamp}/`:
+- `01_vacancy_page.{png,html,_data_qa.txt}` — before Apply click
+- `02_after_apply_click.*` — form/popup visible
+- `03_after_handler_{status}.*` — after handler
+- `error.*` — on unexpected exception
 
 ---
 
 ## 12. File Registry
 
+### Active profile files (post-profiles refactor, session ~30+)
+
+Each profile lives in `data/profiles/<name>/`. Created by `wizard.py --profile <name>`.
+
+| File | Created by | Notes |
+|------|-----------|-------|
+| `data/profiles/<name>/candidate.md` | wizard Block A | candidate profile for LLM system prompt |
+| `data/profiles/<name>/job_preferences.md` | wizard Block B | role, city, salary, stop filters |
+| `data/profiles/<name>/search_urls.txt` | wizard Block B | HH search URLs for this profile |
+| `data/profiles/<name>/tone_of_voice.md` | wizard Block C | cover letter tone (optional) |
+| `data/profiles/<name>/applied_log.json` | runtime (logger.py) | per-profile application log |
+| `data/profiles/<name>/llm_cache.json` | runtime (llm_cover.py) | MD5 cache per profile |
+| `data/profiles/<name>/cover_cache.json` | runtime (llm_cover.py) | cover letter cache keyed by vacancy_id |
+| `data/hh_cookies.json` | login.py | **shared** across profiles (one HH account) |
+| `data/hh_resumes.json` | login.py (post-login) | [{title, uuid}] for all HH resumes; used by wizard Block B for auto-wise-link |
+
+Current profiles: `pm`, `support`.
+
+### Legacy flat files (pre-profiles, data/ root)
+
+**Do not delete** — contain historical data to be merged at app launch.
+
+| File | Status | Notes |
+|------|--------|-------|
+| `data/candidate.md` | Legacy PM profile (updated 2026-05-29) | Historical PM candidate context. Will be merged. |
+| `data/applied_log.json` | Legacy PM log (pre-profiles) | PM applications before profiles refactor. Merge target at app launch with `data/profiles/pm/applied_log.json` for unified statistics. |
+| `data/applied_log.json.bak` | Backup | Keep. |
+| `data/resume_facts.md` | Legacy LLM-parsed output | Pre-profiles. Superseded by `profiles/pm/candidate.md`. |
+| `data/job_preferences.md` | Legacy PM prefs | Pre-profiles. |
+
+### Code files (committed)
+
 | File | Created by | Gitignored |
 |------|-----------|------------|
-| `data/resume_facts.md` | wizard Block A | yes |
-| `data/job_preferences.md` | wizard Block B | yes |
-| `data/search_urls.txt` | wizard Block B | yes |
-| `data/tone_of_voice.md` | wizard Block C | yes |
-| `data/hh_cookies.json` | login.py | yes |
-| `data/applied_log.json` | runtime (logger.py) | yes |
-| `data/llm_cache.json` | runtime (llm_cover.py) | yes |
-| `data/form_answers.md` | user-created, optional (rarely needed — LLM answers from candidate profile) | yes |
 | `config.py` | code | no |
+| `profiles.py` | code | no — profile discovery + resolution law, shared by main/wizard/api |
 | `prompts/cover_letter.md` | code | no |
 | `prompts/match_scoring.md` | code | no |
 | `prompts/form_fill.md` | code | no |
 | `docs/status_codes.md` | code | no |
-| `docs/phase2-prompts/cv_extractor.md` | code | no — Phase 2 design artifact, not runtime |
-| `docs/phase2-prompts/resume_enhancer.md` | code | no — Phase 2 design artifact, not runtime |
+| `docs/phase2-prompts/cv_extractor.md` | code | no — Phase 2 design artifact |
+| `docs/phase2-prompts/resume_enhancer.md` | code | no — Phase 2 design artifact |
 | `api.py` | code | no |
+| `tests/test_score_clamp.py` | session 40 | unit tests for score clamping (9 cases, no LLM) |
+| `tests/test_browser_close.py` | session 40 | unit tests for HHBrowser.close() idempotency (3 cases) |
 
 > `data/` is created by wizard. Never committed. One folder per user installation.
 
@@ -392,9 +457,19 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 
 ## 13. Module Contracts
 
+### profiles.resolve_profile(requested, *, exit_on_error=True) → profile_name
+- No requested name: 1 profile → auto-select (printed); 0 or 2+ → error listing what exists
+- Requested name given: must exist, else error listing available profiles
+- `exit_on_error=True` (main.py, wizard.py — single-shot CLI process): prints and `sys.exit(1)`
+- `exit_on_error=False` (api.py — long-lived server process): raises `ProfileError` instead
+- Import-light on purpose (no `config` dependency) — main.py/wizard.py call it before `config` is
+  first imported, since `DATA_DIR` must already be in `os.environ` by then
+- Never resolves to a flat/legacy `data/` dir — see the resolution law in §3
+
 ### LLMCover.generate(vacancy_text) → (cover_letter, template_name, signals)
-- MD5 cache on vacancy_text → `data/llm_cache.json`
-- Static fallback if LLM unavailable
+- Score cache: MD5(vacancy_text) → `<DATA_DIR>/llm_cache.json`
+- Cover cache: vacancy_id → `<DATA_DIR>/cover_cache.json` (separated — duplicates always get fresh cover)
+- LLM unavailable → `skipped_llm_unavailable`, result NOT cached, retryable next run
 - After call: `self.last_score`, `self.last_matched_skills`, `self.last_gaps` set
 
 ### FormDetector.detect(page) → FormInfo
@@ -406,20 +481,40 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 - Returns `ProcessResult(success, status, reason, scenario, details)`
 
 ### applied_log.json entry schema
+
+**Vacancy entry:**
 ```json
 {
+  "date": "ISO8601",
   "url": "string",
   "title": "string",
-  "date": "ISO8601",
-  "status": "applied | applied_immediate | skipped_score | dry_run | skipped_* | ...",
-  "form_type": "hh_modal | immediate | questions | chat | test_form | ...",
+  "vacancy_id": "string",
+  "status": "applied | applied_immediate | applied_via_chat | applied_no_cover | dry_run | skipped_score | skipped_llm_unavailable | skipped_* | ...",
+  "form_type": "hh_modal_step1 | hh_modal_step2 | cover_only | employer_questions | chat_interface | test_form | immediate | unknown",
+  "goal_reached": true,
   "match_score": 75,
   "matched_skills": ["skill1"],
   "gaps": ["missing_skill"],
   "signals": ["platform", "b2b"],
   "search_source": "wise_link | <query text>",
-  "cover_sent": true,
-  "template_name": "cover_letter_v1"
+  "template_name": "llm",
+  "company": "ООО Example",
+  "employer_rating": 4.2,
+  "cover_length": 612,
+  "duplicate_of": "123456"
+}
+```
+`duplicate_of` only present on duplicate vacancies (same desc, different URL). `employer_rating` is `null` for companies with no reviews.
+`skipped_llm_unavailable` is retryable — same URL will be processed again next run.
+
+**Session-end entry** (appended at run end):
+```json
+{
+  "type": "session_end",
+  "date": "ISO8601",
+  "reason": "max_vacancies_reached | completed | error",
+  "detail": "string",
+  "processed": 20
 }
 ```
 
@@ -427,39 +522,28 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 
 ## 14. Anti-Bot Measures
 
-- **Human-like delays:** `random_delay(15000, 25000)` after opening vacancy (15–25 seconds)
-- **Typing delay:** `textarea.type(text, delay=10)` — 10ms per character
-- **No `.fill()`** — fires events like a real keyboard
-- **Cookies injection:** Playwright loads saved cookies, no programmatic login
-- **No API calls to HH** — pure browser automation
-- **Proxy support:** `PROXY_URL` env var for socks5 proxy
+`random_delay(15000, 25000)` after page open · `.type(text, delay=10)` everywhere (no `.fill()` — React) · cookies injection, no programmatic login · no HH API calls · `PROXY_URL` for socks5.
 
 ---
 
-## 15. Known Edge Cases & P0 Bugs
+## 15. Known Edge Cases
 
 | # | Case | File | Status |
 |---|------|------|--------|
-| 1 | QuestionsHandler._submit() — submit after Q&A fill | `handlers/questions.py` | **NOT tested live** |
-| 2 | Chat selectors (chatik-* data-qa) | `handlers/chat.py` | **NOT verified live** |
-| 3 | "Application already viewed" modal popup | `handlers/hh_modal.py` | Not encountered live |
-| 4 | popup submit starts `disabled` | all popup handlers | wait `:not([disabled])`, verified |
-| 5 | `form-helper-error` before submit = CHAT_INTERFACE | `detector.py` | verified |
-| 6 | test_form: mandatory test (no skip link) | `handlers/test_form.py` | skips; decision pending (task #3) |
+| 1 | QuestionsHandler._submit() — submit after Q&A fill not verified live | `handlers/questions.py` | open |
+| 2 | Chat selectors (chatik-* data-qa) | `handlers/chat.py` | partially verified (#8 done; selectors may drift) |
+| 3 | "Application already viewed" modal popup | `handlers/hh_modal.py` | not yet encountered live |
 
 ---
 
-## 16. Key Decisions & Rejected Options
+## 16. Key Decisions
 
-| Decision | What was chosen | What was rejected | Why |
-|----------|----------------|-------------------|-----|
-| Browser automation | Playwright | HH API | API closed Dec 2025 |
-| LLM gateway | OpenRouter (BYOK) | Direct Anthropic/OpenAI | Vendor-agnostic, user brings key |
-| Orchestration | Python main.py loop | n8n workflow | n8n adds ops complexity, no benefit |
-| Scoring timing | BEFORE Apply click | After click | HH tracks clicks; dry-run needs zero side effects |
-| React textarea input | `.type(text, delay=10)` | `.fill()` | `.fill()` doesn't fire React `onChange` |
-| Search URL type | `/search/vacancy?text=...` | `from=resumelist` | Recommendation feed ignores search params |
-| Network error handling | catch all as `skipped_error` | Fatal raise on "Target page closed" | HH legitimately closes pages; fatal raise breaks valid sessions |
+> Full decision log: `memory/L2_decisions_log.md`
+
+- **Playwright, not HH API** — API closed Dec 2025, Playwright-only forever.
+- **OpenRouter BYOK** — vendor-agnostic; user brings key. Phase 4: managed keys.
+- **Score BEFORE Apply click** — HH tracks clicks; scoring first enables zero-side-effect dry-run.
+- **`.type(delay=10)`, never `.fill()`** — `.fill()` skips React `onChange`; submit stays disabled.
 
 ---
 
@@ -468,16 +552,9 @@ When `--debug` is passed, `HHAdapter._debug_snapshot(page, session_dir, label)` 
 | Phase | What | Status |
 |-------|------|--------|
 | 1 — MIT GitHub | HH.ru adapter + wizard + CLI | **In progress (PHASE1-NEXT)** |
-| 2 — Desktop | Tauri/Electron wrapping Python core | Planned |
-| 3 — Multisite | Greenhouse/Lever (API-native) → Workday (Playwright) → LinkedIn (Patchright) | Planned |
+| 2 — Desktop | Tauri/Electron + FastAPI + Supabase | Design in progress (Claude Design) |
+| 3 — Multisite | Greenhouse/Lever (API) → Workday (Playwright) → LinkedIn (Patchright) | Planned |
 | 4 — SaaS | Managed LLM, subscriptions, multi-tenant | Future |
 
-**Phase 1 remaining tasks:**
-- `suggested_queries` in ResumeData (P0) — code ready on feature/suggested-queries, pending user test
-- `search_field=everywhere` (P0)
-- P0 bugs live verification
-- test_form behavior decision (P1) — code ready on feature/fill-tests-schedule, pending user test
-- Architecture refactor: goal-directed loop for process_vacancy() (task #20)
-
-**Phase 3 site priority:** Greenhouse + Lever (API, easy) → Workday (stable selectors) → LinkedIn (Patchright, fragile).
-**Skip:** Indeed (DataDome), Zarplata.ru (HH redirect wrapper).
+> Open Phase 1 tasks + master plan: `memory/L2_tasks.md`
+> Phase 3 priority: Greenhouse + Lever first (API-native). Skip: Indeed (DataDome), Zarplata.ru (HH redirect).
