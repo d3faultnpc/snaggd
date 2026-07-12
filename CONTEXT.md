@@ -2,7 +2,7 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-07-12 (wizard rewritten to 7-step candidate.json model + migrate_candidate.py + OTA schema check, session 44 — uncommitted, see MEMORY.md branch state). Keep updated after major architecture changes.
+> Updated: 2026-07-12 (wizard rewritten to 7-step candidate.json model + migrate_candidate.py + OTA schema check, session 44 — shipped v0.4.1, session 45). Keep updated after major architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
