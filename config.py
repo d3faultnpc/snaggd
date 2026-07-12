@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 from dataclasses import dataclass, field
@@ -65,6 +66,43 @@ class Config:
 
 
 CONFIG = Config()
+
+# ── OTA schema check (Task 8) ──────────────────────────────────────────────────
+# Advisory only — never blocks a session, never auto-writes. candidate.json isn't read by
+# the live apply loop yet (system prompt still comes from candidate.md directly, see
+# llm_agent.py), so an absent/stale candidate.json can't break a running session; this only
+# nudges toward keeping it in sync. Deliberately does NOT auto-run migrate_candidate.py
+# (that's a real LLM call + disk write — same "no silent write to live profile data"
+# principle migrate_candidate.py itself enforces via its --apply gate).
+
+CURRENT_SCHEMA_VERSION = "1.0"
+
+
+def _check_candidate_schema(data_dir: Path) -> None:
+    if data_dir.parent.name != "profiles":
+        return  # flat/legacy dir (e.g. --setup-keys, no active profile) — not a profile, skip
+
+    json_path = data_dir / "candidate.json"
+    if not json_path.exists():
+        if (data_dir / "candidate.md").exists():
+            print(f"ℹ️  [{data_dir.name}] candidate.json not found (candidate.md exists — "
+                  f"pre-schema profile). Run: python scripts/migrate_candidate.py --profile {data_dir.name}")
+        return  # brand-new profile, nothing onboarded yet — not an error
+
+    try:
+        parsed = json.loads(json_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    if not isinstance(parsed, dict):
+        return  # valid JSON but not an object (e.g. [], null, a bare string) — not our shape
+    version = parsed.get("schema_version")
+
+    if version != CURRENT_SCHEMA_VERSION:
+        print(f"ℹ️  [{data_dir.name}] candidate.json schema_version={version!r}, "
+              f"expected {CURRENT_SCHEMA_VERSION!r} — may need updating.")
+
+
+_check_candidate_schema(CONFIG.data_dir)
 
 SELECTORS = {
     'vacancy_title': '[data-qa="serp-item__title"]',

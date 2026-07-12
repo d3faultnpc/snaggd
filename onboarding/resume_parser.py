@@ -14,6 +14,7 @@ candidate.json shape directly (nested dicts/lists) so dataclasses.asdict() round
 import base64
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -61,19 +62,27 @@ class ResumeData:
     # Operational metadata — not schema content, used directly by Python code
     source_file: str = ""
     parsed_at: str = ""
-    completeness: float = 0.0
     hints: list = field(default_factory=list)
+
+
+def _ensure_https(url: str) -> str:
+    """Bare domains (github.com/x, t.me/x — common LLM-extraction output, protocol not
+    guaranteed) don't auto-link in most MD viewers. @handles, non-URL values, and values that
+    already have any URI scheme (including slashless ones like mailto:/tel:) pass through."""
+    if url and not url.startswith("@") and not re.match(r"^[a-z][a-z0-9+.-]*:", url, re.IGNORECASE):
+        return f"https://{url}"
+    return url
 
 
 def _typed_contact_line(raw: str) -> str:
     """Type-sniff a raw contact string into a labeled line for MD rendering."""
     low = raw.lower()
     if "t.me/" in low or raw.startswith("@"):
-        return f"telegram: {raw}"
+        return f"telegram: {_ensure_https(raw)}"
     if "github.com" in low:
-        return f"github: {raw}"
+        return f"github: {_ensure_https(raw)}"
     if "linkedin.com" in low:
-        return f"linkedin: {raw}"
+        return f"linkedin: {_ensure_https(raw)}"
     if "@" in raw and " " not in raw:
         return f"email: {raw}"
     digits = sum(ch.isdigit() for ch in raw)
@@ -165,8 +174,6 @@ class ResumeParser:
         identity = data.identity or {}
         role = identity.get("role") or "MISSING — add your target role"
         lines = [f"# {role}"]
-        updated = data.parsed_at[:10] if data.parsed_at else ""
-        lines.append(f"# completeness: {data.completeness:.0%} | source: {data.source_file} | updated: {updated}")
 
         # ── Identity ───────────────────────────────────────────────────────
         lines += ["", "## Identity"]
@@ -277,6 +284,9 @@ class ResumeParser:
         header_parts = [x for x in [case.get("company"), case.get("role"),
                                      case.get("period"), case.get("domain")] if x]
         lines = ["", f"### {' | '.join(header_parts) if header_parts else 'MISSING — company/role/period'}"]
+
+        if case.get("url"):
+            lines.append(f"url: {_ensure_https(case['url'])}")
 
         highlights = case.get("highlights") or []
         responsibilities = case.get("responsibilities") or []
@@ -457,30 +467,13 @@ class ResumeParser:
         )
         return self._finalize(data)
 
-    # ── Completeness & hints ──────────────────────────────────────────────────
+    # ── Hints ─────────────────────────────────────────────────────────────────
 
     def _finalize(self, data: ResumeData) -> ResumeData:
-        data.completeness = self._completeness_score(data)
         # Preserve LLM-populated hints[] (Rule F, content-level) and append
-        # completeness-driven structural hints — do not overwrite either.
+        # structural hints — do not overwrite either.
         data.hints = list(data.hints or []) + self._build_hints(data)
         return data
-
-    def _completeness_score(self, data: ResumeData) -> float:
-        identity = data.identity or {}
-        tier1 = [identity.get("name"), identity.get("role"), identity.get("location")]
-        t1 = sum(1 for f in tier1 if f) / len(tier1) * 0.35
-
-        has_cases = bool(data.cases)
-        has_evidence = any((c.get("highlights") or c.get("responsibilities")) for c in data.cases)
-        tier2 = [len(data.skills) >= 3, has_cases, has_evidence]
-        t2 = sum(tier2) / len(tier2) * 0.40
-
-        has_contact = bool(identity.get("contacts"))
-        tier3 = [len(data.tools) >= 1, bool(data.languages), has_contact]
-        t3 = sum(tier3) / len(tier3) * 0.25
-
-        return round(t1 + t2 + t3, 2)
 
     def _build_hints(self, data: ResumeData) -> list:
         identity = data.identity or {}
