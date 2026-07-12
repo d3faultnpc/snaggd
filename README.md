@@ -25,7 +25,7 @@ Reads your resume, scores each vacancy against it, writes a personalized cover l
 3. Scores each vacancy against your resume (0–100) — skips anything below your threshold
 4. Generates a personalized cover letter via LLM, matching the vacancy's language and tone
 5. Detects the form type (modal, questionnaire, chatik, etc.) and fills it accordingly
-6. Logs every result to `data/applied_log.json`
+6. Logs every result to `data/profiles/<name>/applied_log.json`
 
 All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `deepseek/deepseek-v3.2` (~$0.0002 per vacancy).
 
@@ -43,11 +43,14 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Onboarding wizard (one time)
+### 2. Onboarding wizard (one time per resume)
 
 ```bash
-python onboarding/wizard.py
+python onboarding/wizard.py --profile pm   # or any name — one resume = one profile
 ```
+
+Everything is saved under `data/profiles/<name>/`, so you can run several resumes/directions
+side by side without them mixing. Omit `--profile` and the wizard will ask for a name.
 
 The wizard creates all required data files in order:
 
@@ -72,17 +75,22 @@ Opens a browser window — log in manually. Cookies are saved to `data/hh_cookie
 
 ```bash
 # Dry run first — scores vacancies, never clicks Apply
-python main.py --dry-run
+python main.py --profile pm --dry-run
 
 # Live run
-python main.py
+python main.py --profile pm
 
 # Limit to N applications
-python main.py --max 5
+python main.py --profile pm --max 5
 ```
+
+`--profile` is auto-selected if you only have one; with two or more, you must name one —
+there's no silent fallback between profiles.
 
 | Flag | Description |
 |------|-------------|
+| `--profile <name>` | Which profile to run (auto-selected if you only have one) |
+| `--list-profiles` | Show all profiles and how many applications each has sent |
 | `--dry-run` | Score + log vacancies without submitting |
 | `--max N` | Stop after N applications |
 | `--debug` | Save page screenshots on unknown forms |
@@ -102,7 +110,7 @@ MAX_VACANCIES=10                   # max applications per run
 MAX_SKIPS=10                       # stop session after N skipped vacancies
 HEADLESS=false                     # true = no browser window
 FILL_TESTS=false                   # true = attempt LLM fill for employer tests
-DATA_DIR=./data                    # override data directory
+DATA_DIR=./data                    # low-level override; set automatically by --profile
 PROXY_URL=                         # socks5://... (optional)
 BROWSER_CORNER=false               # true = position browser in bottom-right corner
 BROWSER_CORNER_X=1578              # corner X offset in pixels — tune for your screen
@@ -127,7 +135,7 @@ main.py (orchestrator)
 │       └── salary       — salary-only forms (skipped)
 ├── LLMCover  (llm_cover.py)   — cover letter + scoring, compound-key session cache
 │   └── LLMAgent (core/llm_agent.py) — OpenRouter gateway
-└── Logger    (logger.py)      — data/applied_log.json + daily logs
+└── Logger    (logger.py)      — data/profiles/<name>/applied_log.json + daily logs
 ```
 
 Two contexts, zero overlap:

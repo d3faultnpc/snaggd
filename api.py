@@ -22,7 +22,7 @@ _BASE_DIR = Path(__file__).parent
 
 _api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=True)
 
-app = FastAPI(title="snaggd", version="0.3.1", docs_url="/api/docs")
+app = FastAPI(title="snaggd", version="0.4.0", docs_url="/api/docs")
 
 # ── In-memory session store ───────────────────────────────────────────────────
 # {id: {state, thread, stop_event, started_at, result, error}}
@@ -102,7 +102,7 @@ def _session_worker(session_id: str, req: SessionStartRequest) -> None:
 @app.get("/api/v1/health")
 def health():
     from config import CONFIG
-    return {"status": "ok", "version": "0.3.1", "headless": CONFIG.headless}
+    return {"status": "ok", "version": "0.4.0", "headless": CONFIG.headless}
 
 
 @app.post("/api/v1/session/start", dependencies=[Depends(_require_key)])
