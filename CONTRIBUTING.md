@@ -45,7 +45,7 @@ class MyAdapter(SiteAdapter):
         # return [(url, title, index), ...]
         ...
 
-    def process_vacancy(self, url, title, index, cover_gen, hr_matcher, logger) -> dict:
+    def process_vacancy(self, url, title, index, llm_cover, **kwargs) -> dict:
         # open vacancy → extract text → click apply → detect form → fill → submit
         # return applied_log entry dict
         ...
