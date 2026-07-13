@@ -148,23 +148,34 @@ def session_stop(session_id: str):
 
 
 @app.get("/api/v1/log", dependencies=[Depends(_require_key)])
-def log_list(limit: int = 50, offset: int = 0):
+def log_list(limit: int = 50, offset: int = 0, profile: Optional[str] = None):
     from logger import Logger
-    all_entries = Logger().load_applied_log()
+    try:
+        active_profile = resolve_profile(profile, exit_on_error=False)
+    except ProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_path = PROFILES_DIR / active_profile / "applied_log.json"
+    all_entries = Logger(applied_log_path=log_path).load_applied_log()
     # session_end entries are meta-records, exclude from vacancy log
     vacancy_entries = [e for e in all_entries if e.get("type") != "session_end"]
     return {
         "total": len(vacancy_entries),
         "offset": offset,
         "limit": limit,
+        "profile": active_profile,
         "entries": vacancy_entries[offset: offset + limit],
     }
 
 
 @app.get("/api/v1/log/{vacancy_id}", dependencies=[Depends(_require_key)])
-def log_detail(vacancy_id: str):
+def log_detail(vacancy_id: str, profile: Optional[str] = None):
     from logger import Logger, _extract_vacancy_id
-    for entry in Logger().load_applied_log():
+    try:
+        active_profile = resolve_profile(profile, exit_on_error=False)
+    except ProfileError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_path = PROFILES_DIR / active_profile / "applied_log.json"
+    for entry in Logger(applied_log_path=log_path).load_applied_log():
         eid = entry.get("vacancy_id") or _extract_vacancy_id(entry.get("url", ""))
         if eid == vacancy_id:
             return entry
