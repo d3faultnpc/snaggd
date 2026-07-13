@@ -19,6 +19,11 @@ __pycache__/
 *.pyo
 .DS_Store
 
+# PyInstaller build output (sidecar freeze)
+/build/
+/dist/
+*.spec
+
 # Test sandbox (mimics user data dir for subagent / local testing)
 sandbox/
 

@@ -253,3 +253,12 @@ def profile_detail(name: str):
     if not data_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     return _profile_info(name, data_dir)
+
+
+if __name__ == "__main__":
+    # Lets this file run directly (`python api.py` / a PyInstaller-frozen build of
+    # it) in addition to the `uvicorn api:app` dev invocation in the module
+    # docstring — a frozen build has no external `uvicorn` CLI to shell out to.
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=8000)
