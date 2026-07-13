@@ -33,13 +33,19 @@ def build_hh_url(role: str, city: str = "Москва",
       False — no schedule filter (default)
     """
     city_key = city.lower().strip()
-    area = _AREA.get(city_key, "1")
+    area = _AREA.get(city_key)  # None for any city not in the map — see below, don't guess
 
     params: dict = {
         "text": role,
-        "area": area,
         "search_field": search_scope if search_scope in ("name", "everywhere") else "everywhere",
     }
+    if area is not None:
+        params["area"] = area
+    # else: omit area entirely rather than defaulting to Moscow. Verified live (2026-07-13) that
+    # dropping the param searches across all HH regions (Russia + CIS network), not just Moscow —
+    # a silent wrong-city match was worse than a broader-than-intended one. _AREA only covers 5
+    # named cities; expanding it into a real region picker (or reading the account's own region)
+    # is separate future work, not part of this fix — see L2_tasks.md.
 
     schedule = "flexible" if flexible else _SCHEDULE.get(remote.lower())
     if schedule:
