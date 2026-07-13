@@ -3,14 +3,17 @@ import os
 from pathlib import Path
 from dataclasses import dataclass, field
 
+from app_paths import get_data_root
+
+# Persistent data root — repo root in dev, a real OS user-data dir when frozen (see
+# app_paths.py). Not necessarily where the app's own code/resources live.
+BASE_DIR = get_data_root()
+
 try:
     from dotenv import load_dotenv
-    load_dotenv(Path(__file__).parent / ".env")
+    load_dotenv(BASE_DIR / ".env")
 except ImportError:
     pass  # dotenv optional — env vars can be set externally
-
-# Project root = directory containing this file
-BASE_DIR = Path(__file__).parent
 
 # User data dir: override via DATA_DIR env var, default to ./data
 DATA_DIR = Path(os.getenv("DATA_DIR", BASE_DIR / "data"))

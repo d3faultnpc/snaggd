@@ -5,13 +5,17 @@ backend resolve profiles identically — no separate "legacy" behavior for eithe
 
 Deliberately import-light (no config.py dependency): main.py/wizard.py must call
 resolve_profile() BEFORE importing config, since DATA_DIR has to already be in
-os.environ by the time Config's dataclass fields are evaluated.
+os.environ by the time Config's dataclass fields are evaluated. Shares app_paths.py
+with config.py instead (dependency-free) so both agree on where data actually lives,
+frozen or not — see app_paths.py for why this can't just be Path(__file__).parent.
 """
 import sys
 from pathlib import Path
 from typing import NoReturn, Optional
 
-BASE_DIR = Path(__file__).parent
+from app_paths import get_data_root
+
+BASE_DIR = get_data_root()
 PROFILES_DIR = BASE_DIR / "data" / "profiles"
 
 
