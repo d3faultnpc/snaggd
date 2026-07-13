@@ -63,11 +63,20 @@ main.py (orchestrator)
 │   └── LLMAgent (core/llm_agent.py)          ← OpenRouter gateway, system prompt cache
 └── Logger (logger.py)                        ← applied_log.json + daily logs
 
-api.py                                        ← FastAPI REST wrapper (uvicorn api:app)
-                                                 All routes under /api/v1/ (corrected 2026-07-13):
-                                                 health, session/start|{id}/status|{id}/stop,
-                                                 log, log/{vacancy_id}, config, profiles,
-                                                 profiles/{name}. Auth: X-API-Key header.
+api.py                                        ← FastAPI REST wrapper. Runnable via `uvicorn api:app`
+                                                 (dev) or directly / frozen (`python api.py` — has
+                                                 its own `if __name__=="__main__"` calling
+                                                 uvicorn.run(), added 2026-07-14 so a PyInstaller
+                                                 freeze has an entrypoint to call).
+                                                 All routes under /api/v1/: health,
+                                                 session/start|{id}/status|{id}/stop, log,
+                                                 log/{vacancy_id}, config, profiles, profiles/{name}.
+                                                 Auth: X-API-Key header. `log`/`log/{vacancy_id}`
+                                                 take a `profile` query param (2026-07-14 fix) —
+                                                 resolved via the same resolve_profile() law as
+                                                 everything else; previously read the frozen legacy
+                                                 data/applied_log.json unconditionally, never the
+                                                 active profile's real log.
 
 onboarding/
 ├── resume_parser.py     ← multimodal PDF/DOCX/image/md → ResumeData + ResumeData dataclass
