@@ -373,7 +373,11 @@ still call, no longer independently reachable from the CLI.
   a first pass.
 
 **URL Builder (`onboarding/url_builder.py`):**
-Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_field` — wizard prompts for scope (title-only vs. title+body), default `everywhere` (task #2, confirmed shipped 2026-07-13).
+Builds HH search URLs from job prefs. Recognizes 6 named cities (5 + `remote`→Moscow alias); any
+other city omits the `area` param entirely rather than defaulting to Moscow (task #34, fixed
+2026-07-13, merged to dev 2026-07-14 — was silently pointing every unrecognized city's searches
+at Moscow with zero warning). Key param: `search_field` — wizard prompts for scope (title-only
+vs. title+body), default `everywhere` (task #2, confirmed shipped 2026-07-13).
 
 **Critical:** `data/search_urls.txt` must contain `/search/vacancy?text=...` URLs for
 keyword-based searches. One deliberate exception: the auto-detected wise link
