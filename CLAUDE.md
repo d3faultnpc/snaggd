@@ -1,4 +1,4 @@
-# CLAUDE.md — hh-auto-test
+# CLAUDE.md — snaggd
 
 ## Memory cascade
 All project context lives in cascading memory files.

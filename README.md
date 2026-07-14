@@ -38,8 +38,11 @@ All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `de
 ```bash
 git clone https://github.com/d3faultnpc/snaggd.git
 cd snaggd
-python -m venv venv && source venv/bin/activate  # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+./scripts/setup_venv.sh   # macOS/Linux — picks a Python >=3.9 (avoids old system python3)
+# Windows / manual alternative:
+#   python -m venv venv && venv\Scripts\activate
+#   pip install -r requirements.txt
+source venv/bin/activate
 playwright install chromium
 ```
 
