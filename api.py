@@ -5,7 +5,11 @@ Docs: http://127.0.0.1:8000/api/docs
 Auth: X-API-Key header (set API_KEY in .env)
 """
 
+import base64
+import dataclasses
 import json
+import re
+import tempfile
 import threading
 import uuid
 from datetime import datetime
@@ -16,9 +20,27 @@ from fastapi import Depends, FastAPI, HTTPException, Security
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 
+# Must run before the onboarding.resume_parser import below: ResumeParser.TEXT_MODEL/
+# MULTIMODAL_MODEL are class-level attrs read via os.getenv() at import time (session
+# 2026-07-15 finding — a real request hit dead hardcoded model slugs because .env's
+# LLM_MODEL/RESUME_PARSE_MODEL overrides hadn't loaded yet). get_data_root(), not a bare
+# Path(__file__).parent, so this also resolves correctly in a frozen/packaged build.
+from app_paths import get_data_root
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(get_data_root() / ".env")
+except ImportError:
+    pass
+
+from onboarding.resume_parser import ResumeData, ResumeParser
 from profiles import PROFILES_DIR, ProfileError, resolve_profile
 
 _BASE_DIR = Path(__file__).parent
+# Guards PROFILES_DIR / name from path traversal (name comes straight from the
+# request body) — deliberately not reusing onboarding/wizard.py here, its
+# module-level argparse + input() would hang this long-lived process if imported.
+_PROFILE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 _api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=True)
 
@@ -49,6 +71,16 @@ class ConfigPatchRequest(BaseModel):
     min_score: Optional[int] = None
     max_vacancies: Optional[int] = None
     max_skips: Optional[int] = None
+
+
+class ResumeParseRequest(BaseModel):
+    filename: str
+    content_b64: str
+
+
+class CandidateSaveRequest(BaseModel):
+    profile: str
+    candidate: dict
 
 
 # ── Background session worker ─────────────────────────────────────────────────
@@ -253,6 +285,79 @@ def profile_detail(name: str):
     if not data_dir.is_dir():
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     return _profile_info(name, data_dir)
+
+
+# ── Onboarding endpoints (GUI wizard) ───────────────────────────────────────
+# Deliberately reuse only ResumeParser/ResumeData (pure, no side effects at
+# import time) — never onboarding/wizard.py itself, see _PROFILE_NAME_RE comment.
+
+@app.post("/api/v1/onboarding/parse", dependencies=[Depends(_require_key)])
+def onboarding_parse(req: ResumeParseRequest):
+    import os
+
+    suffix = Path(req.filename).suffix.lower()
+    if suffix not in ResumeParser.SUPPORTED_TYPES:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {suffix or '(none)'}")
+
+    api_key = os.getenv("LLM_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="LLM_API_KEY not set on the server — cannot parse resumes")
+
+    try:
+        raw = base64.b64decode(req.content_b64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="content_b64 is not valid base64")
+
+    from openai import OpenAI
+    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            tmp.write(raw)
+            tmp_path = Path(tmp.name)
+        data = ResumeParser(client).parse_file(tmp_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Parse error: {e}")
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    return dataclasses.asdict(data)
+
+
+@app.post("/api/v1/onboarding/save", dependencies=[Depends(_require_key)])
+def onboarding_save(req: CandidateSaveRequest):
+    # fullmatch, not match — match("abc\n") passes because `$` accepts a trailing
+    # newline, which would silently become part of a directory name otherwise.
+    if not _PROFILE_NAME_RE.fullmatch(req.profile):
+        raise HTTPException(status_code=400, detail="profile must be alphanumeric (dash/underscore allowed)")
+
+    data_dir = PROFILES_DIR / req.profile
+    md_out = data_dir / "candidate.md"
+    existing_md = md_out.read_text(encoding="utf-8") if md_out.exists() else ""
+
+    # Validate + render BEFORE touching the filesystem. ResumeData(**candidate) only
+    # checks key names (dataclasses do no runtime type checking), so a well-formed-looking
+    # payload with e.g. identity as a string instead of a dict passes construction and
+    # only blows up (AttributeError) inside to_md() — catch that here too, not just
+    # TypeError, so a malformed payload 400s cleanly instead of 500ing after already
+    # having read (or worse, written) into data_dir.
+    try:
+        data = ResumeData(**req.candidate)
+        rendered_md = ResumeParser(None).to_md(data, existing_content=existing_md)
+    except (TypeError, AttributeError, KeyError) as e:
+        raise HTTPException(status_code=400, detail=f"candidate payload doesn't match schema: {e}")
+
+    data_dir.mkdir(parents=True, exist_ok=True)
+    md_out.write_text(rendered_md, encoding="utf-8")
+
+    json_out = data_dir / "candidate.json"
+    payload = dataclasses.asdict(data)
+    payload.pop("suggested_queries", None)  # parser convenience field, not part of the schema
+    json_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    return {"saved": True, "profile": req.profile}
 
 
 if __name__ == "__main__":
