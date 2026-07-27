@@ -28,7 +28,7 @@ class QuestionsHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.EMPLOYER_QUESTIONS
 
-    def process(self, page, cover_letter: str, vacancy_text: str = "", **kwargs) -> ProcessResult:
+    def process(self, page, vacancy_text: str = "", **kwargs) -> ProcessResult:
         inputs = page.query_selector_all('input[type="text"], input[type="radio"], input[type="checkbox"], textarea')
         if not inputs:
             return ProcessResult(
@@ -119,34 +119,27 @@ class QuestionsHandler(BaseHandler):
                 is_terminal=True, goal_reached=False
             )
 
-        # ── Step 3: pre-inject cover letter for cover-letter text fields ───────
+        # ── Step 3: LLM batch call for all fields — including any that ask for
+        # a cover/motivation letter. No keyword pre-injection: fill_form()'s
+        # own prompt recognizes that by meaning and writes real content for
+        # it directly, using the vacancy context it already has (session 56).
         answers: dict[str, str] = {}
-        cover_field_keys: set[str] = set()
-        if cover_letter:
-            for f in fields:
-                if f["type"] in ("radio_group", "checkbox_group"):
-                    continue
-                label_lower = f["label"].lower()
-                if "сопроводительное" in label_lower or "cover letter" in label_lower:
-                    answers[f["idx"]] = cover_letter
-                    cover_field_keys.add(f["idx"])
-                    print(f"   📝 Cover letter field detected: {f['label'][:50]}")
-
-        # ── Step 4: LLM batch call for remaining fields ───────────────────────
-        remaining = [f for f in fields if f["idx"] not in cover_field_keys]
-        if remaining and self._agent is not None:
+        if fields and self._agent is not None:
             try:
-                llm_answers = self._agent.fill_form(vacancy_text, remaining)
-                answers.update(llm_answers)
+                answers = self._agent.fill_form(vacancy_text, fields)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
-        elif remaining and self._agent is None:
-            print(f"   ⚠️ LLM unavailable — {len(remaining)} field(s) left blank")
+        elif fields and self._agent is None:
+            print(f"   ⚠️ LLM unavailable — {len(fields)} field(s) left blank")
 
         # ── Step 5: fill text / textarea fields ───────────────────────────────
         filled_count = 0
         total = len(text_fields) + len(radio_groups) + len(checkbox_groups)
-        cover_filled_keys: set[str] = set()  # keys where cover was successfully typed
+        # Cases where the LLM gave an answer but it couldn't actually be applied
+        # (no matching option, element interaction threw) — ambiguous, not a
+        # clean "no answer" skip. Surfaced via needs_debug_review below so these
+        # are retryable/inspectable instead of silently disappearing into prints.
+        ambiguous_reasons: list[str] = []
         print(f"   🔹 Filling questionnaire ({len(fields)} questions)...")
 
         for i, inp, label in text_fields:
@@ -159,10 +152,9 @@ class QuestionsHandler(BaseHandler):
                 filled_count += 1
                 print(f"   ✅ Field {i+1}: {label[:50]}")
                 page.wait_for_timeout(800)
-                if str(i) in cover_field_keys:
-                    cover_filled_keys.add(str(i))
             except Exception as e:
                 print(f"   ⚠️ Field {i+1} error: {e}")
+                ambiguous_reasons.append(f"text_field_error[{label[:30]}]: {e}")
 
         # ── Step 6: fill radio groups ─────────────────────────────────────────
         for name, grp in radio_groups.items():
@@ -212,10 +204,12 @@ class QuestionsHandler(BaseHandler):
                         clicked = True
                     except Exception as e:
                         print(f"   ⚠️ Radio '{name}' click error: {e}")
+                        ambiguous_reasons.append(f"radio_click_error[{name}]: {e}")
                     break
 
             if not clicked:
                 print(f"   ⚠️ Radio '{name}': no match for '{answer[:60]}'")
+                ambiguous_reasons.append(f"radio_no_match[{name}]: '{answer[:60]}'")
 
         # ── Step 7: fill checkboxes ───────────────────────────────────────────
         for question, grp in checkbox_groups.items():
@@ -232,6 +226,7 @@ class QuestionsHandler(BaseHandler):
                         page.wait_for_timeout(400)
                     except Exception as e:
                         print(f"   ⚠️ Checkbox '{question[:50]}' error: {e}")
+                        ambiguous_reasons.append(f"checkbox_error[{question[:30]}]: {e}")
                 else:
                     print(f"   ⏭ Checkbox '{question[:50]}': unchecked ({answer or 'no answer'})")
             else:
@@ -280,18 +275,25 @@ class QuestionsHandler(BaseHandler):
                             clicked = True
                         except Exception as e:
                             print(f"   ⚠️ Checkbox group click error: {e}")
+                            ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
                         break
                 if not clicked:
                     print(f"   ⚠️ Checkbox group '{question[:50]}': no match for '{answer[:60]}'")
+                    ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
 
         print(f"   ✅ Filled {filled_count}/{total} questions")
         self._wait_and_random_delay(page, 2000, 4000)
         result = self._submit(page, filled_count, total)
-        # Signal to the goal-directed loop that cover was successfully typed here,
-        # so ChatHandler (next layer) should recognise goal as reached even if
-        # "Добавить сопроводительное" button is absent.
-        if result.success and cover_filled_keys:
-            result.status = "questions_cover_sent"
+        # No questions_cover_sent signal anymore (session 56): a cover-shaped
+        # field answered here goes through the generic fill_form() path, not
+        # HH's native cover mechanism — it was never real grounds for telling
+        # a later ChatHandler layer "goal already reached, skip the real
+        # cover". Only hh_modal.py's own selector-recognized cover step still
+        # sets that flag (hh_modal_cover_sent, in adapter.py).
+        if ambiguous_reasons:
+            return self._flag_for_debug_review(
+                result, "; ".join(ambiguous_reasons), ambiguous_count=len(ambiguous_reasons)
+            )
         return result
 
     def verify_submission(self, page) -> bool:

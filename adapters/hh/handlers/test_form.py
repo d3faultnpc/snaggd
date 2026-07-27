@@ -1,20 +1,25 @@
 from .base import BaseHandler, FormType, ProcessResult
 from config import SELECTORS, CONFIG
 
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception:
-    _agent = None
-
 
 class TestFormHandler(BaseHandler):
     """
     Handler for employer test/question forms.
 
     Strategy: click 'Apply without answering questions'
-    (vacancy-response-link-no-questions), which opens the standard
-    form with a cover letter field and submit button.
+    (vacancy-response-link-no-questions) — one discrete step, then let the
+    goal-directed loop re-detect whatever page results (a screening
+    questionnaire, a cover-only form, chatik, etc.) and dispatch to the
+    handler that actually fits.
+
+    Session 56: this used to chain its own field-filling/cover/submit logic
+    internally, via a narrower duplicate of questions.py's fill_form()
+    collector (text fields only, no radio/checkbox). It was built 2026-05-29
+    already using the modern LLM batch-fill mechanism (not pre-LLM legacy),
+    but never migrated to the goal-directed loop idiom introduced two days
+    later — so it silently lagged questions.py's later capability growth
+    instead of deferring to it. Removed; this handler now does exactly one
+    thing, matching every other handler in the loop.
     """
 
     def can_handle(self, form_type: FormType) -> bool:
@@ -23,8 +28,7 @@ class TestFormHandler(BaseHandler):
     def verify_submission(self, page) -> bool:
         return self._poll_for_success(page, timeout_s=5)
 
-    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
-        # 1. Click "Apply without answering questions"
+    def process(self, page, **kwargs) -> ProcessResult:
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
             if not no_q_link or not no_q_link.is_visible():
@@ -57,144 +61,10 @@ class TestFormHandler(BaseHandler):
                 is_terminal=True, goal_reached=False
             )
 
-        # 2. A cover letter toggle may appear after the click — expand it
-        try:
-            toggle = page.query_selector(SELECTORS['letter_toggle'])
-            if toggle and toggle.is_visible():
-                print("   🔹 Expanding cover letter field (toggle)...")
-                toggle.click()
-                self._wait_and_random_delay(page, 1000, 2000)
-        except Exception:
-            pass
-
-        # 2.5. Fill remaining employer question fields (salary, custom questions)
-        # These are task-body textareas that stay after the "без теста" click.
-        url_before = page.url
-        self._fill_employer_questions(page, kwargs.get('vacancy_text', ''))
-        # HH may auto-submit after the last required field is filled (React event).
-        # If the page navigated, capture this as applied_no_cover and exit.
-        page.wait_for_timeout(800)
-        if page.url != url_before and 'vacancy' not in page.url:
-            print("   ℹ️ Page navigated after employer questions fill — application submitted")
-            return ProcessResult(
-                success=True,
-                status="applied_no_cover",
-                reason="Test skipped, employer questions filled; page auto-navigated (cover letter skipped)",
-                scenario="test_form_auto_submitted",
-                is_terminal=False, goal_reached=True
-            )
-
-        # 3. Fill cover letter — use specific selectors first, then fallback that
-        # explicitly excludes task-body (employer question) textareas filled in step 2.5
-        textarea = self._find_element_by_selectors(page, [
-            '[data-qa="vacancy-response-popup-form-letter-input"] textarea',
-            SELECTORS['popup_letter_input'],
-            '[data-qa="vacancy-response-letter-informer"] textarea',
-        ])
-        if not textarea:
-            for t in page.query_selector_all('textarea'):
-                if t.is_visible():
-                    in_task_body = t.evaluate("el => !!el.closest('[data-qa=\"task-body\"]')")
-                    if not in_task_body:
-                        textarea = t
-                        break
-
-        filled = False
-        if textarea:
-            print("   🔹 Filling cover letter...")
-            try:
-                textarea.type(cover_letter, delay=10)
-                filled = True
-                print("   ✅ Cover letter filled")
-                self._wait_and_random_delay(page, 2000, 3000)
-            except Exception as e:
-                print(f"   ⚠️ Fill error: {e}")
-
-        # 4. Wait for the submit button to become enabled, then click
-        for selector in [SELECTORS['popup_submit'], SELECTORS['letter_submit']]:
-            try:
-                page.wait_for_selector(f"{selector}:not([disabled])", timeout=5000)
-            except Exception:
-                pass
-            btn = page.query_selector(selector)
-            if btn and btn.is_visible():
-                print(f"   🔹 Clicking: '{btn.inner_text().strip()}'")
-                btn.scroll_into_view_if_needed()
-                btn.click()
-                self._wait_and_random_delay(page, 1500, 2500)
-
-                # Guard: check for validation errors (required field left empty)
-                try:
-                    invalid = page.query_selector('[aria-invalid="true"]')
-                    if invalid and invalid.is_visible():
-                        return ProcessResult(
-                            success=False,
-                            status="skipped_form_validation_error",
-                            reason="Form has a required field that failed validation after submit",
-                            scenario="test_form_validation_error",
-                            is_terminal=True, goal_reached=False
-                        )
-                except Exception:
-                    pass
-
-                self._wait_and_random_delay(page, 500, 1500)
-                if filled:
-                    return ProcessResult(
-                        success=True,
-                        status="applied",
-                        reason="Test skipped, cover letter submitted",
-                        scenario="test_form_skipped_cover_sent",
-                        is_terminal=True, goal_reached=True
-                    )
-                return ProcessResult(
-                    success=True,
-                    status="applied_no_cover",
-                    reason="Test skipped, application submitted without cover letter",
-                    scenario="test_form_skipped_no_cover",
-                    is_terminal=False, goal_reached=True
-                )
-
         return ProcessResult(
-            success=False,
-            status="skipped_test_form",
-            reason="Test skipped but submit button not found",
-            scenario="test_form_no_submit",
-            is_terminal=True, goal_reached=False
+            success=True,
+            status="test_skipped",
+            reason="Test skipped — handing off to the next detected form layer",
+            scenario="test_form_skipped",
+            is_terminal=False, goal_reached=False
         )
-
-    def _fill_employer_questions(self, page, vacancy_text: str) -> None:
-        """Fill task-body employer questions (salary, custom) that remain after 'без теста' click."""
-        if _agent is None:
-            return
-        try:
-            task_inputs = page.query_selector_all('[data-qa="task-body"] textarea, [data-qa="task-body"] input[type="text"]')
-            if not task_inputs:
-                return
-            fields = []
-            fillable = []
-            for i, el in enumerate(task_inputs):
-                if not el.is_visible():
-                    continue
-                label = el.evaluate("""el => {
-                    const body = el.closest('[data-qa="task-body"]');
-                    if (body) {
-                        const q = body.querySelector('[data-qa="task-question"]');
-                        if (q && q.innerText.trim()) return q.innerText.trim();
-                    }
-                    return el.getAttribute('placeholder') || '';
-                }""")
-                if label:
-                    fields.append({"idx": i, "label": label, "type": "textarea"})
-                    fillable.append((i, el))
-            if not fields:
-                return
-            print(f"   🔹 Filling {len(fields)} employer question(s) (task-body)...")
-            answers = _agent.fill_form(vacancy_text, fields)
-            for idx, el in fillable:
-                answer = answers.get(str(idx), "")
-                if answer:
-                    el.type(answer[:500], delay=10)
-                    self._wait_and_random_delay(page, 400, 800)
-                    print(f"   ✅ Employer question answered: {answer[:60]}")
-        except Exception as e:
-            print(f"   ⚠️ Employer question fill error: {e}")

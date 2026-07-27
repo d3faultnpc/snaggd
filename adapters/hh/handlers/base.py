@@ -63,8 +63,11 @@ class BaseHandler(ABC):
         pass
 
     @abstractmethod
-    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
-        """Process the form. kwargs may include vacancy_text (used by QuestionsHandler)."""
+    def process(self, page, **kwargs) -> ProcessResult:
+        """Process the form. kwargs: vacancy_text, vacancy_id, llm_cover (an
+        LLMCover instance — call llm_cover.cover(vacancy_text, vacancy_id) on
+        demand, only if this handler actually needs to send a real cover
+        letter; never generate one eagerly), reporter, cover_sent_via_modal."""
         pass
 
     @abstractmethod
@@ -120,6 +123,25 @@ class BaseHandler(ABC):
         import time
         delay = random.randint(min_ms, max_ms)
         time.sleep(delay / 1000.0)
+
+    @staticmethod
+    def _flag_for_debug_review(result: "ProcessResult", reason: str, **extra_details) -> "ProcessResult":
+        """Surfaces an ambiguous mid-form failure (LLM answer couldn't be
+        applied, a bot-message selector never matched, etc.) as
+        needs_debug_review instead of letting a downstream success status
+        quietly hide it. Preserves the underlying outcome in details, and
+        needs_debug_review is retry-exempt in logger.is_processed() — no
+        manual log surgery needed to revisit it later."""
+        return ProcessResult(
+            success=result.success,
+            status="needs_debug_review",
+            reason=f"Ambiguous execution: {reason}",
+            scenario="needs_debug_review",
+            details={**(result.details or {}), "debug_reason": reason,
+                     "underlying_status": result.status, **extra_details},
+            is_terminal=result.is_terminal,
+            goal_reached=result.goal_reached,
+        )
 
     def _find_element_by_selectors(self, page, selectors: list, visible_only: bool = True):
         """Finds the first element matching any selector in the list."""

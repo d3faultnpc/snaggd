@@ -1,28 +1,46 @@
 from .base import BaseHandler, FormType, ProcessResult
 from config import SELECTORS, FORM_KEYWORDS
 
+try:
+    from core.llm_agent import LLMAgent
+    _agent = LLMAgent()
+except Exception:
+    _agent = None
+
 
 class HHModalHandler(BaseHandler):
     """
     Handler for HH modals with navigation.
 
     Scenarios:
-      A. Form with textarea → fill → "Submit" → success
-      B. After "Submit": error "Application already viewed" → click "Chat"
-      C. No textarea → just click the navigation button
+      A. Recognized cover-letter textarea (real HH data-qa markup, not a
+         keyword guess) → fill on demand → "Submit" → success.
+      B. No cover textarea — this step is one of HH's own variable
+         screening steps instead (location, salary expectation, English
+         level, relocation, whatever else gets added later): collect
+         whatever's visible blindly, one LLM batch call decides content per
+         field, same fill_form() mechanism questions.py uses (session 56).
+      C. After "Submit": error "Application already viewed" → click "Chat".
     """
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.HH_MODAL_STEP1, FormType.HH_MODAL_STEP2]
 
-    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
-        # 1. Find and fill the cover letter textarea
+    def process(self, page, **kwargs) -> ProcessResult:
+        llm_cover = kwargs.get("llm_cover")
+        vacancy_id = kwargs.get("vacancy_id")
+        vacancy_text = kwargs.get("vacancy_text", "")
+        ambiguous_reasons: list[str] = []
+
+        # 1. Find the recognized cover-letter textarea (real HH selector, not
+        # a keyword match on label text — legitimate structural recognition).
         textarea = self._find_cover_textarea(page)
         filled = False
 
         if textarea:
             print("   🔹 Filling cover letter...")
             try:
+                cover_letter = llm_cover.cover(vacancy_text, vacancy_id)
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
                 textarea.type(cover_letter, delay=5, timeout=60000)
@@ -32,7 +50,13 @@ class HHModalHandler(BaseHandler):
             except Exception as e:
                 print(f"   ⚠️ Textarea fill error: {e}")
         else:
-            print("   ⚠️ Cover letter field not found")
+            # No recognized cover field on this step — it's one of HH's
+            # variable screening steps instead. Fill whatever's here blindly.
+            filled_count, ambiguous_reasons = self._fill_generic_fields(page, vacancy_text)
+            if filled_count:
+                print(f"   ✅ Filled {filled_count} field(s) on this step via LLM")
+            else:
+                print("   ⚠️ Cover letter field not found, no other fillable fields either")
 
         # 2. Click the submit button (wait for it to become enabled after filling)
         nav_button = self._find_nav_button(page)
@@ -60,7 +84,7 @@ class HHModalHandler(BaseHandler):
         # 4. Cover filled — continue loop so chatik provides the terminal status.
         # Modal is an unstable HH experiment; chatik is the only reliable ground truth.
         if filled:
-            return ProcessResult(
+            result = ProcessResult(
                 success=True,
                 status="hh_modal_cover_sent",
                 reason=f"Cover letter submitted via modal, button: '{button_text}'",
@@ -69,15 +93,27 @@ class HHModalHandler(BaseHandler):
                 is_terminal=False,
                 goal_reached=False
             )
-        return ProcessResult(
-            success=True,
-            status="hh_modal_navigation",
-            reason=f"HH modal navigation: '{button_text}'",
-            scenario="hh_modal_no_cover",
-            details={'button_text': button_text},
-            is_terminal=False,
-            goal_reached=False
-        )
+        else:
+            result = ProcessResult(
+                success=True,
+                status="hh_modal_navigation",
+                reason=f"HH modal navigation: '{button_text}'",
+                scenario="hh_modal_no_cover",
+                details={'button_text': button_text},
+                is_terminal=False,
+                goal_reached=False
+            )
+
+        # An LLM answer for one of this step's generic fields (radio/checkbox/
+        # select) that couldn't actually be applied — ambiguous, not a clean
+        # "no answer" skip. Surfaced via needs_debug_review, same as
+        # questions.py's own equivalent tracking, instead of disappearing
+        # into a print().
+        if ambiguous_reasons:
+            return self._flag_for_debug_review(
+                result, "; ".join(ambiguous_reasons), ambiguous_count=len(ambiguous_reasons)
+            )
+        return result
 
     # ------------------------------------------------------------------
     # Helpers
@@ -114,6 +150,302 @@ class HHModalHandler(BaseHandler):
             return any(kw in placeholder for kw in salary_keywords)
         except Exception:
             return False
+
+    def _fill_generic_fields(self, page, vacancy_text: str) -> tuple[int, list]:
+        """Blind field collection for a modal step that has no recognized
+        cover-letter field — HH's own variable screening steps (location,
+        salary expectation, English level, relocation, and whatever else
+        gets added later). Same DOM-only, no-keyword-guessing approach as
+        questions.py's collector: gather text/radio/checkbox/select fields
+        purely by structure, hand them to one LLM batch call, fill by the
+        answer. Returns (count actually filled, ambiguous_reasons) — the
+        latter mirrors questions.py's own tracking of an LLM answer that
+        couldn't actually be applied (no matching option, element
+        interaction threw), surfaced via needs_debug_review by the caller
+        instead of disappearing into a print().
+        """
+        if _agent is None:
+            return 0, []
+
+        fields = []
+        ambiguous_reasons: list[str] = []
+        text_fields = []       # (idx, element)
+        radio_groups = {}      # name → {question, options, elements}
+        checkbox_groups = {}   # question_text → {idx, question, elements}
+        select_fields = []     # (idx, element)
+
+        inputs = page.query_selector_all('input[type="text"], input[type="radio"], input[type="checkbox"], textarea')
+        for i, inp in enumerate(inputs):
+            if not inp.is_visible():
+                continue
+            itype = inp.get_attribute("type") or inp.evaluate("el => el.tagName.toLowerCase()")
+
+            if itype == "radio":
+                name = inp.get_attribute("name") or f"unnamed_{i}"
+                opt_text = self._extract_radio_option_text(inp)
+                val = inp.get_attribute("value") or ""
+                if name not in radio_groups:
+                    radio_groups[name] = {"question": self._extract_label(inp), "options": [], "elements": []}
+                radio_groups[name]["options"].append(opt_text)
+                radio_groups[name]["elements"].append((i, inp, val, opt_text))
+            elif itype == "checkbox":
+                question = self._extract_label(inp)
+                option = self._extract_radio_option_text(inp)
+                if question:
+                    if question not in checkbox_groups:
+                        checkbox_groups[question] = {"idx": f"cbgroup_{len(checkbox_groups)}", "question": question, "elements": []}
+                    checkbox_groups[question]["elements"].append((i, inp, option or f"option_{i}"))
+            else:
+                # Salary fields are included here (unlike the cover-textarea
+                # path, which deliberately excludes them to avoid cross-
+                # filling) — a salary-expectation question is still worth
+                # answering through the generic LLM batch.
+                label = self._extract_label(inp)
+                if label:
+                    text_fields.append((i, inp, label))
+
+        for i, sel in enumerate(page.query_selector_all('select')):
+            if not sel.is_visible():
+                continue
+            label = self._extract_label(sel)
+            options = [o.inner_text().strip() for o in sel.query_selector_all('option') if o.inner_text().strip()]
+            if label and options:
+                name = sel.get_attribute("name") or f"select_{i}"
+                select_fields.append((i, sel, label, options, name))
+
+        for i, _, label in text_fields:
+            fields.append({"idx": str(i), "label": label, "type": "text"})
+        for name, grp in radio_groups.items():
+            if grp["question"]:
+                fields.append({"idx": f"radio_{name}", "label": grp["question"], "type": "radio_group", "options": grp["options"]})
+        for question, grp in checkbox_groups.items():
+            if len(grp["elements"]) == 1:
+                i, _, _ = grp["elements"][0]
+                fields.append({"idx": f"checkbox_{i}", "label": question, "type": "checkbox"})
+            else:
+                fields.append({"idx": grp["idx"], "label": question, "type": "checkbox_group",
+                                "options": [opt for _, _, opt in grp["elements"]]})
+        for i, _, label, options, _name in select_fields:
+            fields.append({"idx": f"select_{i}", "label": label, "type": "select", "options": options})
+
+        if not fields:
+            return 0, []
+
+        try:
+            answers = _agent.fill_form(vacancy_text, fields)
+        except Exception as e:
+            print(f"   ⚠️ LLM fill_form error: {e}")
+            return 0, []
+
+        filled_count = 0
+
+        for i, inp, label in text_fields:
+            answer = answers.get(str(i), "")
+            if not answer:
+                continue
+            try:
+                inp.type(answer, delay=10)
+                filled_count += 1
+                self._wait_and_random_delay(page, 400, 800)
+            except Exception as e:
+                print(f"   ⚠️ Text field error: {e}")
+
+        for name, grp in radio_groups.items():
+            answer = answers.get(f"radio_{name}", "").strip()
+            if not answer:
+                continue
+            # "open: <free text>" matches the option whose HTML value=="open"
+            # (the actual "Свой вариант" input), not its display text — a
+            # freeform answer will essentially never equal an option's own
+            # label verbatim. Mirrors questions.py's real, working logic.
+            free_text = None
+            if answer.lower().startswith("open:"):
+                free_text = answer[5:].strip()
+                target = "open"
+            else:
+                target = answer.strip().lower()
+            clicked = False
+            for idx, el, val, opt_text in grp["elements"]:
+                is_open = val == "open"
+                matches_open = is_open and free_text is not None
+                matches_text = not is_open and opt_text.strip().lower() == target
+                if matches_open or matches_text:
+                    try:
+                        el.click()
+                        self._wait_and_random_delay(page, 400, 800)
+                        if matches_open and free_text:
+                            hidden_ta = None
+                            try:
+                                page.wait_for_selector(
+                                    f'textarea[name="{name}_text"]',
+                                    state="visible", timeout=3000
+                                )
+                                hidden_ta = page.query_selector(f'textarea[name="{name}_text"]')
+                            except Exception:
+                                pass
+                            if hidden_ta and hidden_ta.is_visible():
+                                hidden_ta.type(free_text, delay=10)
+                            else:
+                                ambiguous_reasons.append(f"radio_open_no_textarea[{name}]")
+                        filled_count += 1
+                        clicked = True
+                    except Exception as e:
+                        print(f"   ⚠️ Radio click error: {e}")
+                        ambiguous_reasons.append(f"radio_click_error[{name}]: {e}")
+                    break
+            if not clicked:
+                ambiguous_reasons.append(f"radio_no_match[{name}]: '{answer[:60]}'")
+
+        for question, grp in checkbox_groups.items():
+            elems = grp["elements"]
+            if len(elems) == 1:
+                i, inp, _ = elems[0]
+                answer = answers.get(f"checkbox_{i}", "").strip().lower()
+                if answer.startswith(("yes", "да")):
+                    try:
+                        inp.check()
+                        filled_count += 1
+                        self._wait_and_random_delay(page, 400, 800)
+                    except Exception as e:
+                        print(f"   ⚠️ Checkbox error: {e}")
+                        ambiguous_reasons.append(f"checkbox_error[{question[:30]}]: {e}")
+            else:
+                answer = answers.get(grp["idx"], "").strip()
+                if not answer:
+                    continue
+                # Same "Свой вариант" recognition as questions.py — checkbox
+                # groups don't carry a value=="open" attribute the way radio
+                # inputs do, so this matches by the option's own display text.
+                free_text = None
+                if answer.lower().startswith("open:"):
+                    free_text = answer[5:].strip()
+                    target = "open"
+                else:
+                    target = answer.strip().lower()
+                clicked = False
+                for i, inp, opt_text in elems:
+                    norm_opt = opt_text.strip().lower()
+                    is_free = norm_opt in ("свой вариант", "другое", "other")
+                    matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
+                    matches_opt = not is_free and norm_opt == target
+                    if matches_free or matches_opt:
+                        try:
+                            inp.check()
+                            self._wait_and_random_delay(page, 400, 800)
+                            if is_free and free_text:
+                                try:
+                                    ta = inp.evaluate_handle("""el => {
+                                        const body = el.closest('[data-qa="task-body"]');
+                                        if (!body) return null;
+                                        for (const ta of body.querySelectorAll('textarea')) {
+                                            if (ta.offsetParent !== null) return ta;
+                                        }
+                                        return null;
+                                    }""")
+                                    ta_el = ta.as_element()
+                                    if ta_el and ta_el.is_visible():
+                                        ta_el.type(free_text, delay=10)
+                                    else:
+                                        ambiguous_reasons.append(f"checkbox_group_open_no_textarea[{question[:30]}]")
+                                except Exception as e:
+                                    ambiguous_reasons.append(f"checkbox_group_open_textarea_error[{question[:30]}]: {e}")
+                            filled_count += 1
+                            clicked = True
+                        except Exception as e:
+                            print(f"   ⚠️ Checkbox group error: {e}")
+                            ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
+                        break
+                if not clicked:
+                    ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
+
+        for i, sel, label, options, name in select_fields:
+            answer = answers.get(f"select_{i}", "").strip()
+            if not answer:
+                continue
+            # Some selects carry a "Свой ответ"/"другое" option that reveals
+            # a hidden text field, same mechanism as radio_group's "Свой
+            # вариант" — reuse that exact convention rather than treating
+            # select as having no free-text escape at all.
+            free_text = None
+            if answer.lower().startswith("open:"):
+                free_text = answer[5:].strip()
+                custom_option = next(
+                    (o for o in options if o.strip().lower() in ("свой ответ", "свой вариант", "другое", "other")),
+                    None
+                )
+                target_label = custom_option or answer
+            else:
+                target_label = answer
+            try:
+                sel.select_option(label=target_label)
+                filled_count += 1
+                self._wait_and_random_delay(page, 400, 800)
+                if free_text:
+                    hidden_ta = None
+                    try:
+                        page.wait_for_selector(
+                            f'textarea[name="{name}_text"]',
+                            state="visible", timeout=3000
+                        )
+                        hidden_ta = page.query_selector(f'textarea[name="{name}_text"]')
+                    except Exception:
+                        pass
+                    if hidden_ta and hidden_ta.is_visible():
+                        hidden_ta.type(free_text, delay=10)
+                    else:
+                        ambiguous_reasons.append(f"select_open_no_textarea[{label[:30]}]")
+            except Exception as e:
+                print(f"   ⚠️ Select field error: {e}")
+                ambiguous_reasons.append(f"select_no_match[{label[:30]}]: '{answer[:60]}'")
+
+        return filled_count, ambiguous_reasons
+
+    def _extract_label(self, inp) -> str:
+        """Finds the human-readable question/label text for a field."""
+        try:
+            text = inp.evaluate("""el => {
+                const body = el.closest('[data-qa="task-body"]');
+                if (body) {
+                    const q = body.querySelector('[data-qa="task-question"]');
+                    if (q && q.innerText.trim()) return q.innerText.trim();
+                }
+                return '';
+            }""")
+            if text and text.strip():
+                return text.strip()[:300]
+            for xpath in ("xpath=..//label", "xpath=..//..//label"):
+                el = inp.query_selector(xpath)
+                if el:
+                    t = el.inner_text().strip()
+                    if t:
+                        return t[:300]
+            return (inp.get_attribute("placeholder") or inp.get_attribute("aria-label") or "")[:200]
+        except Exception:
+            return ""
+
+    def _extract_radio_option_text(self, inp) -> str:
+        """Finds the visible option text for a radio/checkbox input."""
+        try:
+            return inp.evaluate("""el => {
+                const norm = s => s.replace(/ /g, ' ').trim();
+                const cell = el.closest('[data-qa="cell"]');
+                if (cell) {
+                    const t = cell.querySelector('[data-qa="cell-text-content"]');
+                    if (t && norm(t.innerText)) return norm(t.innerText);
+                }
+                const lbl = el.closest('label');
+                if (lbl) return norm(lbl.innerText);
+                const id = el.id;
+                if (id) {
+                    const forLbl = document.querySelector('label[for="' + id + '"]');
+                    if (forLbl) return norm(forLbl.innerText);
+                }
+                const next = el.nextElementSibling;
+                if (next) return norm(next.innerText);
+                return el.value || '';
+            }""")
+        except Exception:
+            return inp.get_attribute("value") or ""
 
     def _find_nav_button(self, page):
         """Finds the navigation button ('Submit', 'Apply', 'Next', etc.).

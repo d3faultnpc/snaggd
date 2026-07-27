@@ -63,20 +63,9 @@ main.py (orchestrator)
 │   └── LLMAgent (core/llm_agent.py)          ← OpenRouter gateway, system prompt cache
 └── Logger (logger.py)                        ← applied_log.json + daily logs
 
-api.py                                        ← FastAPI REST wrapper. Runnable via `uvicorn api:app`
-                                                 (dev) or directly / frozen (`python api.py` — has
-                                                 its own `if __name__=="__main__"` calling
-                                                 uvicorn.run(), added 2026-07-14 so a PyInstaller
-                                                 freeze has an entrypoint to call).
-                                                 All routes under /api/v1/: health,
-                                                 session/start|{id}/status|{id}/stop, log,
-                                                 log/{vacancy_id}, config, profiles, profiles/{name}.
-                                                 Auth: X-API-Key header. `log`/`log/{vacancy_id}`
-                                                 take a `profile` query param (2026-07-14 fix) —
-                                                 resolved via the same resolve_profile() law as
-                                                 everything else; previously read the frozen legacy
-                                                 data/applied_log.json unconditionally, never the
-                                                 active profile's real log.
+api.py                                        ← FastAPI REST wrapper (uvicorn api:app)
+                                                 Endpoints: /health, /session/start|status|stop,
+                                                 /log, /config. Auth: X-API-Key header.
 
 onboarding/
 ├── resume_parser.py     ← multimodal PDF/DOCX/image/md → ResumeData + ResumeData dataclass
@@ -373,11 +362,7 @@ still call, no longer independently reachable from the CLI.
   a first pass.
 
 **URL Builder (`onboarding/url_builder.py`):**
-Builds HH search URLs from job prefs. Recognizes 6 named cities (5 + `remote`→Moscow alias); any
-other city omits the `area` param entirely rather than defaulting to Moscow (task #34, fixed
-2026-07-13, merged to dev 2026-07-14 — was silently pointing every unrecognized city's searches
-at Moscow with zero warning). Key param: `search_field` — wizard prompts for scope (title-only
-vs. title+body), default `everywhere` (task #2, confirmed shipped 2026-07-13).
+Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_field=name` (title only) — pending change to `everywhere` (task #2).
 
 **Critical:** `data/search_urls.txt` must contain `/search/vacancy?text=...` URLs for
 keyword-based searches. One deliberate exception: the auto-detected wise link

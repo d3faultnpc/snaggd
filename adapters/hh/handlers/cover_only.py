@@ -7,7 +7,7 @@ class CoverOnlyHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.COVER_ONLY, FormType.UNKNOWN]
 
-    def process(self, page, cover_letter: str, **kwargs) -> ProcessResult:
+    def process(self, page, **kwargs) -> ProcessResult:
         """Fills the cover letter field and submits."""
 
         textarea = self._find_element_by_selectors(page, SELECTORS['cover_textarea'])
@@ -34,6 +34,12 @@ class CoverOnlyHandler(BaseHandler):
             )
 
         try:
+            # Generated on demand, only now that we know a real cover field
+            # exists and isn't actually a salary field (session 56) — cached
+            # by vacancy_id, so an earlier layer's cover (if any) gets reused
+            # instead of a fresh one.
+            llm_cover = kwargs.get("llm_cover")
+            cover_letter = llm_cover.cover(kwargs.get("vacancy_text", ""), kwargs.get("vacancy_id"))
             print("   🔹 Filling cover letter...")
             textarea.type(cover_letter, delay=10)
             print("   ✅ Cover letter filled")

@@ -2,6 +2,7 @@
 
 import os
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -28,21 +29,37 @@ class HHAdapter(SiteAdapter):
     def auth_method(self) -> str:
         return "cookie"
 
-    def __init__(self, data_dir=None):
+    def __init__(self, data_dir=None, reporter=None):
         from pathlib import Path as _Path
         self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
-        self.browser = HHBrowser()
+        self.browser = HHBrowser(reporter=reporter)
         self.detector = FormDetector()
         self.handlers = FormHandlers(data_dir=self._data_dir)
         self.llm_cover = LLMCover(data_dir=self._data_dir)
+        # utils.events.EventReporter (API sessions) or None (CLI) — see _say().
+        self._reporter = reporter
         self._unverified_count = 0
         self._seen_descriptions: dict = {}  # desc_hash → vacancy_id; resets per session
+
+    def _say(self, message: str, level: str = "info") -> None:
+        """print + mirror into the API session's event feed when one is attached.
+
+        The printed string stays byte-identical to the bare print() each call
+        site replaced (CLI contract — main.py runs have no reporter and must
+        look exactly as before). The event copy drops the leading CLI
+        indentation, which carries no meaning in the GUI stream.
+        """
+        print(message)
+        if self._reporter is not None:
+            self._reporter.emit(message.strip(), level=level)
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
     def run(self, logger, dry_run: bool = False, debug: bool = False,
             stop_event: Optional[threading.Event] = None,
-            max_vacancies: Optional[int] = None) -> list:
+            pause_event: Optional[threading.Event] = None,
+            max_vacancies: Optional[int] = None,
+            target_url: Optional[str] = None) -> list:
         """Full session loop. Returns new applied_log entries from this run.
 
         Three-tier stop filter (all adapter-agnostic config from job_preferences.md):
@@ -51,6 +68,15 @@ class HHAdapter(SiteAdapter):
           Level 2 — categories     : LLM semantic detection inside score_vacancy call.
         All blocked vacancies are written to applied_log with specific statuses so the
         dashboard can render a complete funnel (found → scored → applied).
+
+        pause_event (sprint N+2, session 54): soft-stop, distinct from
+        stop_event. Checked at the same point, top of the per-vacancy loop —
+        current vacancy (if any) already finished, next one hasn't opened
+        yet. While set, blocks in place rather than returning: does NOT call
+        self.close(), the browser (and its own PID/state) stays exactly as
+        it was until either resumed (event cleared) or stop_event also
+        fires, matching the "finish current, don't advance, keep browser
+        alive" spec (session 53).
         """
         applied_log = logger.load_applied_log()
         initial_count = len(applied_log)
@@ -58,20 +84,35 @@ class HHAdapter(SiteAdapter):
 
         stop_filters = load_stop_filters(CONFIG.data_dir)
         if not stop_filters.is_empty():
-            print(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}")
+            self._say(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}")
 
         session_dir_base = None
         if debug:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             session_dir_base = _DEBUG_DIR / f"session_{ts}"
             session_dir_base.mkdir(parents=True, exist_ok=True)
-            print(f"🐛 [{self.name()}] DEBUG — snapshots in: {session_dir_base}")
+            self._say(f"🐛 [{self.name()}] DEBUG — snapshots in: {session_dir_base}")
 
-        vacancies = self.get_vacancies()
+        vacancies = self.get_vacancies(target_url=target_url)
         if not vacancies:
-            print(f"❌ [{self.name()}] No vacancies found")
+            self._say(f"❌ [{self.name()}] No vacancies found", level="error")
             return []
-        print(f"✅ [{self.name()}] Found {len(vacancies)} vacancies")
+        # Hard safety guard (session 55 live-run incident): target_url must
+        # produce exactly one vacancy matching the requested one. Stops the
+        # run outright rather than silently falling through to whatever
+        # get_vacancies() actually returned — this is deliberately paranoid
+        # given the failure mode observed was "override silently didn't
+        # apply, normal search vacancies got real applications submitted."
+        if target_url:
+            if len(vacancies) != 1 or target_url.split('?')[0].rstrip('/') not in vacancies[0][0]:
+                self._say(
+                    f"❌ [{self.name()}] Single-URL safety check failed — "
+                    f"expected exactly [{target_url}], got {vacancies}. Stopping, "
+                    f"not risking applying to the wrong vacancy.",
+                    level="error",
+                )
+                return []
+        self._say(f"✅ [{self.name()}] Found {len(vacancies)} vacancies")
 
         processed_count = 0
         skip_count = 0
@@ -81,24 +122,38 @@ class HHAdapter(SiteAdapter):
 
         for url, title, index, search_source in vacancies:
             if stop_event and stop_event.is_set():
-                print(f"⏹ [{self.name()}] Stop requested via API")
+                self._say(f"⏹ [{self.name()}] Stop requested via API")
                 termination_reason = "stopped"
                 termination_detail = "Stop requested via API"
                 break
+            if pause_event and pause_event.is_set():
+                self._say(f"⏸ [{self.name()}] Paused before #{index} — browser stays open")
+                logger.log_daily(f"[{self.name()}] Paused before #{index}")
+                while pause_event.is_set():
+                    if stop_event and stop_event.is_set():
+                        break
+                    time.sleep(1)
+                if stop_event and stop_event.is_set():
+                    self._say(f"⏹ [{self.name()}] Stop requested via API (while paused)")
+                    termination_reason = "stopped"
+                    termination_detail = "Stop requested via API"
+                    break
+                self._say(f"▶ [{self.name()}] Resumed before #{index}")
+                logger.log_daily(f"[{self.name()}] Resumed before #{index}")
             if processed_count >= vacancy_limit:
-                print(f"⏹ [{self.name()}] Limit reached: {processed_count}")
+                self._say(f"⏹ [{self.name()}] Limit reached: {processed_count}")
                 termination_reason = "max_vacancies_reached"
                 termination_detail = f"{processed_count} vacancies processed"
                 break
             if skip_count >= CONFIG.max_skips:
-                print(f"⏹ [{self.name()}] Skip limit: {skip_count}")
+                self._say(f"⏹ [{self.name()}] Skip limit: {skip_count}")
                 termination_reason = "max_skips_reached"
                 termination_detail = f"{skip_count} consecutive skips"
                 break
 
             existing = logger.is_processed(url, applied_log)
             if existing:
-                print(f"⏭ #{index} already processed ({existing})")
+                self._say(f"⏭ #{index} already processed ({existing})")
                 continue  # dedup hit doesn't count toward consecutive skip budget
 
             # ── Level 0: title keyword filter (no LLM, no page open) ────────────
@@ -107,7 +162,7 @@ class HHAdapter(SiteAdapter):
                 (kw for kw in stop_filters.title_keywords if kw in title_lower), None
             )
             if matched_kw:
-                print(f"🚫 #{index} title_blocked '{matched_kw}': {title}")
+                self._say(f"🚫 #{index} title_blocked '{matched_kw}': {title}")
                 logger.log_result(
                     applied_log, url=url, title=title,
                     status="title_blocked",
@@ -120,7 +175,7 @@ class HHAdapter(SiteAdapter):
                 continue
 
             print(f"\n{'='*50}")
-            print(f"[{self.name()}] VACANCY #{index}: {title}")
+            self._say(f"[{self.name()}] VACANCY #{index}: {title}")
             print(f"URL: {url}")
             logger.log_daily(f"[{self.name()}] VACANCY #{index}: {title} — {url}")
 
@@ -139,8 +194,14 @@ class HHAdapter(SiteAdapter):
             # can dedup by vacancy ID regardless of tracking URL meta= changes.
             canonical = self.browser.canonical_url or url
             vacancy_id = self.browser.vacancy_id
+            # Real page title over the passed-in one when available — the
+            # passed-in title IS real for a normal search run (scraped from
+            # results), but is a 'vacancy/{id}' placeholder in single-URL/
+            # target_url mode (no scrape step at all) — session 55, found
+            # live sitting in History/Dashboard's Position column.
+            effective_title = self.browser.vacancy_title or title
             logger.log_result(
-                applied_log, url=canonical, title=title,
+                applied_log, url=canonical, title=effective_title,
                 status=result['status'], reason=result['reason'],
                 scenario=result.get('scenario', 'unknown'),
                 vacancy_id=vacancy_id,
@@ -151,11 +212,14 @@ class HHAdapter(SiteAdapter):
             # count toward the per-session application budget — only genuine attempts do.
             if result.get('scenario') != 'skip':
                 processed_count += 1
-                print(f"📈 Progress: {processed_count}/{CONFIG.max_vacancies_per_session}")
+                # vacancy_limit, not CONFIG.max_vacancies_per_session — API runs
+                # pass max_vacancies= (quota-capped), and the old denominator
+                # printed the global config value instead of this run's real one.
+                self._say(f"📈 Progress: {processed_count}/{vacancy_limit}")
             else:
                 skip_count += 1
             logger.log_daily(f"Result: {result['status']} — {result['reason']}")
-            print(f"📊 Status: {result['status']} — {result['reason']}")
+            self._say(f"📊 Status: {result['status']} — {result['reason']}")
 
         new_entries = applied_log[initial_count:]
         logger.log_result(
@@ -166,7 +230,7 @@ class HHAdapter(SiteAdapter):
             processed=processed_count,
         )
         logger.log_daily(f"[{self.name()}] Session ended: {termination_reason} — {termination_detail}")
-        print(f"🏁 [{self.name()}] Session ended: {termination_reason} — {termination_detail}")
+        self._say(f"🏁 [{self.name()}] Session ended: {termination_reason} — {termination_detail}")
         return new_entries
 
     def verify(self) -> bool:
@@ -190,8 +254,8 @@ class HHAdapter(SiteAdapter):
     def close(self) -> None:
         self.browser.close()
 
-    def get_vacancies(self) -> list:
-        return self.browser.get_vacancy_urls()
+    def get_vacancies(self, target_url: str = None) -> list:
+        return self.browser.get_vacancy_urls(target_url=target_url)
 
     def process_vacancy(self, url: str, title: str, index: int,
                         llm_cover,
@@ -217,12 +281,12 @@ class HHAdapter(SiteAdapter):
                     # Human-like pause even for skipped vacancies — avoids open→close instantly pattern
                     # that triggers HH bot filters.
                     delay = random_delay(7000, 10000)
-                    print(f"   ⏳ Pause {delay/1000:.1f}s (human behavior)")
-                    print(f"   ⏭ Already processed as canonical ({existing}): {canonical}")
+                    self._say(f"   ⏳ Pause {delay/1000:.1f}s (human behavior)")
+                    self._say(f"   ⏭ Already processed as canonical ({existing}): {canonical}")
                     return {'status': existing, 'reason': f'Already processed: {canonical}', 'scenario': 'skip'}
 
             delay = random_delay(15000, 25000)
-            print(f"   ⏳ Pause {delay/1000:.1f}s (reading vacancy)")
+            self._say(f"   ⏳ Pause {delay/1000:.1f}s (reading vacancy)")
 
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "01_vacancy_page")
@@ -235,7 +299,7 @@ class HHAdapter(SiteAdapter):
 
             if company:
                 rating_str = f"{employer_rating}/5.0" if employer_rating is not None else "no reviews"
-                print(f"   🏢 {company} | HH rating: {rating_str}")
+                self._say(f"   🏢 {company} | HH rating: {rating_str}")
 
             # Level 1a — company name exact match
             if stop_filters and stop_filters.companies and company:
@@ -244,7 +308,7 @@ class HHAdapter(SiteAdapter):
                     (co for co in stop_filters.companies if co in company_lower), None
                 )
                 if matched_co:
-                    print(f"   🚫 company_blocked '{matched_co}': {company}")
+                    self._say(f"   🚫 company_blocked '{matched_co}': {company}")
                     return {
                         'status': 'company_blocked',
                         'reason': f"Company '{company}' matches stop list: '{matched_co}'",
@@ -258,7 +322,7 @@ class HHAdapter(SiteAdapter):
             if (stop_filters and stop_filters.min_employer_rating is not None
                     and employer_rating is not None
                     and employer_rating < stop_filters.min_employer_rating):
-                print(f"   🚫 rating_blocked {employer_rating} < {stop_filters.min_employer_rating}")
+                self._say(f"   🚫 rating_blocked {employer_rating} < {stop_filters.min_employer_rating}")
                 return {
                     'status': 'rating_blocked',
                     'reason': (
@@ -281,7 +345,7 @@ class HHAdapter(SiteAdapter):
             desc_hash = _desc_hash(company, vacancy_text)
             if desc_hash in self._seen_descriptions:
                 duplicate_of = self._seen_descriptions[desc_hash] or None
-                print(f"   ⚠️ Duplicate description detected (original: {duplicate_of})")
+                self._say(f"   ⚠️ Duplicate description detected (original: {duplicate_of})", level="warn")
             else:
                 duplicate_of = None
                 self._seen_descriptions[desc_hash] = vacancy_id_local or ""
@@ -292,46 +356,44 @@ class HHAdapter(SiteAdapter):
             # ~20 extra tokens and requires no additional LLM call.
             llm_context = _build_employer_header(company, employer_rating) + vacancy_text
 
-            # Score first, then cover — score may reveal stop_match before cover is used.
-            # Score is cached by text hash; cover is cached by vacancy_id so duplicates
-            # (same description, different URL) receive naturally varying cover letters.
-            print("   🔹 Scoring vacancy...")
-            cover_letter, template_name, signals = llm_cover.generate(llm_context,
-                                                                       vacancy_id=vacancy_id_local)
+            # Score only — cover is generated on demand, later, only by whichever
+            # handler actually needs to send one (session 56). Gating stop_match/
+            # dry_run/min_score here, before any cover call exists, is the whole
+            # point: the old combined generate() paid for a full cover-generation
+            # call on every vacancy, even ones about to be filtered by these same
+            # checks. Score is cached by text hash; cover (when it happens) is
+            # cached by vacancy_id so duplicates (same description, different URL)
+            # receive naturally varying cover letters.
+            self._say("   🔹 Scoring vacancy...")
+            if not llm_cover.score(llm_context):
+                self._say("   ⚠️ LLM unavailable — skipping vacancy (no score generated)", level="warn")
+                return {
+                    'status': 'skipped_llm_unavailable',
+                    'reason': 'LLM unavailable — no score generated',
+                    'scenario': 'skip',
+                }
+
             match_score = llm_cover.last_score
             stop_match = llm_cover.last_stop_match
-            print(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}"
-                  + (f", stop_match: {stop_match}" if stop_match else "")
-                  + (f", duplicate_of: {duplicate_of}" if duplicate_of else ""))
+            signals = llm_cover.last_signals
+            self._say(f"   📊 Score: {match_score}, signals: {', '.join(signals) if signals else 'none'}"
+                      + (f", stop_match: {stop_match}" if stop_match else "")
+                      + (f", duplicate_of: {duplicate_of}" if duplicate_of else ""))
 
             score_details = {
                 'match_score': match_score,
                 'matched_skills': llm_cover.last_matched_skills,
                 'gaps': llm_cover.last_gaps,
                 'signals': signals,
-                'template_name': template_name,
                 'company': company or '',
                 'employer_rating': employer_rating,
             }
             if duplicate_of:
                 score_details['duplicate_of'] = duplicate_of
 
-            # ── LLM unavailable guard ────────────────────────────────────────────
-            # static_fallback means the LLM call failed entirely (connection error,
-            # timeout, etc.). Skip rather than send an 83-char boilerplate cover.
-            # Vacancy is retryable — will be picked up again when LLM recovers.
-            if template_name == "static_fallback":
-                print("   ⚠️ LLM unavailable — skipping vacancy (no cover letter generated)")
-                return {
-                    'status': 'skipped_llm_unavailable',
-                    'reason': 'LLM unavailable — no cover letter generated',
-                    'scenario': 'skip',
-                    'details': score_details
-                }
-
             # ── Level 2: semantic stop_match from LLM ───────────────────────────
             if stop_match:
-                print(f"   🚫 semantic_blocked: LLM detected '{stop_match}'")
+                self._say(f"   🚫 semantic_blocked: LLM detected '{stop_match}'")
                 return {
                     'status': 'semantic_blocked',
                     'reason': f"LLM detected blocked category: '{stop_match}'",
@@ -340,7 +402,7 @@ class HHAdapter(SiteAdapter):
                 }
 
             if dry_run:
-                print(f"   🔍 Dry-run: score={match_score}, skills={llm_cover.last_matched_skills}")
+                self._say(f"   🔍 Dry-run: score={match_score}, skills={llm_cover.last_matched_skills}")
                 return {
                     'status': 'dry_run',
                     'reason': f'Dry-run — score: {match_score}',
@@ -348,11 +410,18 @@ class HHAdapter(SiteAdapter):
                     'details': score_details
                 }
 
-            if match_score is not None and match_score < CONFIG.min_score:
-                print(f"   ⏭ Score {match_score} < min {CONFIG.min_score} — skipping")
+            # Per-profile override takes precedence — set via ProfileTab's Min Match
+            # control (data/profiles/<name>/filters.json), never LLM-derived (this
+            # threshold only exists at resume-vs-vacancy comparison time, not at
+            # parse time). Falls back to the global CONFIG.min_score default.
+            min_score = (stop_filters.min_match
+                         if (stop_filters and stop_filters.min_match is not None)
+                         else CONFIG.min_score)
+            if match_score is not None and match_score < min_score:
+                self._say(f"   ⏭ Score {match_score} < min {min_score} — skipping")
                 return {
                     'status': 'skipped_score',
-                    'reason': f'Score {match_score} below threshold {CONFIG.min_score}',
+                    'reason': f'Score {match_score} below threshold {min_score}',
                     'scenario': 'skip',
                     'details': score_details
                 }
@@ -361,9 +430,9 @@ class HHAdapter(SiteAdapter):
             # "Откликнуться" would hit a recommendation card and open the wrong popup.
             _pre_chat = self.browser.vacancy_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
             if _pre_chat and _pre_chat.is_visible():
-                print("   ✅ Chat link already active (auto-read vacancy) — skipping apply click")
+                self._say("   ✅ Chat link already active (auto-read vacancy) — skipping apply click")
             else:
-                print("   🔹 Clicking 'Apply'...")
+                self._say("   🔹 Clicking 'Apply'...")
                 if not self.browser.click_apply_button():
                     return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
 
@@ -381,10 +450,10 @@ class HHAdapter(SiteAdapter):
                     # that's the only way to send a cover letter after instant apply.
                     chat_el = current_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
                     if chat_el and chat_el.is_visible():
-                        print("   ✅ Applied instantly — chat available, routing for cover letter...")
+                        self._say("   ✅ Applied instantly — chat available, routing for cover letter...")
                         # Fall through to detector → ChatHandler
                     else:
-                        print("   ✅ Application submitted instantly (no form)")
+                        self._say("   ✅ Application submitted instantly (no form)")
                         return {
                             'status': 'applied_immediate',
                             'reason': 'Resume submitted without a form',
@@ -395,7 +464,7 @@ class HHAdapter(SiteAdapter):
                 pass
 
             loop_result, first_form_type = self._process_vacancy_loop(
-                current_page, cover_letter, vacancy_text, debug, session_dir
+                current_page, vacancy_text, vacancy_id_local, debug, session_dir
             )
 
             return {
@@ -405,6 +474,11 @@ class HHAdapter(SiteAdapter):
                 'details': {
                     'form_type': first_form_type,
                     'goal_reached': loop_result.goal_reached,
+                    # Set by whichever handler actually called llm_cover.cover()
+                    # (ChatHandler, hh_modal.py's cover step, cover_only.py) —
+                    # None if this vacancy never needed a cover at all (e.g.
+                    # applied_immediate never reaches the loop).
+                    'template_name': llm_cover.last_cover_template_name,
                     **score_details,
                     **(loop_result.details or {})
                 }
@@ -429,7 +503,7 @@ class HHAdapter(SiteAdapter):
     # ── Goal-directed loop ────────────────────────────────────────────────────
 
     def _process_vacancy_loop(
-        self, page, cover_letter: str, vacancy_text: str, debug: bool, session_dir
+        self, page, vacancy_text: str, vacancy_id: str, debug: bool, session_dir
     ):
         """Detect form type → run handler → repeat until terminal result or MAX_LAYERS.
 
@@ -450,12 +524,12 @@ class HHAdapter(SiteAdapter):
 
             if layer == 0:
                 first_form_type = form_type.value
-                print("   🔹 Analysing application form...")
+                self._say("   🔹 Analysing application form...")
             else:
-                print(f"   🔄 Loop layer {layer}: detecting next form layer...")
+                self._say(f"   🔄 Loop layer {layer}: detecting next form layer...")
 
-            print(f"   📋 Form type: {form_type.value}")
-            print(f"   📊 Fields: {form_info.input_count}, Salary: {form_info.has_salary_field}")
+            self._say(f"   📋 Form type: {form_type.value}")
+            self._say(f"   📊 Fields: {form_info.input_count}, Salary: {form_info.has_salary_field}")
 
             # Salary: hard stop, always skip
             if form_type == FormType.SALARY_FORM:
@@ -485,19 +559,19 @@ class HHAdapter(SiteAdapter):
 
             # UNKNOWN mid-loop: wait 1.5s and retry detector once
             if form_type == FormType.UNKNOWN:
-                print("   ⏳ UNKNOWN mid-loop — waiting 1.5s and retrying detector...")
+                self._say("   ⏳ UNKNOWN mid-loop — waiting 1.5s and retrying detector...")
                 page.wait_for_timeout(1500)
                 self._dismiss_blocking_modal(page)
                 form_info = self.detector.detect(page)
                 form_type = form_info.form_type
                 if form_type == FormType.UNKNOWN:
-                    print("   ⚠️ Still UNKNOWN after retry — stopping loop")
+                    self._say("   ⚠️ Still UNKNOWN after retry — stopping loop", level="warn")
                     break
 
             # Deadlock protection: same form type on consecutive layers means
             # the previous submit didn't navigate away (validation error).
             if prev_form_type is not None and form_type == prev_form_type:
-                print(f"   ⚠️ {form_type.value} repeated on layer {layer} — submit failed (validation), stopping")
+                self._say(f"   ⚠️ {form_type.value} repeated on layer {layer} — submit failed (validation), stopping", level="warn")
                 result = ProcessResult(
                     success=False,
                     status='skipped_form_validation_error',
@@ -512,22 +586,41 @@ class HHAdapter(SiteAdapter):
 
             # Run handler
             handler = self.handlers.get_handler(form_type)
-            result = handler.process(page, cover_letter, vacancy_text=vacancy_text,
-                                     cover_sent_via_modal=cover_sent_in_modal)
-            if result.status in ("hh_modal_cover_sent", "questions_cover_sent"):
+            result = handler.process(page, vacancy_text=vacancy_text,
+                                     vacancy_id=vacancy_id, llm_cover=self.llm_cover,
+                                     cover_sent_via_modal=cover_sent_in_modal,
+                                     reporter=self._reporter)
+            # questions_cover_sent no longer exists (session 56) — questions.py's
+            # cover-shaped answers go through the generic fill_form() path, not
+            # HH's native cover mechanism, so they were never real grounds for
+            # this flag. Only hh_modal.py's own selector-recognized cover step
+            # (a real HH data-qa field, not a keyword guess) still sets it.
+            if result.status == "hh_modal_cover_sent":
                 cover_sent_in_modal = True
+
+            # needs_debug_review: ambiguous mid-form failure (see handlers'
+            # _flag_for_debug_review) — an LLM answer that couldn't be applied,
+            # a selector that never matched. Capture evidence immediately
+            # (unconditional, same as the unverified-count trigger below, not
+            # gated behind --debug) since "we don't know what happened" is
+            # exactly the case these snapshots are for.
+            if result.status == "needs_debug_review":
+                reason = (result.details or {}).get("debug_reason", "?")
+                self._say(f"   🚨 needs_debug_review — saving auto-snapshot ({reason})", level="warn")
+                auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                self._debug_snapshot(page, auto_dir, "needs_debug_review")
 
             # DOM щуп: verify submit succeeded
             if result.success:
                 verified = handler.verify_submission(page)
                 if not verified:
-                    print("   ⚠️ DOM verification failed — marking as applied_unverified")
+                    self._say("   ⚠️ DOM verification failed — marking as applied_unverified", level="warn")
                     result.status = "applied_unverified"
                     result.success = False
                     result.goal_reached = False
                     self._unverified_count += 1
                     if self._unverified_count >= 3:
-                        print(f"   🚨 {self._unverified_count} unverified — saving auto-snapshot")
+                        self._say(f"   🚨 {self._unverified_count} unverified — saving auto-snapshot", level="warn")
                         auto_dir = _DEBUG_DIR / f"auto_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
                         self._debug_snapshot(page, auto_dir, "unverified")
 
@@ -539,7 +632,7 @@ class HHAdapter(SiteAdapter):
 
         else:
             # for-else: all MAX_LAYERS exhausted without a terminal break
-            print(f"   ⚠️ Goal-directed loop exhausted after {MAX_LAYERS} layers")
+            self._say(f"   ⚠️ Goal-directed loop exhausted after {MAX_LAYERS} layers", level="warn")
             if result is not None:
                 result.status = 'skipped_loop_exhausted'
                 result.goal_reached = False
@@ -610,30 +703,30 @@ class HHAdapter(SiteAdapter):
             if not buttons:
                 return False
 
-            print(f"   🔲 Blocking modal: \"{modal_text[:80]}\"")
-            print(f"   🔘 Buttons: {[b['label'] for b in buttons]}")
+            self._say(f"   🔲 Blocking modal: \"{modal_text[:80]}\"")
+            self._say(f"   🔘 Buttons: {[b['label'] for b in buttons]}")
 
             llm = self.llm_cover._agent
             if llm is None:
                 return False
 
             action = llm.ask_modal_action(modal_text, buttons)
-            print(f"   🤖 Modal action: {action}")
+            self._say(f"   🤖 Modal action: {action}")
 
             if action.get("action") == "click":
                 idx = action["button_index"]
                 if 0 <= idx < len(btn_els):
                     label = buttons[idx]["label"]
                     btn_els[idx].click()
-                    print(f"   ✅ Modal dismissed: clicked \"{label}\"")
+                    self._say(f"   ✅ Modal dismissed: clicked \"{label}\"")
                     page.wait_for_timeout(1500)
                     return True
 
-            print("   ⚠️ Modal: skipping dismissal (LLM chose skip or index out of range)")
+            self._say("   ⚠️ Modal: skipping dismissal (LLM chose skip or index out of range)", level="warn")
             return False
 
         except Exception as e:
-            print(f"   ⚠️ Modal dismissal error: {e}")
+            self._say(f"   ⚠️ Modal dismissal error: {e}", level="warn")
             return False
 
     # ── Debug helper ──────────────────────────────────────────────────────────

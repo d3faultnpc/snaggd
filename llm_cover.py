@@ -22,7 +22,16 @@ def get_agent(data_dir: "Path | None" = None) -> "LLMAgent | None":
 
 
 class LLMCover:
-    """Cover letter generator with split score/cover caching.
+    """Vacancy scorer + on-demand cover-letter generator, split score/cover caching.
+
+    score() is called once per vacancy, early — before any gate (stop_match,
+    min_score, dry_run) decides whether the vacancy proceeds at all. cover()
+    is called on demand, only by whichever handler actually needs to send a
+    real cover letter (ChatHandler's native "Добавить сопроводительное" flow,
+    or hh_modal.py's own dedicated cover-letter step) — never eagerly. This
+    replaces the old generate(), which always ran both unconditionally,
+    paying for a full cover-generation call on every vacancy even when it was
+    about to be filtered by score or a hard-block category (session 56).
 
     Score cache (llm_cache.json): keyed by compound hash of
       cover_model|llm_model|profile|vacancy_text → same description always hits cache.
@@ -30,11 +39,16 @@ class LLMCover:
     Cover cache (cover_cache.json): keyed by vacancy_id → each vacancy gets its
       own cover, so duplicate vacancies (same description, different ID) receive
       naturally varying text from the LLM instead of the same cached letter.
-      Falls back to text_hash key when vacancy_id is not available.
+      Falls back to text_hash key when vacancy_id is not available. This is
+      also what keeps cover() consistent if two different handlers end up
+      needing one for the same vacancy (e.g. an hh_modal step without its own
+      cover field, followed later by chatik) — the second call reuses the
+      same cached text instead of generating a different one.
 
-    Exposes last_score, last_matched_skills, last_gaps, last_stop_match
-    after each generate() call so the adapter can read results without
-    an extra LLM round-trip.
+    Exposes last_score, last_matched_skills, last_gaps, last_stop_match,
+    last_vacancy_role_type, last_signals after score(), and
+    last_cover_template_name after cover() — so the adapter can read results
+    without an extra LLM round-trip.
     """
 
     def __init__(self, data_dir: Path = None):
@@ -54,84 +68,115 @@ class LLMCover:
         self.last_gaps: list = []
         self.last_stop_match: Optional[str] = None
         self.last_vacancy_role_type: Optional[str] = None
+        self.last_signals: list = []
+        self.last_cover_template_name: Optional[str] = None
 
-    def generate(self, vacancy_text: str, vacancy_id: str = None) -> Tuple[str, str, List[str]]:
-        """Score vacancy + generate cover letter.
+    def score(self, vacancy_text: str) -> bool:
+        """Scores the vacancy — the only LLM call needed before adapter.py's
+        stop_match/min_score/dry_run gates decide whether a cover is even
+        worth generating. Sets last_score/last_matched_skills/last_gaps/
+        last_stop_match/last_vacancy_role_type/last_signals. Returns False
+        only when the LLM is genuinely unavailable (all last_* reset to
+        empty/zero) — caller treats that as skipped_llm_unavailable, same
+        contract the old template_name == "static_fallback" check used to
+        signal for the combined score+cover call.
 
-        Score is cached by text hash — same description always reuses cached score.
-        Cover is cached by vacancy_id — each vacancy gets its own letter, so
-        duplicate vacancies (same description, different ID) get fresh LLM output.
+        Cached by text hash — same description always reuses cached score,
+        whether or not a cover ever ends up being generated for it.
+        """
+        text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
+        text_hash = self._hash_text(text_for_processing)
 
-        Falls back to text_hash as cover key when vacancy_id is unavailable.
-        Returns: (cover_letter, template_name, signals)
-        Side effects: sets last_score, last_matched_skills, last_gaps, last_stop_match.
+        if text_hash in self.cache:
+            print("   📋 Using cached score")
+            self.last_signals = self._restore_score_from_cache(self.cache[text_hash])
+            return True
+
+        if self._agent is None:
+            self._reset_score_defaults()
+            print("   📝 LLM unavailable — no score")
+            return False
+
+        try:
+            score_data = self._agent.score_vacancy(text_for_processing)
+        except Exception as e:
+            print(f"   ⚠️ Score error: {e}")
+            self._reset_score_defaults()
+            return False
+
+        self.last_score = score_data.get("score", 0)
+        self.last_matched_skills = score_data.get("matched_skills", [])
+        self.last_gaps = score_data.get("gaps", [])
+        self.last_stop_match = score_data.get("stop_match", None)
+        self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
+        self.last_signals = score_data.get("signals", [])
+
+        # Cover/template slots (indices 0/1) kept as placeholders — never read
+        # back by _restore_score_from_cache, which only touches indices 2-7 —
+        # so the array shape stays identical to the old generate()-written
+        # entries and old cached entries keep working unchanged, no format
+        # version bump needed.
+        self.cache[text_hash] = [
+            None, "pending", self.last_signals, self.last_score,
+            self.last_matched_skills, self.last_gaps, self.last_stop_match,
+            self.last_vacancy_role_type,
+        ]
+        self._save_cache()
+        print("   🤖 Scored via LLM")
+        return True
+
+    def cover(self, vacancy_text: str, vacancy_id: str = None) -> str:
+        """Generates (or reuses) the cover letter — called on demand by
+        whichever handler actually needs to send one. Must be called after
+        score() in the same vacancy pass (uses its match context). Cached by
+        vacancy_id: if a second handler/layer ends up needing a cover for the
+        same vacancy, the second call reuses the exact same text instead of
+        generating a different one — this is what actually closes #38's "two
+        differing cover-shaped messages", not a send-side gate (session 56).
+        Falls back to a minimal static cover if the LLM is unavailable.
         """
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
         cover_key = vacancy_id if vacancy_id else text_hash
 
-        # ── Score lookup ──────────────────────────────────────────────────────
-        if text_hash in self.cache:
-            print("   📋 Using cached score")
-            signals = self._restore_score_from_cache(self.cache[text_hash])
-            match_context = {
-                "score": self.last_score,
-                "matched_skills": self.last_matched_skills,
-                "gaps": self.last_gaps,
-                "stop_match": self.last_stop_match,
-                "signals": signals,
-                "vacancy_role_type": self.last_vacancy_role_type,
-            }
+        if cover_key in self.cover_cache:
+            print("   📋 Using cached cover")
+            cover_entry = self.cover_cache[cover_key]
+            self.last_cover_template_name = cover_entry[1]
+            return cover_entry[0]
 
-            # ── Cover lookup ──────────────────────────────────────────────────
-            if cover_key in self.cover_cache:
-                print("   📋 Using cached cover")
-                cover_entry = self.cover_cache[cover_key]
-                return cover_entry[0], cover_entry[1], signals
+        match_context = {
+            "score": self.last_score,
+            "matched_skills": self.last_matched_skills,
+            "gaps": self.last_gaps,
+            "stop_match": self.last_stop_match,
+            "signals": self.last_signals,
+            "vacancy_role_type": self.last_vacancy_role_type,
+        }
 
-            # Score hit, cover miss → generate fresh cover (duplicate vacancy path)
-            print("   🤖 Score cached — generating fresh cover...")
-            try:
-                cover, template_name = self._generate_cover_only(text_for_processing, match_context)
-            except Exception as e:
-                print(f"   ⚠️ Cover generation error: {e}")
-                cover, template_name, _ = self._fallback_cover()
-
-            if template_name != "static_fallback":
-                self.cover_cache[cover_key] = [cover, template_name]
-                self._save_cover_cache()
-
-            return cover, template_name, signals
-
-        # ── Full LLM call (score + cover) ─────────────────────────────────────
         try:
-            result = self._generate_with_llm(text_for_processing)
-            print("   🤖 Generated via LLM")
+            cover, template_name = self._generate_cover_only(text_for_processing, match_context)
+            print("   🤖 Generated cover via LLM")
         except Exception as e:
-            print(f"   ⚠️ LLM error: {e}")
-            result = self._fallback_cover()
-            self.last_score = 0
-            self.last_matched_skills = []
-            self.last_gaps = []
-            self.last_stop_match = None
-            print("   📝 LLM unavailable — using static fallback")
+            print(f"   ⚠️ Cover generation error: {e}")
+            cover, template_name, _ = self._fallback_cover()
 
-        cover, template_name_result, signals = result
-
-        # Don't cache static_fallback — transient LLM error should not block
-        # future sessions from getting a real cover for the same vacancy.
-        if template_name_result != "static_fallback":
-            self.cache[text_hash] = [cover, template_name_result, signals,
-                                      self.last_score, self.last_matched_skills,
-                                      self.last_gaps, self.last_stop_match,
-                                      self.last_vacancy_role_type]
-            self._save_cache()
-            self.cover_cache[cover_key] = [cover, template_name_result]
+        self.last_cover_template_name = template_name
+        if template_name != "static_fallback":
+            self.cover_cache[cover_key] = [cover, template_name]
             self._save_cover_cache()
 
-        return result
+        return cover
 
     # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _reset_score_defaults(self) -> None:
+        self.last_score = 0
+        self.last_matched_skills = []
+        self.last_gaps = []
+        self.last_stop_match = None
+        self.last_vacancy_role_type = None
+        self.last_signals = []
 
     def _hash_text(self, text: str) -> str:
         """Cache key: compound hash of (cover_model, llm_model, profile, vacancy_text).
@@ -145,10 +190,16 @@ class LLMCover:
         return hashlib.md5(compound.encode('utf-8')).hexdigest()[:16]
 
     def _compute_profile_hash(self) -> str:
-        """Short hash of candidate.md — changes when the user updates their profile."""
+        """Short hash of candidate.md — changes when the user updates their profile.
+
+        Hashes the full file, not a slice — an earlier version truncated to the
+        first 500 chars before hashing, so an edit past that point left the hash
+        (and therefore the cache) silently unchanged, serving stale scores/covers
+        against the old profile content.
+        """
         try:
             profile_path = self._data_dir / "candidate.md"
-            content = profile_path.read_text(encoding="utf-8")[:500] if profile_path.exists() else ""
+            content = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
             return hashlib.md5(content.encode('utf-8')).hexdigest()[:8]
         except Exception:
             return "noprofile"
@@ -180,7 +231,7 @@ class LLMCover:
         return entry[2] if len(entry) >= 3 else []
 
     def _generate_cover_only(self, vacancy_text: str, match_context: dict) -> Tuple[str, str]:
-        """Calls generate_cover() using pre-computed match_context (score cached)."""
+        """Calls generate_cover() using pre-computed match_context (score already set)."""
         if self._agent is None:
             raise RuntimeError("LLMAgent not available")
         cover = self._humanize(self._agent.generate_cover(vacancy_text, match_context=match_context))
@@ -252,24 +303,6 @@ class LLMCover:
                 json.dump(self.cover_cache, f, ensure_ascii=False, indent=2)
         except Exception as e:
             print(f"   ⚠️ Cover cache save error: {e}")
-
-    def _generate_with_llm(self, vacancy_text: str) -> Tuple[str, str, List[str]]:
-        if self._agent is None:
-            raise RuntimeError("LLMAgent not available")
-        # Score first: may reveal stop_match before spending tokens on cover letter.
-        # If stop_match is set, the adapter will skip apply — cover is still cached
-        # so the next encounter of the same vacancy costs 0 extra calls.
-        score_data = self._agent.score_vacancy(vacancy_text)
-        self.last_score = score_data.get("score", 0)
-        self.last_matched_skills = score_data.get("matched_skills", [])
-        self.last_gaps = score_data.get("gaps", [])
-        self.last_stop_match = score_data.get("stop_match", None)
-        self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
-        signals = score_data.get("signals", [])
-        # Generate cover with scoring context: matched skills + signals + vacancy role type
-        # so the model writes precisely to the real overlap, not from scratch.
-        cover = self._humanize(self._agent.generate_cover(vacancy_text, match_context=score_data))
-        return cover, "llm", signals
 
     def _fallback_cover(self) -> Tuple[str, str, List[str]]:
         """Static fallback when LLM is unavailable — returns a minimal cover letter."""
