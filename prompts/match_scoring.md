@@ -43,6 +43,10 @@ background as described in CANDIDATE PROFILE.
 - Clear mismatch: substantial domain gap, different industry patterns → –20 to –30 points
 Do not apply penalties mechanically by industry label — consider product type overlap
 and how transferable the candidate's actual experience is to this specific context.
+A low-confidence note under "Additional" (hints) does not by itself establish domain
+alignment — treat it as real domain evidence only if a case or highlight in Work
+Experience/Projects independently supports it. Same principle as aspiration alignment
+below: an unconfirmed one-liner should not move the score on its own.
 
 Aspiration alignment (apply after domain alignment, before role type):
 If the candidate profile states a career aspiration (Career Profile → aspiration):

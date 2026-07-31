@@ -166,12 +166,15 @@ SELECTORS = {
         'button:has-text("Сохранить")',
     ],
     # HR-bot message bubble (PERX and similar auto-interview bots)
-    # Used in _handle_hr_bot_loop() to detect and read bot questions
-    'chatik_bot_message': [
-        '[data-qa="chatik-message-employer"]',
-        '[data-qa*="chatik-message-bot"]',
-        '[class*="chatik-Message_employer"]',
-    ],
+    # Used in _handle_hr_bot_loop() to detect and read bot questions.
+    # From the TZ live investigation (2026-06-12, "Восточная горнорудная") — the
+    # previous 3 guesses here never matched anything real, so the loop never
+    # fired at all. Direction is derived by absence of the delivered-icon
+    # inside each message container; that nesting is the doc's best-effort
+    # reading, not independently re-verified live — confirm on next encounter.
+    'chatik_message': '[data-qa^="chatik-chat-message-"][data-qa$="-text"]',
+    'chatik_message_delivered': '[data-qa="chat-bubble-icon-delivered"]',
+    'chatik_bubble_text': '[data-qa="chat-bubble-text"]',
     'inputs_all': 'input[type="text"], textarea, input[type="radio"]',
     'progress_indicators': '[class*="progress"], [class*="step"], [class*="Step"]',
     'labels': 'label',

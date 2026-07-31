@@ -39,8 +39,8 @@ client = OpenAI(
 )
 
 print(f"Parsing: {resume_file.name}")
-print(f"  TEXT_MODEL  = {os.getenv('LLM_MODEL', 'anthropic/claude-3-5-haiku')} (this file)")
-print(f"  MULTIMODAL  = {os.getenv('RESUME_PARSE_MODEL', 'google/gemini-2.0-flash-001')} (PDF/img)")
+print(f"  TEXT_MODEL  = {ResumeParser.TEXT_MODEL} (this file)")
+print(f"  MULTIMODAL  = {ResumeParser.MULTIMODAL_MODEL} (PDF/img)")
 print()
 
 parser = ResumeParser(client)

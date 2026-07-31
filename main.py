@@ -108,7 +108,12 @@ def main() -> int:
     if debug:
         print("🐛 DEBUG — verbose snapshots enabled")
 
-    logger  = Logger()
+    if debug:
+        debug_log_path = CONFIG.data_dir / "debug_applied_log.json"
+        print(f"🐛 Debug mode — results go to {debug_log_path.name} (dedup still checks the real log)")
+        logger = Logger(applied_log_path=debug_log_path, dedup_source_path=CONFIG.applied_log_path)
+    else:
+        logger = Logger()
     adapters = load_active_adapters()
 
     if not adapters:
@@ -124,16 +129,12 @@ def main() -> int:
             print(f"❌ [{adapter.name()}] Pre-flight failed — skipping")
             continue
 
-        if args.url and hasattr(adapter, 'browser'):
-            _url = args.url
-            adapter.browser._load_search_urls = lambda: [_url]
-
         if not adapter.start(debug=debug):
             print(f"❌ [{adapter.name()}] Failed to start — skipping")
             continue
 
         try:
-            results = adapter.run(logger, dry_run=dry_run, debug=debug)
+            results = adapter.run(logger, dry_run=dry_run, debug=debug, target_url=args.url)
             all_results.extend(results)
         except KeyboardInterrupt:
             print(f"\n⏹  [{adapter.name()}] Interrupted")

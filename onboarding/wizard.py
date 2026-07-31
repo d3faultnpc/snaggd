@@ -76,6 +76,7 @@ else:
 
 from config import CONFIG
 from onboarding.resume_parser import ResumeParser, ResumeData
+from utils.filters import patch_filters_json
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -112,27 +113,6 @@ def _llm_client():
 
 
 # ── Helpers: file patchers ────────────────────────────────────────────────────
-
-def _patch_filters_json(data_dir: Path, *, stop_companies=None, stop_title_keywords=None,
-                         min_employer_rating=None) -> None:
-    """Merge wizard-collected hard-filter rules into data/filters.json."""
-    path = data_dir / "filters.json"
-    try:
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    except (json.JSONDecodeError, OSError):
-        data = {}
-    if not data.get("_comment"):
-        data["_comment"] = "Machine-only stop rules. Edited by wizard/settings. Never sent to LLM."
-    data.setdefault("stop_title_keywords", [])
-    data.setdefault("stop_companies", [])
-    if stop_companies is not None:
-        data["stop_companies"] = stop_companies
-    if stop_title_keywords is not None:
-        data["stop_title_keywords"] = stop_title_keywords
-    if min_employer_rating is not None:
-        data["min_employer_rating"] = min_employer_rating
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
 
 def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
     """Set search.salary and re-render via to_md() (schema-aware path), or fall back to
@@ -626,7 +606,7 @@ def block_b(append: bool = False) -> dict:
             min_rating = float(min_rating_str)
         except ValueError:
             print(f"⚠  Could not parse rating '{min_rating_str}' — skipping")
-    _patch_filters_json(
+    patch_filters_json(
         CONFIG.data_dir,
         stop_companies=[c.lower() for c in stop_co] if stop_co else [],
         stop_title_keywords=[k.lower() for k in stop_kw] if stop_kw else [],

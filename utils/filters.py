@@ -41,10 +41,16 @@ class StopFilters:
     min_employer_rating: Optional[float] = None
     """Minimum employer review rating (e.g. 3.6 on a 1–5 scale). None = no filter."""
 
+    min_match: Optional[int] = None
+    """Per-profile override of CONFIG.min_score (0-100 LLM match threshold). None = use the
+    global default — this is deliberately never LLM-extracted (resume-vs-vacancy comparison
+    doesn't exist until scoring time), same storage/loading path as min_employer_rating."""
+
     def is_empty(self) -> bool:
         return not (
             self.title_keywords or self.companies
             or self.categories or self.min_employer_rating is not None
+            or self.min_match is not None
         )
 
     def summary(self) -> str:
@@ -57,7 +63,34 @@ class StopFilters:
             parts.append(f"categories={len(self.categories)}")
         if self.min_employer_rating is not None:
             parts.append(f"min_rating≥{self.min_employer_rating}")
+        if self.min_match is not None:
+            parts.append(f"min_match≥{self.min_match}")
         return ", ".join(parts) if parts else "none"
+
+
+def patch_filters_json(data_dir: Path, *, stop_companies=None, stop_title_keywords=None,
+                        min_employer_rating=None, min_match=None) -> None:
+    """Merge caller-supplied hard-filter rules into data/filters.json. Shared writer for
+    the wizard (onboarding) and the Settings API (live per-profile edits) — same file,
+    same schema, single implementation instead of two copies drifting apart."""
+    path = data_dir / "filters.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (json.JSONDecodeError, OSError):
+        data = {}
+    if not data.get("_comment"):
+        data["_comment"] = "Machine-only stop rules. Edited by wizard/settings. Never sent to LLM."
+    data.setdefault("stop_title_keywords", [])
+    data.setdefault("stop_companies", [])
+    if stop_companies is not None:
+        data["stop_companies"] = stop_companies
+    if stop_title_keywords is not None:
+        data["stop_title_keywords"] = stop_title_keywords
+    if min_employer_rating is not None:
+        data["min_employer_rating"] = min_employer_rating
+    if min_match is not None:
+        data["min_match"] = min_match
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def load_stop_filters(data_dir: Path) -> StopFilters:
@@ -92,6 +125,13 @@ def _load_from_json(path: Path, filters: StopFilters) -> None:
     if rating is not None:
         try:
             filters.min_employer_rating = float(rating)
+        except (TypeError, ValueError):
+            pass
+
+    match = data.get("min_match")
+    if match is not None:
+        try:
+            filters.min_match = int(match)
         except (TypeError, ValueError):
             pass
 

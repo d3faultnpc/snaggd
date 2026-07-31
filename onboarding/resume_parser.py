@@ -41,8 +41,9 @@ class ResumeData:
     identity: dict = field(default_factory=dict)        # name, role, location, contacts: []
     pitch: Optional[str] = None
 
-    # Wizard-filled only — never extracted from the CV itself (career_profile.role_type/edge
-    # need the candidate's own framing; logistics/search/rules are filter/config data, not CV content)
+    # career_profile.role_type/edge are the candidate's own confirmed framing, set via the
+    # wizard (possibly starting from career_profile_suggestions below, but never written
+    # directly by the parser) — logistics/search/rules are filter/config data, not CV content.
     career_profile: dict = field(default_factory=dict)  # role_type, edge
     logistics: dict = field(default_factory=dict)       # relocation, work_format
     search: dict = field(default_factory=dict)          # wise_link, queries, salary, region
@@ -58,6 +59,12 @@ class ResumeData:
     # candidate.json schema, excluded when serializing. Feeds the existing job_preferences.md
     # search-direction flow (wizard.py Block B), unrelated to search{} above.
     suggested_queries: list = field(default_factory=list)
+
+    # Parser-only convenience field, same exclusion treatment as suggested_queries above —
+    # 0-3 LLM-suggested role_type quick-picks for the wizard's SegmentFreetextField to render
+    # as buttons alongside its free-text input. Never the final career_profile.role_type value
+    # itself, and never forced — empty when the CV doesn't clearly support one.
+    career_profile_suggestions: dict = field(default_factory=dict)  # role_type_options: []
 
     # Operational metadata — not schema content, used directly by Python code
     source_file: str = ""
@@ -103,9 +110,14 @@ class ResumeParser:
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     }
 
-    # Gemini Flash reads PDF and images natively via image_url
-    MULTIMODAL_MODEL = os.getenv("RESUME_PARSE_MODEL", "google/gemini-2.0-flash-001")
-    TEXT_MODEL       = os.getenv("LLM_MODEL", "anthropic/claude-3-5-haiku")
+    # Gemini Flash reads PDF and images natively via image_url. gemini-2.0-flash-001
+    # was discontinued 2026-07 (confirmed live) — 2.5-flash is the current default,
+    # same family, same native-PDF-reading rationale. RESUME_PARSE_MODEL still
+    # overrides for anyone who wants a different multimodal model.
+    MULTIMODAL_MODEL = os.getenv("RESUME_PARSE_MODEL", "google/gemini-2.5-flash")
+    # claude-3-5-haiku 404s live as of 2026-07 — claude-haiku-4.5 is the current
+    # same-tier replacement. LLM_MODEL still overrides as before.
+    TEXT_MODEL       = os.getenv("LLM_MODEL", "anthropic/claude-haiku-4.5")
 
     def __init__(self, llm_client):
         self.llm = llm_client
@@ -372,8 +384,8 @@ class ResumeParser:
             '  "locale": "ru | en",\n'
             '  "identity": {\n'
             '    "name": "Full name or null",\n'
-            '    "role": "Current/target job title, combined with specialization if the CV states one '
-            '(e.g. \'Product Manager, fintech\') or null",\n'
+            '    "role": "Short profession/role label only — 2-4 words, no platform/tech/company '
+            'detail (e.g. \'fintech PM\', \'barista\', \'dentist\') or null",\n'
             '    "location": "City or null",\n'
             '    "contacts": ["raw contact strings — URLs, @handles, emails, phone numbers, exactly as found"]\n'
             '  },\n'
@@ -398,6 +410,12 @@ class ResumeParser:
             '  "tools": ["tool1", "tool2"],\n'
             '  "languages": [{"lang": "english", "level": "B2", "note": null}],\n'
             '  "interests": ["interest1"],\n'
+            '  "career_profile_suggestions": {\n'
+            '    "role_type_options": ["0-3 short archetype labels (2-4 words each, e.g. \'hands-on '
+            'builder\', \'process-driven operator\', \'high-volume service lead\') ONLY if the CV\'s '
+            'cases clearly support one — empty array if nothing clearly points that way, never force '
+            'a guess"]\n'
+            '  },\n'
             '  "hints": ["content that does not clearly fit one bucket above — low-confidence, do not force a classification"],\n'
             '  "suggested_queries": ["product manager b2b", "руководитель продукта"]\n'
             "}\n\n"
@@ -420,6 +438,18 @@ class ResumeParser:
             "the source document's header depth or section order.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
             "it in hints[] instead.\n"
+            "G — role_type_options: these are quick-pick suggestions for a wizard field the candidate "
+            "confirms or overrides by hand, not a scored classification — err toward an empty array over "
+            "a weak guess. Base them only on what the cases/highlights actually show (e.g. built "
+            "something from scratch vs ran/optimized an existing operation — applies the same whether "
+            "that's a codebase, a support queue, or a storefront), never on job title alone.\n"
+            "H — Thin-CV domain hook (narrow exception to F): if pitch is null AND no cases[].domain has "
+            "a value, still add ONE short domain/industry phrase to hints[] if the CV supports even a "
+            "loose read (e.g. 'fintech background', 'early-stage startup experience') — this is a minor "
+            "cover-letter-opener hook, not a scoring input, so a softer guess than F's general caution is "
+            "acceptable here specifically, since the alternative (staying silent) leaves nothing for a "
+            "cover letter to hook into at all. Do not add this hint when pitch or a case domain already "
+            "covers it — only for the genuinely-thin case.\n"
             "- skills: professional skills only — NO metrics (AOV, CAC, TTR are metrics, not skills)\n"
             "- If a field is absent in the CV, use null or empty array/object\n"
             "- Do NOT invent or assume anything not explicitly present\n"
@@ -457,6 +487,7 @@ class ResumeParser:
             interests=parsed.get("interests") or [],
             hints=parsed.get("hints") or [],
             suggested_queries=parsed.get("suggested_queries") or [],
+            career_profile_suggestions=parsed.get("career_profile_suggestions") or {},
             # wizard-filled only — never parsed from the CV
             career_profile={},
             logistics={},

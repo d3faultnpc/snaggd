@@ -2,7 +2,7 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-07-12 (wizard rewritten to 7-step candidate.json model + migrate_candidate.py + OTA schema check, session 44 — shipped v0.4.1, session 45). Keep updated after major architecture changes.
+> Updated: 2026-07-30 (session 60 — dead BYOK-verify route + unused session-override globals removed from api.py/core/llm_agent.py; stale references cleaned up across this file, .env.example, .gitignore, and tests). Keep updated after major architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
@@ -63,9 +63,90 @@ main.py (orchestrator)
 │   └── LLMAgent (core/llm_agent.py)          ← OpenRouter gateway, system prompt cache
 └── Logger (logger.py)                        ← applied_log.json + daily logs
 
-api.py                                        ← FastAPI REST wrapper (uvicorn api:app)
-                                                 Endpoints: /health, /session/start|status|stop,
-                                                 /log, /config. Auth: X-API-Key header.
+api.py                                        ← FastAPI REST wrapper. Runnable via `uvicorn api:app`
+                                                 (dev) or directly / frozen (`python api.py` — has
+                                                 its own `if __name__=="__main__"` calling
+                                                 uvicorn.run(), added 2026-07-14 so a PyInstaller
+                                                 freeze has an entrypoint to call).
+                                                 Auth: X-API-Key header on every route.
+                                                 Routes under /api/v1/:
+                                                 - health
+                                                 - session/start|{id}/status|{id}/stop|{id}/pause|
+                                                   {id}/resume — background-thread session runner
+                                                   (_session_worker). Real state machine: starting →
+                                                   checking (preflight, see below) → running →
+                                                   done|error|stopping. pause/resume added 2026-07-17
+                                                   (session 54): pause_event mirrors stop_event,
+                                                   checked in adapter.run()'s per-vacancy loop (top of
+                                                   the for-loop, current vacancy always finishes
+                                                   first); /stop also clears pause_event so a paused
+                                                   session can't block waiting on a resume that isn't
+                                                   coming. A stop requested anywhere through
+                                                   "checking" now aborts before the real browser
+                                                   opens (previously silently dropped until the
+                                                   vacancy loop started — real bug, found+fixed
+                                                   session 54). This engine's own
+                                                   SessionStartRequest carries no
+                                                   tier/quota/billing/relay fields of any kind, and
+                                                   never will — this engine exposes no session/tier
+                                                   extension points of any kind, by design.
+                                                   LLM_MODEL/COVER_MODEL/LLM_API_KEY env vars are
+                                                   this engine's only configuration. Resume-parser
+                                                   models are a separate subsystem, untouched.
+                                                 - session/{id}/events?after=<seq> — live narration
+                                                   feed for an attached GUI client (session 55). Each
+                                                   session dict holds a utils/events.py EventReporter
+                                                   (rolling deque, maxlen 500, monotonic seq for
+                                                   incremental polling). The worker emits lifecycle
+                                                   lines (preflight/quota/browser/done/error) and
+                                                   HHAdapter mirrors its narration prints into it via
+                                                   _say() — print output stays byte-identical, CLI
+                                                   runs (main.py) pass no reporter and are untouched.
+                                                   Session 58: EventReporter.emit() gained optional
+                                                   actor ("scan"|"llm"), vacancy_id, company,
+                                                   position kwargs — additive, existing call sites
+                                                   unaffected. A GUI client can group actor="scan"
+                                                   events by vacancy_id (one live sub-header
+                                                   per in-flight vacancy) and route actor="llm"
+                                                   events to a separate rolling display instead;
+                                                   vacancy_id-less llm events (most LLM-call-type
+                                                   narration — core/llm_agent.py has no concept of
+                                                   "vacancy") attach to whichever vacancy_id the
+                                                   frontend last saw from either actor. See
+                                                   terminal-events-mapping-en-ru.md
+                                                   (.claude/working-notes/) for the full per-event
+                                                   mapping table.
+                                                 - connectors/{name}/status,
+                                                   connectors/{name}/login/start|status — generic
+                                                   registry (_CONNECTOR_STATUS_CHECKERS,
+                                                   _CONNECTOR_LOGIN_RUNNERS), "hh" is the only
+                                                   registered connector so far. hh's status checker
+                                                   reads the cookie's own expires timestamp locally
+                                                   (no network call); a separate _check_hh_live()
+                                                   does a real headless probe (loads cookies, hits
+                                                   /applicant/resumes) — used as session/start's
+                                                   preflight gate (fails fast before opening the real
+                                                   configured-mode browser) and by the login flow
+                                                   itself (skips the visible re-login browser
+                                                   entirely if the existing session is still live).
+                                                   Added 2026-07-16 (session 53) as a GUI-facing
+                                                   parallel to the CLI wizard's existing `login.py`
+                                                   subprocess flow (§8, unchanged, still used by
+                                                   `wizard.py` Step 7) — _run_hh_login() re-implements
+                                                   the same cookie-capture logic rather than calling
+                                                   login.py, since the API needs it non-blocking (a
+                                                   background thread, not a script that blocks the
+                                                   whole request). Replaced an earlier one-off
+                                                   /hh-session route from the same session.
+                                                 - log, log/{vacancy_id} — take a `profile` query
+                                                   param (2026-07-14 fix), resolved via the same
+                                                   resolve_profile() law as everything else.
+                                                 - config (GET/PATCH), profiles, profiles/{name},
+                                                   profiles/{name}/min-match (POST, not PATCH,
+                                                   despite being a mutation — chosen for broad HTTP
+                                                   client compatibility).
+                                                 - onboarding/parse, onboarding/save — GUI wizard
+                                                   resume-parse + candidate save (session 51-52).
 
 onboarding/
 ├── resume_parser.py     ← multimodal PDF/DOCX/image/md → ResumeData + ResumeData dataclass
@@ -245,7 +326,30 @@ Priority | Signal                                                  | FormType
 
 **Gateway:** OpenRouter (configured via `OPENROUTER_API_KEY` + `LLM_MODEL` in .env)
 **Default model:** `deepseek/deepseek-v3.2` — override via `LLM_MODEL` env var. Cover letter model: `COVER_MODEL` env var (defaults to `LLM_MODEL`).
-**BYOK:** User brings their own OpenRouter key.
+**BYOK:** User brings their own OpenRouter key via `LLM_API_KEY` in `.env` — that's the entire mechanism this repo has.
+
+### Call gateway
+
+Every LLM call — `generate_cover`, `score_vacancy`, `fill_form`, `ask_modal_action`,
+`answer_question` — routes through one method, `LLMAgent._chat_completion()`, instead of calling
+`self.client.chat.completions.create()` directly. This engine makes exactly one direct attempt
+against OpenRouter and raises on failure — no retry, no fallback, no extension hook of any kind.
+Explicit `httpx.Timeout(connect=10, read=30, write=15, pool=10)` + `max_retries=0` (the SDK's own
+default is `read=600s` + `max_retries=2` — found live to cause 10+ minute unrecoverable hangs when
+a VPN drops mid-request, with Stop unable to interrupt a thread blocked in a network read).
+
+Session-scoped override in this engine, a process-wide global set once per API session, read at
+call time so it reaches the import-time module-level `LLMAgent` singletons in
+`handlers/chat.py`/`handlers/test_form.py`:
+- `set_session_reporter(reporter)` — narration mirror for an attached GUI client.
+
+`LLMAgent.client` is a lazy, cached property (rebuilds only when the effective key changes) to
+avoid opening a fresh `httpx.Client` per call.
+
+Diagnostic instrumentation: `_chat_completion()` prints a sequence number + a 70-char preview of
+the outgoing prompt on every call (`_CALL_SEQ` global, resets per process) — added to debug an
+unresolved live incident (extra LLM calls + duplicate chatik messages, root cause not yet found as
+of session 55's close — see `.claude/working-notes/session-55-close.md` Bugs #4).
 
 ### System Prompt (cached per session)
 
@@ -362,7 +466,11 @@ still call, no longer independently reachable from the CLI.
   a first pass.
 
 **URL Builder (`onboarding/url_builder.py`):**
-Builds HH search URLs from job prefs. Supports 6 cities. Key param: `search_field=name` (title only) — pending change to `everywhere` (task #2).
+Builds HH search URLs from job prefs. Recognizes 6 named cities (5 + `remote`→Moscow alias); any
+other city omits the `area` param entirely rather than defaulting to Moscow (task #34, fixed
+2026-07-13, merged to dev 2026-07-14 — was silently pointing every unrecognized city's searches
+at Moscow with zero warning). Key param: `search_field` — wizard prompts for scope (title-only
+vs. title+body), default `everywhere` (task #2, confirmed shipped 2026-07-13).
 
 **Critical:** `data/search_urls.txt` must contain `/search/vacancy?text=...` URLs for
 keyword-based searches. One deliberate exception: the auto-detected wise link
