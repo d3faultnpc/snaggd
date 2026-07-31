@@ -4,11 +4,17 @@ from config import SELECTORS
 class CoverOnlyHandler(BaseHandler):
     """Handler for forms with a single cover letter field."""
 
+    # _narrate() lives on BaseHandler now (session 58 code-review — was
+    # duplicated near-identically across 4 handlers, hoisted to avoid drift).
+
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.COVER_ONLY, FormType.UNKNOWN]
 
     def process(self, page, **kwargs) -> ProcessResult:
         """Fills the cover letter field and submits."""
+        reporter = kwargs.get("reporter")
+        _vac_seq = kwargs.get("vacancy_seq")
+        vid = str(_vac_seq) if _vac_seq is not None else None
 
         textarea = self._find_element_by_selectors(page, SELECTORS['cover_textarea'])
 
@@ -40,8 +46,10 @@ class CoverOnlyHandler(BaseHandler):
             # instead of a fresh one.
             llm_cover = kwargs.get("llm_cover")
             cover_letter = llm_cover.cover(kwargs.get("vacancy_text", ""), kwargs.get("vacancy_id"))
-            print("   🔹 Filling cover letter...")
+            self._narrate(reporter, "   🔹 Filling cover letter...",
+                          gui_message="Writing your cover letter into the form…", vacancy_id=vid)
             textarea.type(cover_letter, delay=10)
+            # Plain print — folded into the line above for the GUI.
             print("   ✅ Cover letter filled")
 
             self._wait_and_random_delay(page, 2000, 3000)
@@ -58,11 +66,13 @@ class CoverOnlyHandler(BaseHandler):
                     goal_reached=False
                 )
 
+            # Plain print — mechanical click, the outcome line below is what matters.
             print("   🔹 Submitting application...")
             send_button.click()
 
             self._wait_and_random_delay(page, 3000, 5000)
-            print("   ✅ Application submitted!")
+            self._narrate(reporter, "   ✅ Application submitted!",
+                          gui_message="[OK] application submitted", vacancy_id=vid)
 
             return ProcessResult(
                 success=True,

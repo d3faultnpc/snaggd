@@ -23,6 +23,9 @@ class HHModalHandler(BaseHandler):
       C. After "Submit": error "Application already viewed" → click "Chat".
     """
 
+    # _narrate() lives on BaseHandler now (session 58 code-review — was
+    # duplicated near-identically across 4 handlers, hoisted to avoid drift).
+
     def can_handle(self, form_type: FormType) -> bool:
         return form_type in [FormType.HH_MODAL_STEP1, FormType.HH_MODAL_STEP2]
 
@@ -30,6 +33,9 @@ class HHModalHandler(BaseHandler):
         llm_cover = kwargs.get("llm_cover")
         vacancy_id = kwargs.get("vacancy_id")
         vacancy_text = kwargs.get("vacancy_text", "")
+        reporter = kwargs.get("reporter")
+        _vac_seq = kwargs.get("vacancy_seq")
+        vid = str(_vac_seq) if _vac_seq is not None else None
         ambiguous_reasons: list[str] = []
 
         # 1. Find the recognized cover-letter textarea (real HH selector, not
@@ -38,25 +44,40 @@ class HHModalHandler(BaseHandler):
         filled = False
 
         if textarea:
-            print("   🔹 Filling cover letter...")
+            self._narrate(reporter, "   🔹 Filling cover letter...",
+                          gui_message="Writing your cover letter into the form…", vacancy_id=vid)
             try:
                 cover_letter = llm_cover.cover(vacancy_text, vacancy_id)
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
                 textarea.type(cover_letter, delay=5, timeout=60000)
                 filled = True
+                # Plain print — folded into the line above for the GUI.
                 print("   ✅ Cover letter filled")
                 self._wait_and_random_delay(page, 2000, 3000)
             except Exception as e:
-                print(f"   ⚠️ Textarea fill error: {e}")
+                self._narrate(reporter, f"   ⚠️ Textarea fill error: {e}",
+                              gui_message="Trouble filling in the cover letter", vacancy_id=vid)
         else:
-            # No recognized cover field on this step — it's one of HH's
-            # variable screening steps instead. Fill whatever's here blindly.
+            # No recognized cover field — genuinely non-canonical: one of
+            # HH's own variable screening steps (location/salary/English/
+            # relocation/whatever else gets added later). Worth its own
+            # distinct, more evocative beat — admitting the code doesn't
+            # know this field shape and handing interpretation to the model,
+            # not routine mechanics. (llm_agent.py's own call_type tagging
+            # covers the matching "reading an unfamiliar
+            # question…" narration once fill_form() actually fires.)
+            self._narrate(reporter, "   🔎 Unrecognized step — collecting fields for the model",
+                          gui_message="Unfamiliar screening step — asking the model how to answer",
+                          vacancy_id=vid)
             filled_count, ambiguous_reasons = self._fill_generic_fields(page, vacancy_text)
             if filled_count:
-                print(f"   ✅ Filled {filled_count} field(s) on this step via LLM")
+                self._narrate(reporter, f"   ✅ Filled {filled_count} field(s) on this step via LLM",
+                              gui_message=f"[OK] answered {filled_count} question(s) on this step",
+                              vacancy_id=vid)
             else:
-                print("   ⚠️ Cover letter field not found, no other fillable fields either")
+                self._narrate(reporter, "   ⚠️ Cover letter field not found, no other fillable fields either",
+                              gui_message="Nothing to fill in on this step", vacancy_id=vid)
 
         # 2. Click the submit button (wait for it to become enabled after filling)
         nav_button = self._find_nav_button(page)
@@ -77,7 +98,7 @@ class HHModalHandler(BaseHandler):
         self._wait_and_random_delay(page, 2000, 4000)
 
         # 3. Post-submit edge case check
-        edge_result = self._check_post_submit_edge_case(page)
+        edge_result = self._check_post_submit_edge_case(page, reporter=reporter, vacancy_id=vid)
         if edge_result:
             return edge_result
 
@@ -487,7 +508,7 @@ class HHModalHandler(BaseHandler):
     def verify_submission(self, page) -> bool:
         return self._poll_for_success(page, timeout_s=5)
 
-    def _check_post_submit_edge_case(self, page) -> ProcessResult | None:
+    def _check_post_submit_edge_case(self, page, reporter=None, vacancy_id=None) -> ProcessResult | None:
         """
         Checks post-submit edge case: 'Application already viewed by employer' → click 'Chat'.
 
@@ -499,10 +520,15 @@ class HHModalHandler(BaseHandler):
                 return None
 
             error_text = error_el.inner_text().strip()
+            # Plain print — the two branches below narrate the outcome that
+            # matters; the raw error string itself is diagnostic detail.
             print(f"   ⚠️ Form error detected: '{error_text}'")
 
             # "Please fill in cover letter" — textarea was not filled
             if 'введите' in error_text.lower() or 'заполните' in error_text.lower():
+                self._narrate(reporter, f"   ⚠️ Cover letter not filled: {error_text}",
+                              gui_message="[BLCK] the form rejected my submission — cover letter didn't go through",
+                              vacancy_id=vacancy_id)
                 return ProcessResult(
                     success=False,
                     status="skipped_no_cover_filled",
@@ -515,10 +541,13 @@ class HHModalHandler(BaseHandler):
             if 'просмотрен' not in error_text.lower() and 'уже' not in error_text.lower():
                 return None
 
-            print("   🔍 Edge case: application already viewed — looking for 'Chat' button...")
+            self._narrate(reporter, "   🔍 Edge case: application already viewed — looking for 'Chat' button...",
+                          gui_message="This vacancy was already viewed — the employer wants to chat instead",
+                          vacancy_id=vacancy_id)
 
             chat_link = page.query_selector(SELECTORS['chat_link'])
             if chat_link and chat_link.is_visible():
+                # Plain print — folded into the line above for the GUI.
                 print("   🔹 Clicking 'Chat'...")
                 chat_link.click()
                 self._wait_and_random_delay(page, 2000, 3000)

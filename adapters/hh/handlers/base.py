@@ -124,6 +124,22 @@ class BaseHandler(ABC):
         delay = random.randint(min_ms, max_ms)
         time.sleep(delay / 1000.0)
 
+    def _narrate(self, reporter, message: str, level: str = "info",
+                 gui_message: str = None, vacancy_id: str = None) -> None:
+        """print + mirror into an attached GUI client's log when a reporter is attached —
+        same contract as HHAdapter._say() (session 58). Hoisted here from 4
+        near-identical per-handler copies (chat.py/hh_modal.py/questions.py/
+        cover_only.py) so they can't drift from each other on a future edit.
+        Always actor="scan" — a handler's own hands filling/clicking a form,
+        never the LLM's output (core/llm_agent.py's call_type tagging covers
+        the matching llm-side narration)."""
+        print(message)
+        if reporter is not None:
+            reporter.emit(
+                gui_message if gui_message is not None else message.strip(),
+                level=level, actor="scan", vacancy_id=vacancy_id,
+            )
+
     @staticmethod
     def _flag_for_debug_review(result: "ProcessResult", reason: str, **extra_details) -> "ProcessResult":
         """Surfaces an ambiguous mid-form failure (LLM answer couldn't be

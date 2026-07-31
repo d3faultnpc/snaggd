@@ -1,6 +1,9 @@
 """
 LLM agent — single client for all AI calls (cover letter, scoring, HR questions).
-Uses OpenRouter as gateway; model configured via LLM_MODEL env var.
+Uses OpenRouter as gateway; model comes from the LLM_MODEL/COVER_MODEL env vars,
+API key from LLM_API_KEY. Every call routes through _chat_completion() — a
+single, direct attempt against OpenRouter; a connection-level failure just
+raises.
 """
 
 import json
@@ -8,6 +11,7 @@ import os
 import re
 from pathlib import Path
 
+import httpx
 from openai import OpenAI
 
 from config import CONFIG
@@ -40,21 +44,161 @@ try:
 except ImportError:
     _HAS_JSON_REPAIR = False
 
+# GUI client narration per call type (session 58) — humanized,
+# actor="llm". "score" is deliberately absent: adapter.py already narrates
+# scoring with richer context (vacancy_id/company/position); a second,
+# unlabeled line here would just duplicate it in the GUI. CLI console output
+# (the diagnostic "🧮 LLM call #N..." print in _chat_completion) is
+# unaffected either way — this dict only shapes what the reporter receives.
+_CALL_TYPE_NARRATION = {
+    "cover": "Writing your cover letter…",
+    "fill_form": "Reading an unfamiliar question, working out the answer…",
+    "modal_action": "Reading an unfamiliar pop-up…",
+    "answer_question": "Answering the employer's question…",
+}
+
+# Diagnostic call counter (session 55) — see _chat_completion(). Process-wide,
+# not per-vacancy: good enough to eyeball "how many calls just fired" in the
+# console/reporter stream during a live single-vacancy or small run; not
+# meant as a permanent metric.
+_CALL_SEQ = 0
+# Session reporter mirror for the counter above (session 56) — the "reporter
+# stream" the comment above assumed already existed never actually did;
+# _chat_completion() only ever printed, invisible once the app is launched
+# from a bundled .app with no attached console. LLMAgent is an import-time
+# singleton in handlers/chat.py and handlers/test_form.py, so only a global
+# read at call time (not a constructor arg) can reach it. None (CLI/guest) =
+# print-only, unchanged.
+_SESSION_REPORTER = None
+
+
+def set_session_reporter(reporter) -> None:
+    """Sets (or with None clears) the process-wide EventReporter that mirrors
+    _chat_completion()'s diagnostic call counter into an attached GUI client.
+    Called once per API session by api.py's worker; CLI/guest runs never
+    call this, so their behavior stays print-only, unchanged."""
+    global _SESSION_REPORTER
+    _SESSION_REPORTER = reporter
+
 
 class LLMAgent:
     def __init__(self, data_dir: Path = None):
-        api_key = os.getenv("LLM_API_KEY")
-        if not api_key:
+        env_api_key = os.getenv("LLM_API_KEY")
+        if not env_api_key:
             raise RuntimeError("LLM_API_KEY not set — add it to .env")
 
         self._data_dir = data_dir or CONFIG.data_dir
-        self.model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
-        self.cover_model = os.getenv("COVER_MODEL", self.model)
-        self.client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=api_key,
-        )
+        self._env_api_key = env_api_key
+        self._env_model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
+        self._env_cover_model = os.getenv("COVER_MODEL", self._env_model)
         self._system_prompt: str | None = None
+        # Client is built lazily (see `client` property below) and cached
+        # against the key it was built for.
+        self._client_cache: OpenAI | None = None
+        self._client_cache_key: str | None = None
+
+    # Properties rather than attributes frozen in __init__ purely so this
+    # matches the reporter global's own call-time-read pattern above —
+    # model/cover_model/api_key are fixed for this instance's lifetime today,
+    # but LLMAgent is still an import-time singleton in handlers/chat.py and
+    # handlers/test_form.py, so reading at call time costs nothing and keeps
+    # the shape consistent. llm_cover.py's cache keys read these per call, so
+    # cached scores stay partitioned by actual model.
+    @property
+    def model(self) -> str:
+        return self._env_model
+
+    @property
+    def cover_model(self) -> str:
+        return self._env_cover_model
+
+    @property
+    def api_key(self) -> str:
+        return self._env_api_key
+
+    @property
+    def client(self) -> OpenAI:
+        """Lazy OpenAI client, built once and cached. Rebuilding only when
+        the effective key actually changes (not on every call) avoids
+        opening a fresh httpx.Client per LLM call."""
+        key = self.api_key
+        if self._client_cache is None or self._client_cache_key != key:
+            # PROXY_URL (.env.example, documented since before session 55, never
+            # actually read by any code until now) — optional local proxy for RU
+            # users who can't reach openrouter.ai directly. httpx[socks] added as
+            # a dependency alongside this so the documented socks5:// example
+            # value actually works, not just http(s):// ones.
+            proxy_url = os.getenv("PROXY_URL")
+            http_client = httpx.Client(proxy=proxy_url) if proxy_url else None
+            self._client_cache = OpenAI(
+                base_url="https://openrouter.ai/api/v1",
+                api_key=key,
+                http_client=http_client,
+                # SDK default is read=600s (10 min) — found live (session 55):
+                # a VPN dropping mid-request leaves an already-established TCP
+                # connection with no path, and the client just sits inside
+                # read() waiting up to 10 minutes for bytes that will never
+                # arrive. Nothing about restoring the VPN un-sticks that
+                # specific hung read — the process is genuinely blocked, Stop
+                # can't reach it, and no exception has fired yet for anything
+                # further up the call stack to react to. 30s read is generous
+                # for our largest call (800 max_tokens) on a healthy
+                # connection, short enough that a dead one fails fast instead
+                # of hanging past any reasonable human patience.
+                timeout=httpx.Timeout(connect=10.0, read=30.0, write=15.0, pool=10.0),
+                # SDK default is max_retries=2 (up to 3 attempts) — found live
+                # in testing this same fix: against a hung connection that
+                # compounded the 30s read timeout to ~70s before finally
+                # raising, because each retry re-hit the identical dead path.
+                # 0 lets a connection failure surface immediately instead of
+                # the SDK silently re-trying a path that isn't coming back on
+                # its own within a few seconds — this module makes one direct
+                # attempt and raises on failure; it has no retry/fallback
+                # strategy of its own.
+                max_retries=0,
+            )
+            self._client_cache_key = key
+        return self._client_cache
+
+    # ── Single gateway for every LLM call ────────────────────────────────────
+
+    def _chat_completion(self, *, model: str, messages: list, max_tokens: int,
+                          call_type: str = None) -> str:
+        """Routes every LLM call for this process — one direct attempt
+        against OpenRouter; a connection-level failure just raises.
+
+        call_type: which public method is calling (see _CALL_TYPE_NARRATION)
+        — used only to pick the GUI client narration line when a reporter is
+        attached. vacancy_id is deliberately left unset on that event: this
+        pipeline processes one vacancy at a time, and adapter.py's own events
+        already established which one is currently active — the GUI attaches
+        a vacancy_id-less llm event to whichever vacancy that is instead of
+        threading vacancy identity through every LLM call site.
+        """
+        global _CALL_SEQ
+        _CALL_SEQ += 1
+        # Diagnostic instrumentation (session 55) — every LLM call funnels
+        # through this one method, so this is the single point that can
+        # answer "how many calls actually fired and what was each one" —
+        # needed after a live incident (2 different cover-letter texts sent
+        # to one chatik, 3 calls visible on OpenRouter's own dashboard) that
+        # the code's own applied_log bookkeeping couldn't explain (logged
+        # exactly one clean successful send, no error, no HR-bot activity).
+        # Prints the last message's own opening text — since each call site
+        # (score/cover/modal-action/HR-answer) uses a distinctly-worded
+        # prompt, this alone identifies which call this is without needing
+        # a separate call-site parameter threaded through five methods.
+        _preview = (messages[-1].get("content", "") if messages else "")[:70].replace("\n", " ")
+        _call_msg = f"🧮 LLM call #{_CALL_SEQ} (max_tokens={max_tokens}): {_preview}..."
+        _gui_msg = _CALL_TYPE_NARRATION.get(call_type)
+
+        print(f"   {_call_msg}")
+        if _SESSION_REPORTER is not None and _gui_msg is not None:
+            _SESSION_REPORTER.emit(_gui_msg, actor="llm")
+        resp = self.client.chat.completions.create(
+            model=model, messages=messages, max_tokens=max_tokens,
+        )
+        return resp.choices[0].message.content or ""
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -67,15 +211,26 @@ class LLMAgent:
         """
         prompt = self._load_prompt("cover_letter.md")
         hint = self._build_match_hint(match_context) if match_context else ""
-        resp = self.client.chat.completions.create(
+        content = self._chat_completion(
             model=self.cover_model,
             max_tokens=800,
+            call_type="cover",
             messages=[
                 {"role": "system", "content": self._system()},
                 {"role": "user", "content": f"{prompt}{hint}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
-        return (resp.choices[0].message.content or "").strip()
+        stripped = content.strip()
+        # Follow-up to _chat_completion's own generic "Writing your cover
+        # letter…" line — that one fires before the call even happens (it
+        # doesn't have the text yet); this one fires here, once real text
+        # exists, so the reporter shows the actual letter, not just the
+        # in-progress phrase, for as long as it stays in the rolling buffer.
+        if _SESSION_REPORTER is not None and stripped:
+            _preview = stripped[:100].replace("\n", " ")
+            _ellipsis = "…" if len(stripped) > 100 else ""
+            _SESSION_REPORTER.emit(f'Cover letter drafted: "{_preview}{_ellipsis}"', actor="llm")
+        return stripped
 
     def score_vacancy(self, vacancy_text: str) -> dict:
         """Returns {score, matched_skills, gaps, signals, stop_match}.
@@ -85,15 +240,16 @@ class LLMAgent:
         (loaded from job_preferences.md) — no extra parameters needed.
         """
         prompt = self._load_prompt("match_scoring.md")
-        resp = self.client.chat.completions.create(
+        content = self._chat_completion(
             model=self.model,
             max_tokens=400,
+            call_type="score",
             messages=[
                 {"role": "system", "content": self._system()},
                 {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
-        raw = (resp.choices[0].message.content or "{}").strip()
+        raw = (content or "{}").strip()
         result = self._parse_json(raw, fallback={
             "score": 50,
             "matched_skills": [],
@@ -123,15 +279,16 @@ class LLMAgent:
             .replace("{{FIELDS}}", _json.dumps(fields, ensure_ascii=False))
             .replace("{{VACANCY}}", vacancy_text[:_MAX_VACANCY_CHARS])
         )
-        resp = self.client.chat.completions.create(
+        content = self._chat_completion(
             model=self.model,
             max_tokens=800,
+            call_type="fill_form",
             messages=[
                 {"role": "system", "content": self._system()},
                 {"role": "user", "content": prompt},
             ],
         )
-        raw = (resp.choices[0].message.content or "{}").strip()
+        raw = (content or "{}").strip()
         return self._parse_json(raw, fallback={})
 
     def ask_modal_action(self, modal_text: str, buttons: list[dict]) -> dict:
@@ -150,12 +307,13 @@ class LLMAgent:
             'Reply with JSON only: {"action": "click", "button_index": N} or {"action": "skip"}'
         )
         try:
-            resp = self.client.chat.completions.create(
+            content = self._chat_completion(
                 model=self.model,
                 max_tokens=50,
+                call_type="modal_action",
                 messages=[{"role": "user", "content": prompt}],
             )
-            raw = (resp.choices[0].message.content or "{}").strip()
+            raw = (content or "{}").strip()
             result = self._parse_json(raw, fallback={"action": "skip"})
             if result.get("action") == "click" and isinstance(result.get("button_index"), int):
                 return result
@@ -164,9 +322,10 @@ class LLMAgent:
             return {"action": "skip"}
 
     def answer_question(self, question: str) -> str:
-        resp = self.client.chat.completions.create(
+        content = self._chat_completion(
             model=self.model,
             max_tokens=200,
+            call_type="answer_question",
             messages=[
                 {"role": "system", "content": self._system()},
                 {"role": "user", "content": (
@@ -176,7 +335,7 @@ class LLMAgent:
                 )},
             ],
         )
-        return (resp.choices[0].message.content or "").strip()
+        return content.strip()
 
     # ── System prompt (built once, cached) ───────────────────────────────────
 

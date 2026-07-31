@@ -85,6 +85,8 @@ class ChatHandler(BaseHandler):
         llm_cover = kwargs.get("llm_cover")
         vacancy_id = kwargs.get("vacancy_id")
         vacancy_text = kwargs.get("vacancy_text", "")
+        _vac_seq = kwargs.get("vacancy_seq")
+        vid = str(_vac_seq) if _vac_seq is not None else None
         # 1. Click "Go to chat" — chat_link is on main page, not inside iframe
         chat_link = page.query_selector(SELECTORS['chat_link'])
         if not chat_link or not chat_link.is_visible():
@@ -97,7 +99,8 @@ class ChatHandler(BaseHandler):
                 goal_reached=False
             )
 
-        print("   🔹 Clicking 'Go to chat'...")
+        self._narrate(reporter, "   🔹 Clicking 'Go to chat'...",
+                      gui_message="Opening the chat with the employer", vacancy_id=vid)
         chat_link.click()
         self._wait_and_random_delay(page, 3000, 5000)
 
@@ -135,10 +138,14 @@ class ChatHandler(BaseHandler):
         # 4. Click "Добавить сопроводительное" to open the cover letter field
         cover_sent_via_modal = kwargs.get("cover_sent_via_modal", False)
         add_cover = self._find_add_cover_btn(chatik_scope)
-        self._narrate(reporter, f"   🔬 diag: cover_sent_via_modal={cover_sent_via_modal}, add_cover_found={add_cover is not None}")
+        # Plain print — dev diagnostic (session 56, dup-message investigation),
+        # not user narration.
+        print(f"   🔬 diag: cover_sent_via_modal={cover_sent_via_modal}, add_cover_found={add_cover is not None}")
         if not add_cover:
             if cover_sent_via_modal:
-                self._narrate(reporter, "   ✅ Cover was sent in a prior form layer — chatik confirms goal reached")
+                self._narrate(reporter, "   ✅ Cover was sent in a prior form layer — chatik confirms goal reached",
+                              gui_message="Cover letter was already sent — confirming here",
+                              vacancy_id=vid)
                 return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                     success=True,
                     status="applied_via_modal",
@@ -147,7 +154,9 @@ class ChatHandler(BaseHandler):
                     is_terminal=True,
                     goal_reached=True
                 ))
-            self._narrate(reporter, "   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter")
+            self._narrate(reporter, "   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter",
+                          gui_message="[OK] applied via chat — no cover letter option here",
+                          vacancy_id=vid)
             return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                 success=True,
                 status="applied_via_chat_no_cover",
@@ -157,14 +166,17 @@ class ChatHandler(BaseHandler):
                 goal_reached=True
             ))
 
-        self._narrate(reporter, "   🔹 Clicking 'Добавить сопроводительное'...")
+        self._narrate(reporter, "   🔹 Clicking 'Добавить сопроводительное'...",
+                      gui_message="Opening the cover letter field", vacancy_id=vid)
         add_cover.click()
         self._wait_and_random_delay(page, 2000, 3000)
 
         # 5. Find cover letter textarea (separate from "Сообщение" field)
         cover_input = self._find_cover_input(chatik_scope)
         if not cover_input:
-            print("   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover")
+            self._narrate(reporter, "   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover",
+                          gui_message="[OK] applied via chat — couldn't add a cover letter",
+                          vacancy_id=vid)
             return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                 success=True,
                 status="applied_via_chat_no_cover",
@@ -178,7 +190,8 @@ class ChatHandler(BaseHandler):
         # eagerly at the top of the vacancy pipeline (session 56). Cached by
         # vacancy_id, so if an earlier layer already generated one for this
         # same vacancy (e.g. an hh_modal step), this reuses that exact text.
-        print("   🔹 Typing cover letter into cover field...")
+        self._narrate(reporter, "   🔹 Typing cover letter into cover field...",
+                      gui_message="Typing your message into the chat…", vacancy_id=vid)
         try:
             cover_letter = llm_cover.cover(vacancy_text, vacancy_id)
             # Chatik uses a single "Сообщение" textarea for cover letters too.
@@ -190,7 +203,8 @@ class ChatHandler(BaseHandler):
             self._wait_and_random_delay(page, 500, 1000)
             cover_input.type(chatik_safe_cover, delay=10)
             self._cover_typed = True
-            self._narrate(reporter, "   ✅ Cover letter typed")
+            # Plain print — folded into "Typing your message…" above for the GUI.
+            print("   ✅ Cover letter typed")
             self._wait_and_random_delay(page, 1500, 2500)
         except Exception as e:
             return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
@@ -206,7 +220,8 @@ class ChatHandler(BaseHandler):
         try:
             sent = self._send_cover(chatik_scope, cover_input, page)
             if sent:
-                self._narrate(reporter, "   ✅ Cover letter sent via chatik!")
+                self._narrate(reporter, "   ✅ Cover letter sent via chatik!",
+                              gui_message="[OK] message sent", vacancy_id=vid)
                 return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                     success=True,
                     status="applied_via_chat",
@@ -237,13 +252,8 @@ class ChatHandler(BaseHandler):
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _narrate(self, reporter, message: str, level: str = "info") -> None:
-        """print + mirror into the GUI Terminal when a reporter is attached —
-        same contract as HHAdapter._say(). Handlers don't otherwise have
-        reporter access (session 56, chatik dup-message investigation)."""
-        print(message)
-        if reporter is not None:
-            reporter.emit(message.strip(), level=level)
+    # _narrate() lives on BaseHandler now (session 58 code-review — was
+    # duplicated near-identically across 4 handlers, hoisted to avoid drift).
 
     def _apply_hr_bot_override(self, debug_reason: str | None, rounds: int, result: ProcessResult) -> ProcessResult:
         """Thin wrapper around BaseHandler._flag_for_debug_review — passthrough

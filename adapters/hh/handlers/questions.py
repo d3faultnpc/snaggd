@@ -25,10 +25,16 @@ class QuestionsHandler(BaseHandler):
             self._agent = None
             print(f"   ⚠️ QuestionsHandler: LLMAgent not initialized: {_e}")
 
+    # _narrate() lives on BaseHandler now (session 58 code-review — was
+    # duplicated near-identically across 4 handlers, hoisted to avoid drift).
+
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.EMPLOYER_QUESTIONS
 
     def process(self, page, vacancy_text: str = "", **kwargs) -> ProcessResult:
+        reporter = kwargs.get("reporter")
+        _vac_seq = kwargs.get("vacancy_seq")
+        vid = str(_vac_seq) if _vac_seq is not None else None
         inputs = page.query_selector_all('input[type="text"], input[type="radio"], input[type="checkbox"], textarea')
         if not inputs:
             return ProcessResult(
@@ -140,7 +146,13 @@ class QuestionsHandler(BaseHandler):
         # clean "no answer" skip. Surfaced via needs_debug_review below so these
         # are retryable/inspectable instead of silently disappearing into prints.
         ambiguous_reasons: list[str] = []
-        print(f"   🔹 Filling questionnaire ({len(fields)} questions)...")
+        # gui_message deliberately frames this as genuine interpretation, not
+        # mechanical filling — every employer's questions are freeform and
+        # unknown in advance, so the model really is reasoning fresh each
+        # time (llm_agent.py's own call_type tagging covers the matching
+        # narration for the fill_form() call above).
+        self._narrate(reporter, f"   🔹 Filling questionnaire ({len(fields)} questions)...",
+                      gui_message="Reading the employer's questions…", vacancy_id=vid)
 
         for i, inp, label in text_fields:
             answer = answers.get(str(i), "")
@@ -281,7 +293,8 @@ class QuestionsHandler(BaseHandler):
                     print(f"   ⚠️ Checkbox group '{question[:50]}': no match for '{answer[:60]}'")
                     ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
 
-        print(f"   ✅ Filled {filled_count}/{total} questions")
+        self._narrate(reporter, f"   ✅ Filled {filled_count}/{total} questions",
+                      gui_message=f"[OK] answered {filled_count}/{total} questions", vacancy_id=vid)
         self._wait_and_random_delay(page, 2000, 4000)
         result = self._submit(page, filled_count, total)
         # No questions_cover_sent signal anymore (session 56): a cover-shaped

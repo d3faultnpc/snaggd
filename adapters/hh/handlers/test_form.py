@@ -29,6 +29,9 @@ class TestFormHandler(BaseHandler):
         return self._poll_for_success(page, timeout_s=5)
 
     def process(self, page, **kwargs) -> ProcessResult:
+        reporter = kwargs.get("reporter")
+        _vac_seq = kwargs.get("vacancy_seq")
+        vid = str(_vac_seq) if _vac_seq is not None else None
         try:
             no_q_link = page.query_selector(SELECTORS['test_no_questions'])
             if not no_q_link or not no_q_link.is_visible():
@@ -50,6 +53,8 @@ class TestFormHandler(BaseHandler):
                 )
 
             print("   🔹 Clicking 'Apply without answering questions'...")
+            if reporter is not None:
+                reporter.emit("Skipping the test question", actor="scan", vacancy_id=vid)
             no_q_link.click()
             self._wait_and_random_delay(page, 2000, 3000)
         except Exception as e:

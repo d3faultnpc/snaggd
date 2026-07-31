@@ -70,6 +70,12 @@ class LLMCover:
         self.last_vacancy_role_type: Optional[str] = None
         self.last_signals: list = []
         self.last_cover_template_name: Optional[str] = None
+        # The real exception text behind a `score() -> False` result — was
+        # print()-only before (session 58 live incident: a run failed on
+        # every vacancy, "model unavailable" in the GUI gave no way to tell
+        # a real connection error from an auth/relay problem without
+        # reading raw console output nobody has access to from the app).
+        self.last_score_error: Optional[str] = None
 
     def score(self, vacancy_text: str) -> bool:
         """Scores the vacancy — the only LLM call needed before adapter.py's
@@ -86,6 +92,7 @@ class LLMCover:
         """
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
+        self.last_score_error = None
 
         if text_hash in self.cache:
             print("   📋 Using cached score")
@@ -94,6 +101,7 @@ class LLMCover:
 
         if self._agent is None:
             self._reset_score_defaults()
+            self.last_score_error = "LLMAgent not initialized (see startup log)"
             print("   📝 LLM unavailable — no score")
             return False
 
@@ -102,6 +110,7 @@ class LLMCover:
         except Exception as e:
             print(f"   ⚠️ Score error: {e}")
             self._reset_score_defaults()
+            self.last_score_error = f"{type(e).__name__}: {e}"
             return False
 
         self.last_score = score_data.get("score", 0)

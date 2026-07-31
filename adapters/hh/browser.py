@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from config import CONFIG, SELECTORS
 
 class HHBrowser:
-    def __init__(self):
+    def __init__(self, reporter=None):
         self.playwright = None
         self._pw_manager = None
         self.browser: Optional[Browser] = None
@@ -19,7 +19,42 @@ class HHBrowser:
         self.vacancy_page: Optional[Page] = None
         self._canonical_url: Optional[str] = None
         self._vacancy_id: Optional[str] = None
+        self._vacancy_title: Optional[str] = None
+        # Run's own per-vacancy sequence number (adapter.py's `index`), NOT
+        # HH's own vacancy id above — set once per open_vacancy() call, read
+        # by every method that narrates about the vacancy currently open
+        # (get_vacancy_text, click_apply_button) so their GUI events group
+        # under the right Terminal sub-header without threading `index`
+        # through every one of those signatures individually.
+        self._vacancy_seq: Optional[int] = None
+        # utils.events.EventReporter (API sessions) or None (CLI) — mirrors
+        # HHAdapter._say() exactly (session 55: this class had zero reporter
+        # wiring, so the whole search/scrape phase never reached the GUI
+        # Terminal, only adapter.py's own per-vacancy narration did).
+        self._reporter = reporter
         atexit.register(self.close)
+
+    def _say(self, message: str, level: str = "info", gui_message: str = None,
+             actor: str = "scan", vacancy_id: str = None,
+             company: str = None, position: str = None) -> None:
+        """print + mirror into the API session's event feed when one is attached.
+        Same contract as HHAdapter._say() — printed string stays byte-identical
+        to the print() each call site replaced, event copy drops leading
+        CLI indentation (no meaning in the GUI stream). gui_message/actor/
+        vacancy_id/company/position: see HHAdapter._say()'s own docstring —
+        identical semantics, kept in sync deliberately."""
+        print(message)
+        if self._reporter is not None:
+            self._reporter.emit(
+                gui_message if gui_message is not None else message.strip(),
+                level=level, actor=actor, vacancy_id=vacancy_id,
+                company=company, position=position,
+            )
+
+    def _vacancy_gui_id(self) -> Optional[str]:
+        """Current vacancy's GUI-grouping id (see _vacancy_seq above), or None
+        before any vacancy has been opened / after close_vacancy()."""
+        return str(self._vacancy_seq) if self._vacancy_seq is not None else None
 
     @property
     def canonical_url(self) -> Optional[str]:
@@ -28,6 +63,10 @@ class HHBrowser:
     @property
     def vacancy_id(self) -> Optional[str]:
         return self._vacancy_id
+
+    @property
+    def vacancy_title(self) -> Optional[str]:
+        return self._vacancy_title
 
     @staticmethod
     def _build_page_url(url: str, page: int) -> str:
@@ -85,7 +124,8 @@ class HHBrowser:
                     pass
             return True
         except Exception as e:
-            print(f"❌ Browser launch error: {e}")
+            self._say(f"❌ Browser launch error: {e}",
+                      gui_message="Couldn't start the browser")
             self.close()
             return False
     
@@ -95,9 +135,11 @@ class HHBrowser:
             with open(CONFIG.cookies_path, "r", encoding="utf-8") as f:
                 cookies = json.load(f)
             self.context.add_cookies(cookies)
-            print(f"✅ Cookies loaded from {CONFIG.cookies_path}")
+            self._say(f"✅ Cookies loaded from {CONFIG.cookies_path}",
+                      gui_message="Signed in using your saved session")
         except Exception as e:
-            print(f"⚠️ Cookies load error: {e}")
+            self._say(f"⚠️ Cookies load error: {e}",
+                      gui_message="Couldn't restore your saved session")
     
     def _close_cookie_modal(self) -> None:
         """Closes the cookie consent modal."""
@@ -108,14 +150,18 @@ class HHBrowser:
             )
             if cookie_btn:
                 cookie_btn.click()
-                print("   ✅ Cookie consent button clicked")
+                self._say("   ✅ Cookie consent button clicked",
+                          gui_message="Dismissed a cookie banner")
                 self.page.wait_for_selector(
                     SELECTORS['cookie_accept'],
                     state='hidden',
                     timeout=CONFIG.modal_wait
                 )
+                # Plain print — folded into the "Dismissed a cookie banner"
+                # line above for the GUI.
                 print("   ✅ Cookie modal closed")
         except:
+            # Plain print — the common "nothing to dismiss" case, not worth a GUI line.
             print("   ⚠️ Cookie modal not found or already closed")
 
         self.page.wait_for_timeout(3000)
@@ -134,17 +180,61 @@ class HHBrowser:
         text = params.get('text', [''])[0].strip()
         return text if text else 'wise_link'
 
-    def get_vacancy_urls(self, per_url_limit: int = 0) -> List[tuple]:
+    def _goto_with_retry(self, url: str, *, attempts: int = 2, retry_wait_ms: int = 2000, **goto_kwargs):
+        """page.goto() with a small bounded retry on transient network errors.
+
+        Observed live (2026-07-20): a single ERR_NETWORK_CHANGED (WiFi/VPN blip)
+        during the search page load aborted an entire session with 0 vacancies
+        found — the network condition that caused it was gone by the next
+        attempt. Not a general-purpose retry: a persistent failure still
+        propagates to the caller's own except block after the last attempt,
+        same as before this existed.
+        """
+        for attempt in range(1, attempts + 1):
+            try:
+                return self.page.goto(url, **goto_kwargs)
+            except Exception as e:
+                if attempt >= attempts:
+                    raise
+                # Plain print — bounded internal retry, not worth a GUI line.
+                print(f"   ⚠️ goto failed (attempt {attempt}/{attempts}): {e} — retrying in {retry_wait_ms}ms")
+                self.page.wait_for_timeout(retry_wait_ms)
+
+    def get_vacancy_urls(self, per_url_limit: int = 0, target_url: str = None) -> List[tuple]:
         """Visits all search URLs, returns deduplicated interleaved list of
         (url, title, index, search_source) tuples.
 
         per_url_limit > 0: collect at most N vacancies per URL, then interleave round-robin
         so each search angle is represented evenly in the processed queue.
         per_url_limit = 0: no cap, pool all vacancies sequentially (legacy behaviour).
+
+        target_url set (single-vacancy debug mode, session 55): bypasses
+        search_urls.txt and all scraping entirely — returns exactly one
+        entry for this vacancy, no other vacancy can end up in the result.
+        Explicit parameter rather than monkeypatching _load_search_urls (the
+        original session-55 approach): that indirection was implicated in a
+        real live-run incident where the override silently didn't take
+        effect and normal search vacancies got processed/applied-to instead
+        — an explicit parameter on the actual call path can't have that
+        failure mode.
         """
+        if target_url:
+            import re as _re
+            m = _re.search(r'/vacancy/(\d+)', target_url)
+            if not m:
+                self._say(f"❌ target_url doesn't look like a vacancy URL: {target_url}",
+                          gui_message="That link doesn't look like a vacancy — stopping")
+                return []
+            vacancy_id = m.group(1)
+            clean_url = f'https://hh.ru/vacancy/{vacancy_id}'
+            self._say(f"🔹 Single-URL debug mode — exactly one vacancy: {clean_url}",
+                      gui_message="Focusing on one specific vacancy")
+            return [(clean_url, f'vacancy/{vacancy_id}', 1, 'direct')]
+
         search_urls = self._load_search_urls()
         if not search_urls:
-            print("❌ No search URLs configured (run onboarding/wizard.py --block b)")
+            self._say("❌ No search URLs configured (run onboarding/wizard.py --block b)",
+                      gui_message="No search set up yet")
             return []
 
         url_buckets: list = []  # one list per search URL
@@ -159,6 +249,8 @@ class HHBrowser:
                 clean_url = f'https://hh.ru/vacancy/{vacancy_id}'
                 url_buckets.append([(clean_url, f'vacancy/{vacancy_id}', 1)])
                 source_labels.append('direct')
+                # Plain print — internal routing detail, the aggregate "Found
+                # N vacancies" line below is what the GUI actually shows.
                 print(f"🔹 Direct vacancy URL: {clean_url}")
                 continue
 
@@ -167,16 +259,16 @@ class HHBrowser:
             try:
                 for page_num in range(CONFIG.max_pages):
                     page_url = self._build_page_url(search_url, page_num)
-                    self.page.goto(page_url, timeout=CONFIG.page_load_timeout,
-                                   wait_until="domcontentloaded")
+                    self._goto_with_retry(page_url, timeout=CONFIG.page_load_timeout,
+                                          wait_until="domcontentloaded")
                     # Geo-redirect check only on first page of each search URL
                     if page_num == 0:
                         actual_url = self.page.url
                         if '.hh.ru/' in actual_url and '://hh.ru/' not in actual_url:
                             canonical = re.sub(r'https://[\w-]+\.hh\.ru/', 'https://hh.ru/', actual_url)
                             print(f"   ⚠️ Geo-redirect detected → forcing hh.ru")
-                            self.page.goto(canonical, timeout=CONFIG.page_load_timeout,
-                                           wait_until="domcontentloaded")
+                            self._goto_with_retry(canonical, timeout=CONFIG.page_load_timeout,
+                                                  wait_until="domcontentloaded")
                     # First page of the session: full wait for modals; subsequent pages: short wait
                     wait_ms = CONFIG.initial_wait if (i == 0 and page_num == 0) else 3000
                     print(f"⏳ Waiting {wait_ms/1000:.0f}s (page {page_num})...")
@@ -193,7 +285,8 @@ class HHBrowser:
                     if per_url_limit > 0 and len(bucket) >= per_url_limit:
                         break
             except Exception as e:
-                print(f"   ❌ Error loading search #{i+1}: {e}")
+                self._say(f"   ❌ Error loading search #{i+1}: {e}",
+                          gui_message="Trouble loading one of your searches — trying the others")
 
             if per_url_limit > 0:
                 bucket = bucket[:per_url_limit]
@@ -216,7 +309,8 @@ class HHBrowser:
 
         total_collected = sum(len(b) for b in url_buckets)
         limit_str = f"≤{per_url_limit}/URL" if per_url_limit > 0 else f"≤{CONFIG.max_pages} pages/URL"
-        print(f"✅ Total vacancies: {len(result)} unique (from {total_collected} across {len(url_buckets)} URL(s), {limit_str})")
+        self._say(f"✅ Total vacancies: {len(result)} unique (from {total_collected} across {len(url_buckets)} URL(s), {limit_str})",
+                  gui_message=f"Found {len(result)} vacancies to review")
         return result
 
     def _load_search_urls(self) -> List[str]:
@@ -229,6 +323,7 @@ class HHBrowser:
         import os
         fallback = os.getenv("HH_SEARCH_URL", "")
         if fallback:
+            # Plain print — legacy/dev-config detail, not user narration.
             print("   ⚠️ search_urls.txt not found — using HH_SEARCH_URL from .env (legacy)")
             return [fallback]
         return []
@@ -261,32 +356,55 @@ class HHBrowser:
                     title = el.inner_text().strip()
                     vacancies.append((url, title, i + 1))
                 except Exception as e:
+                    # Plain print — one bad card among many, not worth a GUI line.
                     print(f"   ⚠️ Vacancy #{i+1} error: {e}")
             return vacancies
         except Exception as e:
             print(f"   ❌ Scraping error: {e}")
             return []
     
-    def open_vacancy(self, url: str) -> bool:
-        """Opens a vacancy in a new tab and captures canonical URL + vacancy ID."""
+    def open_vacancy(self, url: str, index: int = None) -> bool:
+        """Opens a vacancy in a new tab and captures canonical URL + vacancy ID.
+
+        index: the run's per-vacancy sequence number (adapter.py's own
+        `index`), stored for the duration of this vacancy so later calls
+        (get_vacancy_text, click_apply_button) can tag their GUI events
+        with it — see _vacancy_seq / _vacancy_gui_id() above.
+        """
         self._canonical_url = None
         self._vacancy_id = None
+        self._vacancy_title = None
+        self._vacancy_seq = index
         try:
             self.vacancy_page = self.context.new_page()
             self.vacancy_page.goto(url, timeout=CONFIG.page_load_timeout, wait_until="domcontentloaded")
             self.vacancy_page.bring_to_front()
-            self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
+            title_el = self.vacancy_page.wait_for_selector(SELECTORS['vacancy_title_page'], timeout=30000)
 
             # Capture canonical URL after redirect (tracking URLs resolve to hh.ru/vacancy/ID)
             self._canonical_url = self.vacancy_page.url
             self._vacancy_id = self._extract_vacancy_id(self._canonical_url)
+            # Real title from the page itself — single-URL/target_url mode
+            # (session 55) has no scraped title to pass in at all (bypasses
+            # search entirely), so the caller's own title was a hardcoded
+            # 'vacancy/{id}' placeholder that ended up literally in History/
+            # Dashboard's Position column. Reusing the element wait_for_selector
+            # already found above costs nothing extra — no new page query.
+            try:
+                self._vacancy_title = title_el.inner_text().strip() or None
+            except Exception:
+                pass
 
-            print("   ✅ Vacancy loaded")
+            self._say("   ✅ Vacancy loaded",
+                      gui_message="Vacancy opened",
+                      vacancy_id=self._vacancy_gui_id(), position=self._vacancy_title)
             self._dismiss_cookie_banner(self.vacancy_page)
             return True
 
         except Exception as e:
-            print(f"   ❌ Error opening vacancy: {e}")
+            self._say(f"   ❌ Error opening vacancy: {e}",
+                      gui_message="[BLCK] couldn't open this vacancy",
+                      vacancy_id=self._vacancy_gui_id())
             return False
 
     def _dismiss_cookie_banner(self, page) -> None:
@@ -339,14 +457,19 @@ class HHBrowser:
             desc_element = self.vacancy_page.query_selector(SELECTORS['vacancy_description'])
             if desc_element:
                 text = desc_element.inner_text()
+                # Plain print — folded into "Vacancy opened" for the GUI.
                 print(f"   ✅ Extracted {len(text)} characters of description")
                 return text
             else:
-                print("   ⚠️ Vacancy description not found")
+                self._say("   ⚠️ Vacancy description not found",
+                          gui_message="Couldn't find a description on this page",
+                          vacancy_id=self._vacancy_gui_id())
                 return None
 
         except Exception as e:
-            print(f"   ❌ Text extraction error: {e}")
+            self._say(f"   ❌ Text extraction error: {e}",
+                      gui_message="Couldn't read this vacancy's description",
+                      vacancy_id=self._vacancy_gui_id())
             return None
     
     def click_apply_button(self) -> bool:
@@ -357,6 +480,7 @@ class HHBrowser:
                 button = self.vacancy_page.query_selector(selector)
                 if button and button.is_visible():
                     apply_button = button
+                    # Plain print — internal selector detail.
                     print(f"   ✅ Found 'Apply' button: {selector}")
                     break
 
@@ -374,19 +498,25 @@ class HHBrowser:
                         continue
 
             if not apply_button:
-                print("   ❌ 'Apply' button not found")
+                self._say("   ❌ 'Apply' button not found",
+                          gui_message="[BLCK] couldn't find the Apply button",
+                          vacancy_id=self._vacancy_gui_id())
                 return False
 
             apply_button.click()
+            # Plain print — adapter.py already announced "Clicking Apply…"
+            # right before this call; this would just repeat it.
             print("   ✅ 'Apply' button clicked")
 
             # Human-like pause for the form to appear
             time.sleep(7)
-            
+
             return True
-            
+
         except Exception as e:
-            print(f"   ❌ Error clicking 'Apply' button: {e}")
+            self._say(f"   ❌ Error clicking 'Apply' button: {e}",
+                      gui_message="Ran into trouble clicking Apply",
+                      vacancy_id=self._vacancy_gui_id())
             return False
     
     def close_vacancy(self) -> None:
@@ -396,6 +526,11 @@ class HHBrowser:
             self.vacancy_page = None
             self.page.bring_to_front()
             time.sleep(3)
+        # Matches _vacancy_gui_id()'s own docstring (session 58 code-review
+        # catch): without this, any browser-level event narrated between
+        # this call and the next open_vacancy() would silently mis-attribute
+        # to the vacancy that just closed instead of showing no vacancy.
+        self._vacancy_seq = None
     
     def close(self) -> None:
         """Closes browser and Playwright driver. Idempotent — safe to call multiple times."""

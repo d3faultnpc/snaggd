@@ -24,6 +24,14 @@ __pycache__/
 /dist/
 *.spec
 
+# Defensive entries — nothing in this repo creates these paths today, but a
+# stray `git add -A`/`git add .` must never be able to accidentally stage
+# them if some future local session ever recreates one transiently.
+/billing.py
+/llm_relay.py
+/core/billing.py
+/core/llm_relay.py
+
 # Test sandbox (mimics user data dir for subagent / local testing)
 sandbox/
 
@@ -47,5 +55,6 @@ pending_actions.json
 .claude/settings.local.json
 .claude/worktrees/
 .claude/working-notes/
+.claude/launch.json
 CLAUDE.local.md
 !data/.gitkeep
