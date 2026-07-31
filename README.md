@@ -1,5 +1,11 @@
 ![header](./assets/header.png)
 
+[![License](https://img.shields.io/badge/license-MIT-1E2124?style=flat-square&labelColor=141518)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10+-1E2124?style=flat-square&labelColor=141518&logo=python&logoColor=4CAF50)](https://python.org)
+[![Playwright](https://img.shields.io/badge/playwright-powered-1E2124?style=flat-square&labelColor=141518&logo=playwright&logoColor=4CAF50)](https://playwright.dev)
+[![OpenRouter](https://img.shields.io/badge/LLM-OpenRouter-1E2124?style=flat-square&labelColor=141518)](https://openrouter.ai)
+[![Status](https://img.shields.io/badge/status-alpha-1E2124?style=flat-square&labelColor=141518)](#)
+
 # snaggd
 
 > Automated job application agent for [HH.ru](https://hh.ru) — the largest job board in Russia and CIS.
@@ -19,7 +25,7 @@ Reads your resume, scores each vacancy against it, writes a personalized cover l
 3. Scores each vacancy against your resume (0–100) — skips anything below your threshold
 4. Generates a personalized cover letter via LLM, matching the vacancy's language and tone
 5. Detects the form type (modal, questionnaire, chatik, etc.) and fills it accordingly
-6. Logs every result to `data/applied_log.json`
+6. Logs every result to `data/profiles/<name>/applied_log.json`
 
 All LLM calls go through [OpenRouter](https://openrouter.ai). Default model: `deepseek/deepseek-v3.2` (~$0.0002 per vacancy).
 
@@ -37,24 +43,36 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 2. Onboarding wizard (one time)
+### 2. Onboarding wizard (one time per resume)
 
 ```bash
-python onboarding/wizard.py
+python onboarding/wizard.py --profile pm   # or any name — one resume = one profile
 ```
 
-The wizard creates all required data files in order:
+Everything is saved under `data/profiles/<name>/`, so you can run several resumes/directions
+side by side without them mixing. Omit `--profile` and the wizard will ask for a name.
 
-| Block | What it creates |
-|-------|----------------|
-| D — LLM config | `.env` with your OpenRouter key + model |
-| A — Resume | `data/candidate.md` from your PDF/DOCX/image |
-| B — Job prefs | `data/job_preferences.md` + `data/search_urls.txt` + `data/filters.json` (stop rules) |
-| C — Tone | `data/tone_of_voice.md` (cover letter formality + optional style sample) |
+The wizard runs 7 steps in order (or jump to one directly with `--step N`):
 
-Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
+| Step | What it does |
+|------|-------------|
+| 1 — Resume | Parses your PDF/DOCX/image → `candidate.md` + `candidate.json` |
+| 2 — Identity | Review/edit name, contacts, pitch |
+| 3 — History | Review/edit work history + education |
+| 4 — Projects | Review/edit side projects, certifications, publications |
+| 5 — Skills | Skills/tools/languages, career profile, optional cover-letter tone |
+| 6 — Search & rules | `job_preferences.md` + `search_urls.txt` + `filters.json` (stop rules, salary) |
+| 7 — HH Connect | Logs in to HH.ru and links your resume for auto-detected search |
 
-### 3. Log in to HH.ru (one time)
+`--setup-keys` (LLM API key, model, headless mode) runs first automatically, or standalone
+any time. Get a free OpenRouter key at [openrouter.ai](https://openrouter.ai).
+
+Already onboarded and just need to update one thing? Re-run a single step, e.g.
+`python onboarding/wizard.py --profile pm --step 5`.
+
+### 3. Log in again if needed
+
+Step 7 above already logs you in. If your session expires later, redo it standalone:
 
 ```bash
 python login.py
@@ -66,17 +84,22 @@ Opens a browser window — log in manually. Cookies are saved to `data/hh_cookie
 
 ```bash
 # Dry run first — scores vacancies, never clicks Apply
-python main.py --dry-run
+python main.py --profile pm --dry-run
 
 # Live run
-python main.py
+python main.py --profile pm
 
 # Limit to N applications
-python main.py --max 5
+python main.py --profile pm --max 5
 ```
+
+`--profile` is auto-selected if you only have one; with two or more, you must name one —
+there's no silent fallback between profiles.
 
 | Flag | Description |
 |------|-------------|
+| `--profile <name>` | Which profile to run (auto-selected if you only have one) |
+| `--list-profiles` | Show all profiles and how many applications each has sent |
 | `--dry-run` | Score + log vacancies without submitting |
 | `--max N` | Stop after N applications |
 | `--debug` | Save page screenshots on unknown forms |
@@ -96,8 +119,11 @@ MAX_VACANCIES=10                   # max applications per run
 MAX_SKIPS=10                       # stop session after N skipped vacancies
 HEADLESS=false                     # true = no browser window
 FILL_TESTS=false                   # true = attempt LLM fill for employer tests
-DATA_DIR=./data                    # override data directory
+DATA_DIR=./data                    # low-level override; set automatically by --profile
 PROXY_URL=                         # socks5://... (optional)
+BROWSER_CORNER=false               # true = position browser in bottom-right corner
+BROWSER_CORNER_X=1578              # corner X offset in pixels — tune for your screen
+BROWSER_CORNER_Y=650               # corner Y offset in pixels — tune for your screen
 ```
 
 ---
@@ -118,7 +144,7 @@ main.py (orchestrator)
 │       └── salary       — salary-only forms (skipped)
 ├── LLMCover  (llm_cover.py)   — cover letter + scoring, compound-key session cache
 │   └── LLMAgent (core/llm_agent.py) — OpenRouter gateway
-└── Logger    (logger.py)      — data/applied_log.json + daily logs
+└── Logger    (logger.py)      — data/profiles/<name>/applied_log.json + daily logs
 ```
 
 Two contexts, zero overlap:
@@ -149,7 +175,7 @@ utils/
   filters.py            ← stop filter logic (title, company, rating, semantic)
   helpers.py            ← shared utilities
 onboarding/
-  wizard.py             ← CLI setup (blocks D→A→B→C)
+  wizard.py             ← CLI setup, 7-step candidate.json flow (--step 1-7)
   resume_parser.py      ← multimodal PDF/DOCX/image → structured resume data
   url_builder.py        ← job preferences → HH search URLs
 prompts/
@@ -158,17 +184,27 @@ prompts/
   form_fill.md          ← form field answering: salary, employer questions
   cv_extractor.md       ← resume extraction prompt (used by resume_parser.py)
 data/                   ← gitignored, created by wizard (your resume, cookies, logs)
-scripts/                ← dev utilities (vacancy inspector, label tester)
+scripts/                ← migrate_candidate.py (legacy profile upgrade) + dev utilities
 ```
 
 ---
 
 ## Limitations
 
-- **HH.ru only** — multi-site support is planned for Phase 2
+- **HH.ru only** — multi-site support is planned for a future release
 - **Russian job board** — cover letters are generated in the vacancy's language (Russian or English)
 - **Cookie-based auth** — if cookies expire, re-run `login.py`
 - **Tested on macOS** — should work on Linux; Windows untested
+
+---
+
+## Roadmap
+
+**Multi-site support**
+The adapter framework (`adapters/base.py`) is already in place. LinkedIn and other CIS job boards are in scope.
+
+**Resume enhancement**
+ATS optimizer: takes your existing resume and suggests targeted edits to improve match rates against a specific job description.
 
 ---
 
