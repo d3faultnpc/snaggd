@@ -40,7 +40,7 @@ try:
         ctx = browser.new_context()
         ctx.add_cookies(cookies)
         page = ctx.new_page()
-        page.goto("https://hh.ru/applicant/resumes", wait_until="domcontentloaded", timeout=30_000)
+        page.goto("https://hh.ru/applicant/profile/me", wait_until="domcontentloaded", timeout=30_000)
         page.wait_for_timeout(3_000)
 
         items = page.eval_on_selector_all(
