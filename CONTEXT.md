@@ -2,7 +2,7 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-07-30 (session 60 — dead BYOK-verify route + unused session-override globals removed from api.py/core/llm_agent.py; stale references cleaned up across this file, .env.example, .gitignore, and tests). Keep updated after major architecture changes.
+> Updated: 2026-08-01 (до-уборочная session — main's history rewritten back 19 commits and force-pushed clean; found and fixed a deeper leak this file's own narration-schema section carried, HORIZON/claw/brain, which turned out to be the private app's real branded UI vocabulary; generic terminology throughout now). Keep updated after major architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
