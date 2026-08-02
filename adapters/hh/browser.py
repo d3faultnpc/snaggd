@@ -105,9 +105,22 @@ class HHBrowser:
                     launch_args = ["--window-position=-2000,-2000", "--window-size=1280,800"]
             self.browser = self.playwright.chromium.launch(
                 headless=CONFIG.headless,
-                args=launch_args,
+                args=launch_args + ["--disable-blink-features=AutomationControlled"],
             )
-            self.context = self.browser.new_context()
+            # HH.ru detects plain Playwright/CDP automation (navigator.webdriver=true,
+            # and headless mode's own "HeadlessChrome" UA string) and appears to
+            # withhold authenticated content in response — confirmed live 2026-08-02:
+            # a genuinely valid, fresh-cookie session showed zero resume links under
+            # automation defaults, and immediately/correctly showed them once
+            # navigator.webdriver was patched and the UA de-headlessed. Applied here
+            # too, not just the liveness probe, since real runs hit the same fingerprint.
+            self.context = self.browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            )
+            self.context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
             self._load_cookies()
             self.page = self.context.new_page()
             if not CONFIG.headless and corner:
@@ -476,13 +489,28 @@ class HHBrowser:
         """Clicks the 'Apply' button."""
         try:
             apply_button = None
-            for selector in SELECTORS['apply_button']:
-                button = self.vacancy_page.query_selector(selector)
-                if button and button.is_visible():
-                    apply_button = button
-                    # Plain print — internal selector detail.
-                    print(f"   ✅ Found 'Apply' button: {selector}")
+            # Poll up to ~5s (some vacancy pages are slow to render) and check
+            # EVERY match per selector, not just the first DOM hit — a vacancy
+            # page commonly has multiple "Откликнуться" elements (recommendation
+            # cards below the fold), and the old query_selector() (single-match)
+            # gave up if that specific first-in-DOM element happened to be
+            # invisible, even when later matches for the same selector were
+            # visible (found live 2026-08-02, vacancy 135793714 — 4 matches for
+            # a:has-text("Откликнуться"), 3 of them visible, but the check still
+            # reported "not found").
+            for _ in range(10):
+                for selector in SELECTORS['apply_button']:
+                    for candidate in self.vacancy_page.query_selector_all(selector):
+                        if candidate.is_visible():
+                            apply_button = candidate
+                            # Plain print — internal selector detail.
+                            print(f"   ✅ Found 'Apply' button: {selector}")
+                            break
+                    if apply_button:
+                        break
+                if apply_button:
                     break
+                self.vacancy_page.wait_for_timeout(500)
 
             # Fallback: search by button text
             if not apply_button:
@@ -503,6 +531,7 @@ class HHBrowser:
                           vacancy_id=self._vacancy_gui_id())
                 return False
 
+            before_text = (apply_button.inner_text() or "").strip()
             apply_button.click()
             # Plain print — adapter.py already announced "Clicking Apply…"
             # right before this call; this would just repeat it.
@@ -510,6 +539,35 @@ class HHBrowser:
 
             # Human-like pause for the form to appear
             time.sleep(7)
+
+            def _click_had_no_effect() -> bool:
+                # A .click() that doesn't throw is not proof it landed on the
+                # real button — an overlay (e.g. HH's own sticky nav) can
+                # intercept it silently. If the same element handle is still
+                # visible with byte-identical text after the click, nothing
+                # actually happened. A stale/detached handle (page genuinely
+                # changed) throws here, which we read as "it worked".
+                try:
+                    return bool(
+                        before_text
+                        and apply_button.is_visible()
+                        and (apply_button.inner_text() or "").strip() == before_text
+                    )
+                except Exception:
+                    return False
+
+            if _click_had_no_effect():
+                print("   ⚠️ 'Apply' click had no visible effect — retrying with a forced click")
+                try:
+                    apply_button.click(force=True)
+                    time.sleep(7)
+                except Exception as e:
+                    print(f"   ⚠️ Forced click failed: {e}")
+                if _click_had_no_effect():
+                    self._say("   ❌ 'Apply' click still had no effect after retry (likely blocked by an overlay)",
+                              gui_message="[BLCK] the Apply click didn't seem to register",
+                              vacancy_id=self._vacancy_gui_id())
+                    return False
 
             return True
 

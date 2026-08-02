@@ -128,16 +128,41 @@ def _check_hh_live() -> bool:
 
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            ctx = browser.new_context()
+            # Confirmed live 2026-08-02: HH.ru detects navigator.webdriver=true and
+            # headless Chrome's own UA string, and withholds the resume card in
+            # response even with genuinely valid cookies — verified by patching both
+            # and immediately seeing the resume link, at the 1s mark, with the exact
+            # same cookies that showed nothing after 12s unpatched.
+            browser = p.chromium.launch(
+                headless=True,
+                args=["--disable-blink-features=AutomationControlled"],
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+                           "(KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            )
+            ctx.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            )
             ctx.add_cookies(cookies)
             page = ctx.new_page()
-            page.goto("https://hh.ru/applicant/resumes", wait_until="domcontentloaded", timeout=30_000)
-            page.wait_for_timeout(2_000)
-            has_resume_link = page.locator("a[href*='/resume/']").count() > 0
-            still_on_applicant_page = "/applicant/" in page.url
+            page.goto("https://hh.ru/applicant/profile/me", wait_until="domcontentloaded", timeout=30_000)
+            # A resume link is a real positive signal — only present when
+            # actually authenticated. Wait for it directly (up to 8s) rather
+            # than a fixed short sleep + count check, which false-negatived
+            # on a genuinely fresh session whose resume card hadn't finished
+            # rendering yet (found live 2026-08-01). The old "still on
+            # /applicant/*" fallback is gone too — it was trivially true even
+            # logged out, since HH doesn't hard-redirect this path for
+            # anonymous visitors, so it always reported "live" regardless of
+            # real cookie state.
+            try:
+                page.wait_for_selector("a[href*='/resume/']", timeout=8_000)
+                has_resume_link = True
+            except Exception:
+                has_resume_link = False
             browser.close()
-            return has_resume_link or still_on_applicant_page
+            return has_resume_link
     except Exception:
         return False
 
@@ -209,8 +234,8 @@ def _session_worker(session_id: str, req: SessionStartRequest) -> None:
 
         reporter.emit("Preflight: checking connection with HH…")
         if not _check_hh_live():
-            reporter.emit("HH session appears expired — reconnect in Settings → Engine", level="error")
-            session.update(state="error", error="HH session appears expired — reconnect in Settings → Engine")
+            reporter.emit("HH session appears expired — run login.py again to refresh cookies", level="error")
+            session.update(state="error", error="HH session appears expired — run login.py again to refresh cookies")
             return
 
         # A stop requested anywhere during the liveness check was silently

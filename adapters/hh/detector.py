@@ -190,8 +190,10 @@ class FormDetector:
         if info.has_chat_link:
             return FormType.CHAT_INTERFACE
 
-        # 4. Employer questionnaire
-        if (info.input_count > 1 or
+        # 4. Employer questionnaire — requires BOTH signals (2026-08-01): input_count
+        # alone false-positived on a vacancy page's own ambient inputs (2+ unrelated
+        # fields) when the Apply click silently failed and no real form ever appeared.
+        if (info.input_count > 1 and
                 self._has_keywords(combined_text, FORM_KEYWORDS['questions'])):
             return FormType.EMPLOYER_QUESTIONS
 

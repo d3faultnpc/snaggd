@@ -201,7 +201,18 @@ class ChatHandler(BaseHandler):
             chatik_safe_cover = cover_letter.replace('\n', ' ').strip()
             cover_input.click()
             self._wait_and_random_delay(page, 500, 1000)
-            cover_input.type(chatik_safe_cover, delay=10)
+            try:
+                cover_input.type(chatik_safe_cover, delay=10)
+            except Exception:
+                # HH's overlay can block the normal actionability-gated type()
+                # the same way it blocks clicks (found live 2026-08-02,
+                # ElementHandle.type: Timeout 30000ms exceeded) — force-focus
+                # past whatever's intercepting, then type via the page's own
+                # keyboard (no per-element actionability gate on the target),
+                # so this still fires real keystroke events, not a
+                # React-ignored .fill().
+                cover_input.click(force=True)
+                page.keyboard.type(chatik_safe_cover, delay=10)
             self._cover_typed = True
             # Plain print — folded into "Typing your message…" above for the GUI.
             print("   ✅ Cover letter typed")

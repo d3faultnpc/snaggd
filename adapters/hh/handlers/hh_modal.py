@@ -286,11 +286,13 @@ class HHModalHandler(BaseHandler):
             else:
                 target = answer.strip().lower()
             clicked = False
+            match_found = False
             for idx, el, val, opt_text in grp["elements"]:
                 is_open = val == "open"
                 matches_open = is_open and free_text is not None
                 matches_text = not is_open and opt_text.strip().lower() == target
                 if matches_open or matches_text:
+                    match_found = True
                     try:
                         el.click()
                         self._wait_and_random_delay(page, 400, 800)
@@ -314,7 +316,7 @@ class HHModalHandler(BaseHandler):
                         print(f"   ⚠️ Radio click error: {e}")
                         ambiguous_reasons.append(f"radio_click_error[{name}]: {e}")
                     break
-            if not clicked:
+            if not clicked and not match_found:
                 ambiguous_reasons.append(f"radio_no_match[{name}]: '{answer[:60]}'")
 
         for question, grp in checkbox_groups.items():
@@ -344,12 +346,14 @@ class HHModalHandler(BaseHandler):
                 else:
                     target = answer.strip().lower()
                 clicked = False
+                match_found = False
                 for i, inp, opt_text in elems:
                     norm_opt = opt_text.strip().lower()
                     is_free = norm_opt in ("свой вариант", "другое", "other")
                     matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
                     matches_opt = not is_free and norm_opt == target
                     if matches_free or matches_opt:
+                        match_found = True
                         try:
                             inp.check()
                             self._wait_and_random_delay(page, 400, 800)
@@ -376,7 +380,7 @@ class HHModalHandler(BaseHandler):
                             print(f"   ⚠️ Checkbox group error: {e}")
                             ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
                         break
-                if not clicked:
+                if not clicked and not match_found:
                     ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
 
         for i, sel, label, options, name in select_fields:

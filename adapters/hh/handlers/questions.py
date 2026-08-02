@@ -185,12 +185,14 @@ class QuestionsHandler(BaseHandler):
                 target = _norm(answer)
 
             clicked = False
+            match_found = False
             for idx, el, val, opt_text in grp["elements"]:
                 is_open = val == "open"
                 matches_open = is_open and free_text is not None
                 matches_text = not is_open and _norm(opt_text) == target
 
                 if matches_open or matches_text:
+                    match_found = True
                     try:
                         el.click()
                         page.wait_for_timeout(600)
@@ -219,7 +221,7 @@ class QuestionsHandler(BaseHandler):
                         ambiguous_reasons.append(f"radio_click_error[{name}]: {e}")
                     break
 
-            if not clicked:
+            if not clicked and not match_found:
                 print(f"   ⚠️ Radio '{name}': no match for '{answer[:60]}'")
                 ambiguous_reasons.append(f"radio_no_match[{name}]: '{answer[:60]}'")
 
@@ -254,12 +256,14 @@ class QuestionsHandler(BaseHandler):
                 else:
                     target = _norm(answer)
                 clicked = False
+                match_found = False
                 for i, inp, opt_text in elems:
                     norm_opt = _norm(opt_text)
                     is_free = norm_opt in ("свой вариант", "другое", "other")
                     matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
                     matches_opt = not is_free and norm_opt == target
                     if matches_free or matches_opt:
+                        match_found = True
                         try:
                             inp.check()
                             page.wait_for_timeout(600)
@@ -289,7 +293,7 @@ class QuestionsHandler(BaseHandler):
                             print(f"   ⚠️ Checkbox group click error: {e}")
                             ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
                         break
-                if not clicked:
+                if not clicked and not match_found:
                     print(f"   ⚠️ Checkbox group '{question[:50]}': no match for '{answer[:60]}'")
                     ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
 
