@@ -65,7 +65,11 @@ If the candidate profile states a career aspiration (Career Profile → aspirati
 - Do NOT apply to hard-blocked categories (gambling, MLM, or any stop_match category)
 
 Role type alignment (apply AFTER domain alignment):
-Look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
+If candidate's role_type is absent, empty, or still the "SKIPPABLE" placeholder — apply NO
+modifier. Many real professions (e.g. a barista, a dentist) don't map onto this vocabulary at
+all, and an absent value is not evidence of a mismatch. Still classify vacancy_role_type below
+(used elsewhere, e.g. cover letter context) and set role_type_match to null.
+Otherwise: look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
 Classify the vacancy's required contribution style and compare it to the candidate's role_type.
 Use the same vocabulary as the candidate's role_type where possible.
 - Same contribution style or adjacent → no modifier

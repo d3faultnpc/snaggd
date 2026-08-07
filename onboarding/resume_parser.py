@@ -205,7 +205,7 @@ class ResumeParser:
         lines += ["", "## Career Profile"]
         cp = data.career_profile or {}
         lines.append(f"role_type: {cp['role_type']}" if cp.get("role_type")
-                     else "role_type: # SKIPPABLE — fill via wizard if useful for scoring (free text, no fixed list)")
+                     else "role_type: # SKIPPABLE — fill via wizard if useful for scoring (Builder/Growth/Operator/Researcher, or leave blank if none fit)")
         lines.append(f"edge: {cp['edge']}" if cp.get("edge")
                      else "edge: # HINT: one-sentence unique angle vs other candidates")
         lines.append(f"aspiration: {cp['aspiration']}" if cp.get("aspiration")
