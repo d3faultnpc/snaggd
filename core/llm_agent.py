@@ -188,7 +188,14 @@ class LLMAgent:
         # (score/cover/modal-action/HR-answer) uses a distinctly-worded
         # prompt, this alone identifies which call this is without needing
         # a separate call-site parameter threaded through five methods.
-        _preview = (messages[-1].get("content", "") if messages else "")[:70].replace("\n", " ")
+        _last_content = messages[-1].get("content", "") if messages else ""
+        if isinstance(_last_content, list):
+            # Multimodal content (image_url blocks — PDF/image resume parsing)
+            # has no single string to preview; pull out the text block if one
+            # exists rather than crashing on list.replace().
+            _text_blocks = [b.get("text", "") for b in _last_content if isinstance(b, dict) and b.get("type") == "text"]
+            _last_content = " ".join(_text_blocks) or "[multimodal content]"
+        _preview = str(_last_content)[:70].replace("\n", " ")
         _call_msg = f"🧮 LLM call #{_CALL_SEQ} (max_tokens={max_tokens}): {_preview}..."
         _gui_msg = _CALL_TYPE_NARRATION.get(call_type)
 
