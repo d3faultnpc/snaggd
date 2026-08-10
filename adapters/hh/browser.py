@@ -10,7 +10,18 @@ from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from config import CONFIG, SELECTORS
 
 class HHBrowser:
-    def __init__(self, reporter=None):
+    # data_dir: the PROFILE's own directory. Previously absent, which meant
+    # _load_search_urls() below could only ever read the module-level
+    # CONFIG.search_urls_path — and CONFIG is instantiated once, at import, from
+    # whatever DATA_DIR happened to be set then. That is correct for the CLI
+    # (one profile per process, DATA_DIR exported before config is imported) and
+    # silently wrong for any long-lived host that serves several profiles from
+    # one process: every profile read the same global search_urls.txt.
+    # HHAdapter already received and threaded a per-profile data_dir into
+    # FormHandlers and LLMCover; search URLs were simply never included.
+    def __init__(self, reporter=None, data_dir=None):
+        from pathlib import Path as _Path
+        self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
         self.playwright = None
         self._pw_manager = None
         self.browser: Optional[Browser] = None
@@ -327,8 +338,18 @@ class HHBrowser:
         return result
 
     def _load_search_urls(self) -> List[str]:
-        """Reads search URLs from data/search_urls.txt, one per line."""
-        path = CONFIG.search_urls_path
+        """Reads search URLs from the profile's own search_urls.txt, one per line.
+
+        Profile directory ONLY — no fall back to a flat/global data dir. An
+        earlier draft of this fix did fall back, and testing showed why that is
+        wrong: a profile with no feed configured silently inherited a legacy
+        global file and would have searched the wrong feed instead of failing.
+        profiles.resolve_profile() already states the rule ("no fallback to a
+        flat/legacy data dir in any branch — a profile is always required");
+        this now matches it. The HH_SEARCH_URL env escape hatch below is
+        unaffected: it is explicit, not a path guess.
+        """
+        path = self._data_dir / "search_urls.txt"
         if path.exists():
             return [u.strip() for u in path.read_text(encoding="utf-8").splitlines()
                     if u.strip() and not u.startswith('#')]

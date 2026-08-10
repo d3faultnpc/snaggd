@@ -32,7 +32,7 @@ class HHAdapter(SiteAdapter):
     def __init__(self, data_dir=None, reporter=None):
         from pathlib import Path as _Path
         self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
-        self.browser = HHBrowser(reporter=reporter)
+        self.browser = HHBrowser(reporter=reporter, data_dir=self._data_dir)
         self.detector = FormDetector()
         self.handlers = FormHandlers(data_dir=self._data_dir)
         self.llm_cover = LLMCover(data_dir=self._data_dir)
@@ -273,15 +273,21 @@ class HHAdapter(SiteAdapter):
         """Check cookies exist and at least one search URL is configured."""
         import os
         cookies_ok = Path(CONFIG.cookies_path).exists()
-        urls_ok = (CONFIG.search_urls_path.exists() and
-                   bool(CONFIG.search_urls_path.read_text(encoding="utf-8").strip()))
+        # Must agree with HHBrowser._load_search_urls() — profile directory
+        # first, module-level CONFIG path second. Checking only the CONFIG path
+        # (as this did) meant verify() consulted a different file than the code
+        # that actually reads the URLs, so a correctly-configured profile failed
+        # verification while a run, had it started, would have found its URLs.
+        urls_path = self._data_dir / "search_urls.txt"
+        urls_ok = (urls_path.exists() and
+                   bool(urls_path.read_text(encoding="utf-8").strip()))
         # Backward-compat: old HH_SEARCH_URL env var counts as configured
         if not urls_ok:
             urls_ok = bool(os.getenv("HH_SEARCH_URL", ""))
         if not cookies_ok:
             print(f"   ❌ Cookies not found: {CONFIG.cookies_path}")
         if not urls_ok:
-            print(f"   ❌ No search URLs configured — run: python onboarding/wizard.py --block b")
+            print(f"   ❌ No search URLs configured — looked in {urls_path}")
         return cookies_ok and urls_ok
 
     def start(self, debug: bool = False) -> bool:
