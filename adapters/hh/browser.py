@@ -486,19 +486,42 @@ class HHBrowser:
         return ""
 
     def get_vacancy_text(self) -> Optional[str]:
-        """Extracts vacancy description text."""
+        """Extracts vacancy description text.
+
+        Every match is checked, not just the first in the DOM — the same
+        correction click_apply_button() already carries, and for the same
+        reason. Branded ("constructor") vacancy pages can render TWO elements
+        carrying data-qa="vacancy-description": an empty wrapper followed by
+        the one holding the actual copy. query_selector() returns the wrapper,
+        inner_text() gives "", and the caller reports "Could not extract
+        vacancy text" on a page whose description is sitting right there.
+
+        Confirmed on a live vacancy page (2026-08-11): element [0] 0 chars,
+        element [1] 3787 chars.
+        """
         try:
-            desc_element = self.vacancy_page.query_selector(SELECTORS['vacancy_description'])
-            if desc_element:
-                text = desc_element.inner_text()
-                # Plain print — folded into "Vacancy opened" for the GUI.
-                print(f"   ✅ Extracted {len(text)} characters of description")
-                return text
+            elements = self.vacancy_page.query_selector_all(SELECTORS['vacancy_description'])
+            for desc_element in elements:
+                try:
+                    text = desc_element.inner_text()
+                except Exception:
+                    continue  # detached/unrenderable node — try the next match
+                if text and text.strip():
+                    # Plain print — folded into "Vacancy opened" for the GUI.
+                    print(f"   ✅ Extracted {len(text)} characters of description")
+                    return text
+
+            if elements:
+                # Present but all empty: a different failure from "not on the
+                # page at all", and worth distinguishing in the log.
+                self._say(f"   ⚠️ Vacancy description found ({len(elements)}) but all empty",
+                          gui_message="This vacancy's description came back empty",
+                          vacancy_id=self._vacancy_gui_id())
             else:
                 self._say("   ⚠️ Vacancy description not found",
                           gui_message="Couldn't find a description on this page",
                           vacancy_id=self._vacancy_gui_id())
-                return None
+            return None
 
         except Exception as e:
             self._say(f"   ❌ Text extraction error: {e}",
@@ -506,6 +529,67 @@ class HHBrowser:
                       vacancy_id=self._vacancy_gui_id())
             return None
     
+    # Positive evidence that an Apply click landed. Any ONE of these means HH
+    # accepted the click and put something in front of the user.
+    # Addresses, not hashed class names: HH ships CSS-module classes like
+    # magritte-modal-content-wrapper___-eFo3_1-0-14 whose hash changes on every
+    # frontend deploy. The data-qa values below were read off a real captured
+    # modal (captured 2026-08-11) and are design-system contract names.
+    #
+    # role="dialog"/alertdialog and magritte-alert are kept because adapter.py's
+    # own modal handling already relies on them, but they are NOT sufficient on
+    # their own — the real magritte response modal carries none of the three,
+    # which is why this list is address-based and deliberately broad. A missed
+    # signal here costs a false "nothing happened"; there is no action taken on
+    # a match beyond continuing the normal flow, so breadth is the safe side.
+    _RESPONSE_SURFACE = (
+        '[data-qa="modal-header"]',
+        '[data-qa="modal-footer"]',
+        '[data-qa="modal-content-scroll-container"]',
+        '[class*="magritte-modal"]',
+        '[role="dialog"]',
+        '[role="alertdialog"]',
+        '[data-qa="magritte-alert"]',
+        '[data-qa="vacancy-response-popup"]',
+        '[data-qa="vacancy-response-link-view-topic"]',  # chat/topic opened
+        'textarea',                                      # cover-letter form, modal or inline
+    )
+
+    def _apply_response_surface(self, before_url: str) -> bool:
+        """Did the Apply click actually produce something?
+
+        Replaces the previous test, which asked the opposite question — "is the
+        button I clicked still sitting there, visible, with the same label?" —
+        and treated yes as "the click never landed". That inverts on the single
+        most common success path on hh.ru: the response MODAL opens *over* the
+        page, leaving the original button exactly where it was. Playwright's
+        is_visible() is about layout and CSS visibility, not occlusion, so a
+        button underneath a modal still reports visible. The result was that a
+        successful apply was declared a failure, a forced re-click was fired
+        *through* the open modal, and the vacancy was logged as
+        "skipped_no_apply_button" — while the modal the LLM loop was supposed to
+        fill in sat open and unattended. Found live on a vacancy page,
+        2026-08-11; introduced 2026-08-03 in the apply-loop robustness pass.
+
+        Asking for positive evidence instead cannot fail that way: a modal, a
+        cover-letter field, an opened chat topic, or a navigation are all things
+        that exist only *because* the click worked.
+        """
+        try:
+            if self.vacancy_page.url != before_url:
+                return True
+        except Exception:
+            return True  # page/context replaced under us — it did something
+
+        for selector in self._RESPONSE_SURFACE:
+            try:
+                for el in self.vacancy_page.query_selector_all(selector):
+                    if el.is_visible():
+                        return True
+            except Exception:
+                continue
+        return False
+
     def click_apply_button(self) -> bool:
         """Clicks the 'Apply' button."""
         try:
@@ -516,7 +600,7 @@ class HHBrowser:
             # cards below the fold), and the old query_selector() (single-match)
             # gave up if that specific first-in-DOM element happened to be
             # invisible, even when later matches for the same selector were
-            # visible (found live 2026-08-02, vacancy 135793714 — 4 matches for
+            # visible (found live 2026-08-02 — 4 matches for
             # a:has-text("Откликнуться"), 3 of them visible, but the check still
             # reported "not found").
             for _ in range(10):
@@ -552,7 +636,7 @@ class HHBrowser:
                           vacancy_id=self._vacancy_gui_id())
                 return False
 
-            before_text = (apply_button.inner_text() or "").strip()
+            before_url = self.vacancy_page.url
             apply_button.click()
             # Plain print — adapter.py already announced "Clicking Apply…"
             # right before this call; this would just repeat it.
@@ -561,31 +645,19 @@ class HHBrowser:
             # Human-like pause for the form to appear
             time.sleep(7)
 
-            def _click_had_no_effect() -> bool:
-                # A .click() that doesn't throw is not proof it landed on the
-                # real button — an overlay (e.g. HH's own sticky nav) can
-                # intercept it silently. If the same element handle is still
-                # visible with byte-identical text after the click, nothing
-                # actually happened. A stale/detached handle (page genuinely
-                # changed) throws here, which we read as "it worked".
-                try:
-                    return bool(
-                        before_text
-                        and apply_button.is_visible()
-                        and (apply_button.inner_text() or "").strip() == before_text
-                    )
-                except Exception:
-                    return False
-
-            if _click_had_no_effect():
-                print("   ⚠️ 'Apply' click had no visible effect — retrying with a forced click")
+            if not self._apply_response_surface(before_url):
+                # Nothing appeared. NOW the overlay-intercept theory is worth
+                # acting on — a forced click bypasses actionability checks, so
+                # it must only ever fire when we are confident nothing is
+                # layered on top to receive it.
+                print("   ⚠️ 'Apply' click produced no response surface — retrying with a forced click")
                 try:
                     apply_button.click(force=True)
                     time.sleep(7)
                 except Exception as e:
                     print(f"   ⚠️ Forced click failed: {e}")
-                if _click_had_no_effect():
-                    self._say("   ❌ 'Apply' click still had no effect after retry (likely blocked by an overlay)",
+                if not self._apply_response_surface(before_url):
+                    self._say("   ❌ 'Apply' click produced no response form, modal or navigation",
                               gui_message="[BLCK] the Apply click didn't seem to register",
                               vacancy_id=self._vacancy_gui_id())
                     return False

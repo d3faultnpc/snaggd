@@ -111,7 +111,15 @@ SELECTORS = {
     'vacancy_title': '[data-qa="serp-item__title"]',
     'vacancy_description': '[data-qa="vacancy-description"]',
     'vacancy_title_page': '[data-qa="vacancy-title"]',
+    # Address-first, text last. 'vacancy-response' matched NOTHING on any page
+    # checked 2026-08-11 (three real captures, including one whose apply
+    # succeeded) — HH renames it at will, so every apply was in practice
+    # resolving through the Russian-text fallbacks below. Those work only while
+    # the UI stays in Russian and the wording stays exactly this; they are a
+    # last resort, not the mechanism. 'vacancy-response-link-top' is the live
+    # address, present 3-4 times per page on every capture.
     'apply_button': [
+        '[data-qa="vacancy-response-link-top"]',
         '[data-qa="vacancy-response"]',
         'button:has-text("Откликнуться")',
         'a:has-text("Откликнуться")',

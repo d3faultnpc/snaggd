@@ -588,11 +588,11 @@ Each profile lives in `data/profiles/<name>/`. Created by `wizard.py --profile <
 | `data/hh_cookies.json` | login.py (via wizard Step 7) | **shared** across profiles (one HH account) |
 | `data/hh_resumes.json` | login.py (via wizard Step 7) | [{title, uuid}] for all HH resumes; used by wizard Step 6 for auto-wise-link |
 
-As of session 44: neither `pm` nor `support` has a real `candidate.json` yet (only `candidate.md`,
+As of session 44: neither that profile nor `support` has a real `candidate.json` yet (only `candidate.md`,
 pre-schema format) — migration to the new schema is a deliberate, explicit, user-run action
 (`scripts/migrate_candidate.py`), not automatic. See §7/§8/§9.
 
-Current profiles: `pm`, `support`.
+Current profiles: that profile, `support`.
 
 ### Legacy flat files (pre-profiles, data/ root)
 
