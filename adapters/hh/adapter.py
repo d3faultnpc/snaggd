@@ -388,6 +388,12 @@ class HHAdapter(SiteAdapter):
 
             vacancy_text = self.browser.get_vacancy_text()
             if not vacancy_text:
+                # Snapshot the failure itself. Without this the only artefact was
+                # 01_vacancy_page, taken before the read was even attempted, so
+                # "could not extract" had to be diagnosed from a capture of a
+                # different moment.
+                if debug and session_dir:
+                    self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_no_text")
                 return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text'}
 
             # ── Duplicate detection (same company + description, different vacancy_id) ──
@@ -512,6 +518,12 @@ class HHAdapter(SiteAdapter):
                 self._say("   🔹 Clicking 'Apply'...", gui_message="Clicking \"Apply\"…",
                           vacancy_id=str(index), company=company, position=title)
                 if not self.browser.click_apply_button():
+                    # The one state that was never captured: what the page looked
+                    # like when the apply was declared failed. Its absence is why
+                    # the 2026-08-11 "Apply button not found" had to be diagnosed
+                    # by reading the predicate rather than by looking at it.
+                    if debug and session_dir:
+                        self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_apply_failed")
                     return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
 
             if debug and session_dir:
@@ -600,6 +612,14 @@ class HHAdapter(SiteAdapter):
 
         for layer in range(MAX_LAYERS):
             self._dismiss_blocking_modal(page, index=index)
+
+            # Every modal step as it was PRESENTED, before anything is filled or
+            # clicked. Snapshots used to exist only at outcomes, so a
+            # multi-step modal left no record of the steps it actually showed —
+            # the reason a live report of unanswered free-text fields (city,
+            # expected salary) on a 4-step form could not be diagnosed at all.
+            if debug and session_dir:
+                self._debug_snapshot(page, session_dir, f"0{3 + layer}_layer{layer}_00_presented")
 
             form_info = self.detector.detect(page)
             form_type = form_info.form_type
@@ -870,10 +890,26 @@ class HHAdapter(SiteAdapter):
 
     @staticmethod
     def _debug_snapshot(page, session_dir: Path, label: str) -> None:
-        """Save screenshot + HTML + data-qa list for a debug session."""
+        """Save screenshot + HTML + data-qa list for a debug session.
+
+        `{label}.html` is ALWAYS the full page body. When a modal is on screen
+        its own markup is additionally written to `{label}_modal.html`.
+
+        It used to be one or the other, modal preferred — and that lost exactly
+        the context a diagnosis needs. Concretely (2026-08-11): the capture of a
+        real hh.ru response modal was a bare fragment starting at
+        `<div class="magritte-modal-content-wrapper…">`, which made it impossible
+        to answer whether `role="dialog"` sits on an ancestor — the very question
+        that decides whether `_dismiss_blocking_modal`'s selector set can see
+        these modals at all. Keeping both costs a few hundred KB per snapshot in
+        a debug-only path.
+        """
         try:
             session_dir.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(session_dir / f"{label}.png"), full_page=False)
+
+            (session_dir / f"{label}.html").write_text(
+                page.inner_html('body'), encoding="utf-8")
 
             modal = None
             for sel in [
@@ -888,8 +924,12 @@ class HHAdapter(SiteAdapter):
                 if el and el.is_visible():
                     modal = el
                     break
-            html_content = modal.inner_html() if modal else page.inner_html('body')
-            (session_dir / f"{label}.html").write_text(html_content, encoding="utf-8")
+            if modal:
+                # Which selector matched is itself a finding — the debug path
+                # reaches magritte modals through [data-qa*="modal"], while
+                # _dismiss_blocking_modal only looks for role/magritte-alert.
+                (session_dir / f"{label}_modal.html").write_text(
+                    f"<!-- matched by: {sel} -->\n" + modal.inner_html(), encoding="utf-8")
 
             data_qa = page.evaluate("""() => {
                 const els = document.querySelectorAll('[data-qa]');
