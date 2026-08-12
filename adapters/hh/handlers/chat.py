@@ -2,7 +2,26 @@ import time
 
 from .base import BaseHandler, FormType, ProcessResult
 from ..dom import find_chat_link, find_visible
+
 from config import SELECTORS
+
+try:
+    from playwright.sync_api import TimeoutError as _PlaywrightTimeout
+except Exception:  # playwright always present in practice; never fail the import
+    _PlaywrightTimeout = ()
+
+
+def _is_timeout(exc: Exception) -> bool:
+    """Did this wait time out (the thing is absent), or fail some other way?
+
+    The distinction decides whether retrying can possibly help. Playwright's own
+    exception type is the reliable signal; the string check is a fallback for a
+    wrapped or re-raised error.
+    """
+    if _PlaywrightTimeout and isinstance(exc, _PlaywrightTimeout):
+        return True
+    return "Timeout" in type(exc).__name__ or "Timeout" in str(exc)
+
 
 try:
     from core.llm_agent import LLMAgent
@@ -138,7 +157,12 @@ class ChatHandler(BaseHandler):
 
         # 4. Click "Добавить сопроводительное" to open the cover letter field
         cover_sent_via_modal = kwargs.get("cover_sent_via_modal", False)
-        add_cover = self._find_add_cover_btn(chatik_scope)
+        # Already delivered upstream? Then this is a confirmation visit, not a
+        # send, and the button may legitimately never appear (hh hides the whole
+        # composer once an employer closes the chat — captured live 2026-08-12).
+        # Waiting the full 12s for it there bought nothing and looked like a hang.
+        add_cover = self._find_add_cover_btn(
+            chatik_scope, timeout_ms=2000 if cover_sent_via_modal else 12000)
         # Plain print — dev diagnostic (session 56, dup-message investigation),
         # not user narration.
         print(f"   🔬 diag: cover_sent_via_modal={cover_sent_via_modal}, add_cover_found={add_cover is not None}")
@@ -307,8 +331,13 @@ class ChatHandler(BaseHandler):
         print("   ⚠️ Chatik iframe element loaded but frame not accessible within 5s")
         return None
 
-    def _find_add_cover_btn(self, scope):
+    def _find_add_cover_btn(self, scope, timeout_ms: int = 12000):
         """Finds 'Добавить сопроводительное' inside chatik iframe.
+
+        timeout_ms is short when the caller already knows the cover went out in
+        an earlier form layer — chatik is then being opened only to confirm the
+        goal, and a full-length wait for a button we do not need is pure delay
+        the user watches.
 
         scope is a Playwright Frame object (chatik.hh.ru iframe).
         Frame.wait_for_selector and Frame.query_selector have same API as Page equivalents.
@@ -326,16 +355,25 @@ class ChatHandler(BaseHandler):
         # wait_for_selector has the same API as Page's.
         cascade = list(SELECTORS['chatik_add_cover'])
         try:
-            scope.wait_for_selector(", ".join(cascade), timeout=12000, state='visible')
+            scope.wait_for_selector(", ".join(cascade), timeout=timeout_ms, state='visible')
         except Exception as e:
-            # Either it genuinely never appeared, or Playwright refused the
-            # comma-joined union (the cascade mixes plain CSS with :has-text()).
-            # Both end up here, so retry the wording-only wait that was the
-            # primary before this change rather than give up on the send.
-            print(f"   ⚠️ union wait for 'Добавить сопроводительное' failed ({e}) — retrying by wording")
+            # A TIMEOUT means the button genuinely is not there, and repeating the
+            # same wait by wording cannot change that — it only costs the user
+            # another full timeout. Live 2026-08-12: 12s + 13s = 25s
+            # spent waiting for a button that could not exist, because the cover
+            # had already been delivered and the employer had closed the chat.
+            #
+            # Any OTHER failure is worth a second try: the cascade mixes plain
+            # CSS with Playwright's :has-text(), so a future edit could produce a
+            # union Playwright refuses to parse, and the wording-only wait is a
+            # real fallback for that — just not for absence.
+            if _is_timeout(e):
+                print("   ⚠️ 'Добавить сопроводительное' didn't appear in chatik")
+                return None
+            print(f"   ⚠️ union selector rejected ({e}) — retrying by wording")
             try:
                 scope.wait_for_selector(':text("Добавить сопроводительное")',
-                                        timeout=12000, state='visible')
+                                        timeout=timeout_ms, state='visible')
             except Exception:
                 print("   ⚠️ 'Добавить сопроводительное' didn't appear in chatik")
                 return None

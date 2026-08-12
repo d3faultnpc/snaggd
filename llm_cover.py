@@ -146,7 +146,13 @@ class LLMCover:
         """
         text_for_processing = vacancy_text[:CONFIG.llm_max_input_chars]
         text_hash = self._hash_text(text_for_processing)
-        cover_key = vacancy_id if vacancy_id else text_hash
+        # Profile hash in the key, same as the score cache gets via _hash_text().
+        # It was missing here, and the asymmetry is not academic: a cover written
+        # against one profile stayed pinned to its vacancy_id forever, so editing
+        # the profile silently changed future scores but not future covers. The
+        # 2026-08-11 profile wipe made that concrete — covers generated while the
+        # profile was empty would have been reused verbatim after it was restored.
+        cover_key = f"{vacancy_id or text_hash}:{self._profile_hash}"
 
         if cover_key in self.cover_cache:
             print("   📋 Using cached cover")
