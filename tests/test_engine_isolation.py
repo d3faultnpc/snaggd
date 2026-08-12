@@ -133,7 +133,11 @@ with patch.dict("os.environ", {"LLM_API_KEY": "test", "API_KEY": "test-api-key"}
         "ConfigPatchRequest": {"min_score", "max_vacancies", "max_skips"},
         "ResumeParseRequest": {"filename", "content_b64"},
         "MinMatchPatchRequest": {"min_match"},
-        "CandidateSaveRequest": {"profile", "candidate"},
+        # overwrite (2026-08-12): opt-in acknowledgement that a save erases an
+        # existing profile's content. Without it, a save carrying no cases,
+        # skills, tools or languages is refused when the profile on disk has
+        # them — see onboarding/profile_guard.py for the wipe that motivated it.
+        "CandidateSaveRequest": {"profile", "candidate", "overwrite"},
     }
     for model_name, expected in _expected_fields.items():
         model_cls = getattr(_api_module, model_name, None)

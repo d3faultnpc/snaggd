@@ -104,6 +104,9 @@ class MinMatchPatchRequest(BaseModel):
 class CandidateSaveRequest(BaseModel):
     profile: str
     candidate: dict
+    # Opt-in acknowledgement that this save erases an existing profile's content.
+    # See onboarding/profile_guard.py for the wipe this exists to prevent.
+    overwrite: bool = False
 
 
 # ── Session-start preflight ──────────────────────────────────────────────────
@@ -758,7 +761,7 @@ def onboarding_parse(req: ResumeParseRequest):
 
 @app.post("/api/v1/onboarding/save", dependencies=[Depends(_require_key)])
 def onboarding_save(req: CandidateSaveRequest):
-    import shutil
+    from onboarding.profile_guard import backup_profile, check_destructive_save
 
     # fullmatch, not match — match("abc\n") passes because `$` accepts a trailing
     # newline, which would silently become part of a directory name otherwise.
@@ -766,6 +769,14 @@ def onboarding_save(req: CandidateSaveRequest):
         raise HTTPException(status_code=400, detail="profile must be alphanumeric (dash/underscore allowed)")
 
     data_dir = PROFILES_DIR / req.profile
+
+    # A save may add to a profile or change it — it may not empty it. The schema
+    # validation below has no opinion on this: an unfilled wizard form produces a
+    # shape-valid payload of empty lists.
+    destructive = check_destructive_save(data_dir, req.candidate)
+    if destructive and not req.overwrite:
+        raise HTTPException(status_code=409, detail=destructive)
+
     md_out = data_dir / "candidate.md"
     existing_md = md_out.read_text(encoding="utf-8") if md_out.exists() else ""
 
@@ -789,10 +800,7 @@ def onboarding_save(req: CandidateSaveRequest):
     # with real history behind it — back up whatever was already there before
     # overwriting. One timestamp shared by both files so a given save's backup
     # is recoverable as a matched pair, not two independently-timed halves.
-    stamp = datetime.now().strftime("%Y%m%dT%H%M%S%f")
-    for existing in (md_out, json_out):
-        if existing.exists():
-            shutil.copy2(existing, existing.with_name(existing.name + f".{stamp}.bak"))
+    stamp = backup_profile(data_dir)
 
     md_out.write_text(rendered_md, encoding="utf-8")
 
