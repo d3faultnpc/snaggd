@@ -140,28 +140,46 @@ def is_in_data_collector(element) -> bool:
         return True
 
 
+# Last opened, outermost. Both halves are load-bearing:
+#
+#   LAST, because hh stacks dialogs — the 2026-08-11 run met three in a row —
+#   and the one the user can act on is the most recent, which hh appends to the
+#   end of the body.
+#
+#   OUTERMOST, because a dialog's own parts also match this selector list, and a
+#   part is not the dialog. Real markup, captured live (2026-08-12):
+#
+#       [role="dialog"]
+#       ├── magritte-modal-content-wrapper   ← title, textarea, "Сгенерировать"
+#       ├── divider
+#       └── footer → vacancy-response-submit-popup   "Откликнуться"
+#
+#   The footer is a SIBLING of the wrapper. Taking the last match in plain
+#   document order picks the wrapper, and the submit button then sits outside
+#   the search scope entirely: the run filled in a cover letter it could no
+#   longer send and reported "Navigation buttons not found in HH modal".
+#
+# So: discard any match nested inside another match, then take the last of what
+# remains. Done in one page evaluation because the containment test needs all
+# the candidates at once.
+_TOPMOST_DIALOG_JS = """(selector) => {
+    const all = Array.from(document.querySelectorAll(selector));
+    const roots = all.filter(el => !all.some(other => other !== el && other.contains(el)));
+    return roots.length ? roots[roots.length - 1] : null;
+}"""
+
+
 def find_topmost_dialog(scope):
-    """The dialog the user is actually looking at, or None.
-
-    hh stacks dialogs — the 2026-08-11 run met three in a row — and the one the
-    user can click is the last one opened. Document order is the proxy for that:
-    hh appends each new dialog to the end of the body, so the LAST match wins,
-    not the first, which is what every single-match probe here used to take.
-
-    Matching is done in ONE query rather than per selector so the results come
-    back in true document order; iterating the cascade would order them by
-    selector priority instead, and "last" would then mean "matched the
-    lowest-priority selector", which is a different and useless question. A
-    consequence worth naming: when a dialog root and an inner content wrapper
-    both match, this returns the inner one — harmless, since callers only read
-    text and buttons out of it, and both contain the same ones.
-    """
+    """The dialog the user is actually looking at, or None — root element, not a
+    part of one. See _TOPMOST_DIALOG_JS above for why both of those matter."""
     try:
-        candidates = [el for el in scope.query_selector_all(", ".join(MODAL_SELECTORS))
-                      if _safe_visible(el)]
+        handle = scope.evaluate_handle(_TOPMOST_DIALOG_JS, ", ".join(MODAL_SELECTORS))
     except Exception:
         return None
-    return candidates[-1] if candidates else None
+    element = handle.as_element()
+    if element is None or not _safe_visible(element):
+        return None
+    return element
 
 
 def _safe_visible(element) -> bool:

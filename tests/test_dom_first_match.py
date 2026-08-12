@@ -62,6 +62,27 @@ DATA_COLLECTOR = """<html><body>
   .onclick = function(){ document.querySelector('[role=dialog]').remove(); };</script>
 </body></html>"""
 
+# hh's real response modal, structure copied from a live response modal (2026-08-12).
+# The point of this fixture: the submit button lives in a footer that is a
+# SIBLING of the content wrapper, not inside it. Both the dialog root and the
+# wrapper match MODAL_SELECTORS, so a "last match in document order" reading of
+# "topmost" picks the wrapper and loses the submit button — which is exactly what
+# happened live: a cover letter was typed into a form the run could no longer
+# submit, reported as "Navigation buttons not found in HH modal".
+RESPONSE_MODAL = """<html><body>
+<div role="dialog">
+  <div class="magritte-modal-content-wrapper___-eFo3">
+    <div data-qa="modal-header">Отклик на вакансию</div>
+    <textarea data-qa="vacancy-response-popup-form-letter-input">письмо</textarea>
+    <button data-qa="generate-cover-letter">Сгенерировать</button>
+  </div>
+  <div role="separator"></div>
+  <div data-qa="modal-footer">
+    <button data-qa="vacancy-response-submit-popup">Откликнуться</button>
+  </div>
+</div>
+</body></html>"""
+
 # Two stacked dialogs — hh does this routinely (three in a row on 2026-08-11).
 STACKED_MODALS = """<html><body>
 <div role="dialog"><h2>Какой формат удобнее?</h2><button>Сохранить</button></div>
@@ -166,6 +187,31 @@ def run(pw):
         failures.append("nested wrapper confused topmost-dialog selection")
     else:
         print("  ✅ nested modal wrapper still resolves to the last dialog")
+
+    # 4a-bis. THE live regression: the dialog root must win over its own inner
+    #         wrapper, or the submit button falls outside the search scope.
+    page.set_content(RESPONSE_MODAL)
+    top = find_topmost_dialog(page)
+    if top is None:
+        failures.append("no dialog found on a real hh response modal")
+    elif top.get_attribute('role') != 'dialog':
+        failures.append("topmost dialog resolved to a part of the modal, not its root — "
+                        "the submit footer sits outside that scope")
+    else:
+        print("  ✅ the dialog ROOT wins over its own content wrapper")
+
+    btn, how = HHModalHandler()._find_action_button(
+        page, addresses=[SELECTORS['popup_submit'], SELECTORS['letter_submit']],
+        keywords=['далее', 'продолжить', 'откликнуться'])
+    if btn is None:
+        failures.append("submit button not found on a real hh response modal "
+                        "— this is the 2026-08-12 'Navigation buttons not found' failure")
+    elif btn.get_attribute('data-qa') != 'vacancy-response-submit-popup':
+        failures.append(f"wrong button chosen: {btn.get_attribute('data-qa')} "
+                        "(hh's own paid 'Сгенерировать' is the trap here)")
+    else:
+        print(f"  ✅ the response modal's submit button is found (by {how}), "
+              "not hh's paid generator")
 
     # 4b. hh's own profile survey is recognised and closed, not answered.
     #     "Сохранить и продолжить" in one of these writes to the user's real
