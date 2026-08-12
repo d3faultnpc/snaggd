@@ -124,16 +124,37 @@ SELECTORS = {
         'button:has-text("Откликнуться")',
         'a:has-text("Откликнуться")',
     ],
+    # Same address-first discipline as apply_button, and for the same reason.
+    # Checked 2026-08-11 against all 82 full-body captures on disk (58 vacancy
+    # pages + 24 post-apply pages, several of which DO hold a real cover form):
+    #   vacancy-response-submit-popup            8 pages  ← the live submit
+    #   vacancy-response-popup-form-letter-input 2 pages  ← the live textarea
+    #   vacancy-response-letter-submit           0 pages  (comment claimed 2026-05-26)
+    #   vacancy-response-send-button             0 pages
+    #   vacancy-response-comment-textarea        0 pages
+    # The three zero-hit addresses are kept, demoted: absent from every state we
+    # have captured is not the same as gone from hh, and an extra miss costs one
+    # query. What they must not do any longer is sit in front of an address that
+    # demonstrably matches, leaving Russian button text to carry the real work.
     'send_button': [
-        '[data-qa="vacancy-response-letter-submit"]',  # post-apply cover form (verified 2026-05-26)
+        '[data-qa="vacancy-response-submit-popup"]',
+        '[data-qa="vacancy-response-letter-submit"]',
+        '[data-qa="vacancy-response-send-button"]',
         'button:has-text("Отправить")',
         'button:has-text("Откликнуться")',
-        '[data-qa="vacancy-response-send-button"]'
     ],
+    # NB the bare 'textarea' at the end. It is a genuine last resort and a
+    # genuine hazard: an employer questionnaire renders one textarea per
+    # question (name="task_<id>_text", no placeholder, no data-qa), so on that
+    # page this entry hands back a question field to be filled with a cover
+    # letter. Callers reach it through helpers that take the first VISIBLE
+    # match now rather than the first in the DOM, which does not by itself make
+    # the right choice — the salary/question guard above it is what has to.
     'cover_textarea': [
+        '[data-qa="vacancy-response-popup-form-letter-input"]',
+        '[data-qa="vacancy-response-comment-textarea"]',
         'textarea[placeholder*="Сопроводительное"]',
         'textarea[placeholder*="сопроводительное"]',
-        '[data-qa="vacancy-response-comment-textarea"]',
         'textarea'
     ],
     'cookie_accept': 'button:has-text("Понятно")',
@@ -191,7 +212,12 @@ SELECTORS = {
     # HH renders employer name as a link; data-qa is the reliable anchor.
     # Fallback checked in order if primary not found.
     'company_name': '[data-qa="vacancy-company-name"]',
-    'company_name_fallback': '[data-qa="bloko-header-2"]',
+    # No fallback. 'bloko-header-2' was one: it matched on 0 of the 58 captured
+    # vacancy pages, while the primary matched on every one of them — the same
+    # shape as the dead 'vacancy-response' entry removed from apply_button.
+    # A fallback that never fires is worse than none: it reads like cover the
+    # code does not have. get_company_name()'s callers already treat "" as
+    # "unknown, skip the stop-company check".
     # Employer review rating score on vacancy page.
     # Located in main vacancy block (before featured section). 0 hits = no reviews → None.
     # Note: text uses comma as decimal separator ("4,6") — handled by replace(",", ".") in browser.py.

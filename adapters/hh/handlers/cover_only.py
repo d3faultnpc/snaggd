@@ -16,7 +16,7 @@ class CoverOnlyHandler(BaseHandler):
         _vac_seq = kwargs.get("vacancy_seq")
         vid = str(_vac_seq) if _vac_seq is not None else None
 
-        textarea = self._find_element_by_selectors(page, SELECTORS['cover_textarea'])
+        textarea = self._find_cover_field(page)
 
         if not textarea:
             return ProcessResult(
@@ -105,5 +105,13 @@ class CoverOnlyHandler(BaseHandler):
             label_text = label.inner_text().strip().lower() if label else ""
             salary_keywords = ['зарплат', 'salary', 'ожидани', 'expected salary', 'доход', 'желаем']
             return any(kw in placeholder.lower() or kw in label_text for kw in salary_keywords)
-        except:
+        except Exception as e:
+            # Fails OPEN: "we couldn't tell" is answered with "not a salary
+            # field", and the caller then types a cover letter into it and
+            # submits to a real employer. Kept as-is for now — flipping the
+            # default would skip legitimate applies on any transient DOM
+            # error — but it is no longer silent about it. The real fix is to
+            # route this judgement through the same LLM batch call that
+            # hh_modal.py's generic-field path already trusts for it.
+            print(f"   ⚠️ Salary-field check failed ({e}) — proceeding as if it is NOT a salary field")
             return False

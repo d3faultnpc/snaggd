@@ -337,7 +337,14 @@ class QuestionsHandler(BaseHandler):
                     if t:
                         return t[:300]
             return (inp.get_attribute("placeholder") or "")[:200]
-        except Exception:
+        except Exception as e:
+            # An empty label does not just mean "unlabelled": the caller drops
+            # any field whose label is empty (`if label:`), so an extraction
+            # crash makes the field vanish from the LLM batch entirely, never
+            # gets answered, and — if it was required — resurfaces after submit
+            # as "a required field failed validation", blaming the model for an
+            # answer it was never asked to give.
+            print(f"   ⚠️ Couldn't read a field's label ({e}) — the field will be skipped")
             return ""
 
     def _extract_radio_option_text(self, inp) -> str:

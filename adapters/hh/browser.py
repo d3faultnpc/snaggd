@@ -9,6 +9,8 @@ from urllib.parse import urlparse, parse_qs
 from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from config import CONFIG, SELECTORS
 
+from .dom import find_visible, iter_visible
+
 class HHBrowser:
     # data_dir: the PROFILE's own directory. Previously absent, which meant
     # _load_search_urls() below could only ever read the module-level
@@ -184,7 +186,10 @@ class HHBrowser:
                 # Plain print — folded into the "Dismissed a cookie banner"
                 # line above for the GUI.
                 print("   ✅ Cookie modal closed")
-        except:
+        except Exception:
+            # `except:` until 2026-08-11, which also swallowed KeyboardInterrupt
+            # and SystemExit — a Ctrl-C landing inside this wait was reported as
+            # "cookie modal not found" and the run carried on.
             # Plain print — the common "nothing to dismiss" case, not worth a GUI line.
             print("   ⚠️ Cookie modal not found or already closed")
 
@@ -444,8 +449,8 @@ class HHBrowser:
     def _dismiss_cookie_banner(self, page) -> None:
         """Silently closes cookie consent banner on any page (footer or modal)."""
         try:
-            btn = page.query_selector(SELECTORS['cookie_accept'])
-            if btn and btn.is_visible():
+            btn = find_visible(page, SELECTORS['cookie_accept'])
+            if btn is not None:
                 btn.click()
         except Exception:
             pass
@@ -459,14 +464,19 @@ class HHBrowser:
         Returns float if found, None if the employer has no reviews on HH.ru.
         None should be treated as "unknown rating" — caller decides whether to skip.
         """
+        el = find_visible(self.vacancy_page, SELECTORS['employer_rating'])
+        if el is None:
+            return None
+        raw = ""
         try:
-            el = self.vacancy_page.query_selector(SELECTORS['employer_rating'])
-            if el and el.is_visible():
-                raw = el.inner_text().strip().replace(",", ".")
-                return float(raw)
-        except Exception:
-            pass
-        return None
+            raw = el.inner_text().strip().replace(",", ".")
+            return float(raw)
+        except Exception as e:
+            # A parse failure is NOT "this employer has no reviews", which is
+            # what a bare `return None` told every caller downstream — including
+            # the LLM, which was handed "HH Employer Rating: no reviews on HH".
+            print(f"   ⚠️ Employer rating found but unreadable ({raw!r}: {e}) — treating as unknown")
+            return None
 
     def get_company_name(self) -> str:
         """Extracts employer/company name from the open vacancy page.
@@ -474,14 +484,13 @@ class HHBrowser:
         Returns empty string if not found — caller treats that as 'unknown, skip check'.
         Tries primary selector first, falls back to secondary.
         """
-        for selector in (SELECTORS['company_name'], SELECTORS['company_name_fallback']):
+        for el in iter_visible(self.vacancy_page, SELECTORS['company_name']):
             try:
-                el = self.vacancy_page.query_selector(selector)
-                if el and el.is_visible():
-                    name = el.inner_text().strip()
-                    if name:
-                        return name
-            except Exception:
+                name = el.inner_text().strip()
+                if name:
+                    return name
+            except Exception as e:
+                print(f"   ⚠️ Company name element found but unreadable ({e}) — trying the next match")
                 continue
         return ""
 

@@ -10,6 +10,8 @@ from typing import Optional
 from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
 from adapters.hh.detector import FormDetector
+from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, find_chat_link,
+                             find_topmost_dialog, find_visible, is_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult
 from config import CONFIG, SELECTORS
@@ -509,8 +511,7 @@ class HHAdapter(SiteAdapter):
 
             # Auto-read vacancies already have the chat link embedded — clicking any
             # "Откликнуться" would hit a recommendation card and open the wrong popup.
-            _pre_chat = self.browser.vacancy_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
-            if _pre_chat and _pre_chat.is_visible():
+            if find_chat_link(self.browser.vacancy_page) is not None:
                 self._say("   ✅ Chat link already active (auto-read vacancy) — skipping apply click",
                           gui_message="A conversation is already open with this employer",
                           vacancy_id=str(index), company=company, position=title)
@@ -534,12 +535,11 @@ class HHAdapter(SiteAdapter):
 
             # Immediate-apply (no form)
             try:
-                success_notif = current_page.query_selector(SELECTORS['immediate_success'])
-                if success_notif and success_notif.is_visible():
+                success_notif = find_visible(current_page, SELECTORS['immediate_success'])
+                if success_notif is not None:
                     # HH often shows chat link alongside the success notification —
                     # that's the only way to send a cover letter after instant apply.
-                    chat_el = current_page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
-                    if chat_el and chat_el.is_visible():
+                    if find_chat_link(current_page) is not None:
                         self._say("   ✅ Applied instantly — chat available, routing for cover letter...",
                                   gui_message="Applied instantly — sending a message next",
                                   vacancy_id=str(index), company=company, position=title)
@@ -797,6 +797,55 @@ class HHAdapter(SiteAdapter):
 
     # ── Modal dismissal ───────────────────────────────────────────────────────
 
+    def _close_data_collector(self, page, dialog, vid) -> bool:
+        """Closes one of hh's profile-enrichment surveys without answering it.
+
+        These open over the vacancy right after the apply click — "Какой формат
+        удобнее?", "В каком городе живёте", "Сколько хотите получать" — and hh
+        keeps asking even when the profile already has the answers. They are not
+        part of the application.
+
+        Until 2026-08-11 they went to the model as "an unrecognized blocking
+        modal: which button do I press?", and the model reasonably pressed the
+        one big obvious button. That button is "Сохранить и продолжить": on
+        2026-08-11 a single run wrote work format, home city and desired salary
+        into the user's real hh.ru profile, three surveys in a row, silently.
+        Nothing in the modal-dismissal contract said the buttons had side
+        effects outside the page.
+
+        So: recognised by address, closed by its own X, model not consulted.
+        A survey hh insists on showing is hh's problem, not an application step.
+        """
+        for _ in range(4):  # the survey is a wizard; X closes it, but be sure
+            close_btn = find_visible(page, DATA_COLLECTOR_CLOSE)
+            if close_btn is None:
+                break
+            try:
+                close_btn.click()
+            except Exception as e:
+                self._say(f"   ⚠️ Couldn't close hh's profile survey: {e}", level="warn",
+                          gui_message="Couldn't close a pop-up hh.ru showed", vacancy_id=vid)
+                break
+            page.wait_for_timeout(1200)
+            self._say("   ⏭ hh's own profile survey — closed without answering",
+                      gui_message="Skipped a hh.ru profile survey — it isn't part of the application",
+                      vacancy_id=vid)
+            if find_visible(page, DATA_COLLECTOR_MARKER) is None:
+                return True
+
+        if find_visible(page, DATA_COLLECTOR_MARKER) is None:
+            return True
+
+        # No close button, or it did not take. Falling through to the model is
+        # the old behaviour and carries the old risk — say so out loud rather
+        # than let it happen quietly, and leave the survey alone.
+        self._say("   ⚠️ hh's profile survey has no close button — leaving it alone "
+                  "(it may block the form; this is the case to look at if the flow stalls)",
+                  level="warn",
+                  gui_message="A hh.ru survey wouldn't close — leaving it as-is",
+                  vacancy_id=vid)
+        return False
+
     def _dismiss_blocking_modal(self, page, index: int = None) -> bool:
         """LLM-guided dismissal of unexpected blocking modals before form detection.
 
@@ -809,39 +858,51 @@ class HHAdapter(SiteAdapter):
         scenario (unrecognized pop-up), so its narration matters more than
         the mechanical form-detection retries elsewhere in this file.
         """
-        # HH uses role="alertdialog" (Magritte) and role="dialog" depending on modal type
-        _MODAL_SELECTORS = '[role="alertdialog"], [role="dialog"], [data-qa="magritte-alert"]'
+        # dom.MODAL_SELECTORS is now the single definition of "a dialog on
+        # hh.ru", shared with detector.py — the two used to keep their own
+        # near-identical lists and could each win against a different one of a
+        # stack. hh stacks these routinely: the 2026-08-11 run met three in a row.
         vid = str(index) if index is not None else None
         try:
-            dialog = page.query_selector(_MODAL_SELECTORS)
-            if not dialog or not dialog.is_visible():
+            dialog = find_topmost_dialog(page)
+            if dialog is None:
                 return False
 
+            # hh's own profile survey — close it, never answer it. See
+            # _close_data_collector for why this does not go to the model.
+            if is_data_collector(dialog):
+                return self._close_data_collector(page, dialog, vid)
+
             # Modal with a fillable textarea is a form layer — let the loop handle it
-            try:
-                ta = dialog.query_selector('textarea')
-                if ta and ta.is_visible():
-                    return False
-            except Exception:
-                pass
+            if find_visible(dialog, 'textarea') is not None:
+                return False
 
             try:
                 modal_text = dialog.inner_text().strip()[:600]
             except Exception:
                 return False
 
+            # Scoped to the dialog we picked, not to every dialog on the page.
+            # The old page-wide query mixed the buttons of stacked modals into
+            # one list and handed the model a choice spanning two dialogs.
             buttons = []
             btn_els = []
             try:
-                for btn in page.query_selector_all(
-                    '[role="alertdialog"] button, [role="dialog"] button, [data-qa="magritte-alert"] button'
-                ):
-                    if btn.is_visible():
-                        label = btn.inner_text().strip()
-                        buttons.append({"index": len(buttons), "label": label or f"btn_{len(buttons)}"})
-                        btn_els.append(btn)
-            except Exception:
-                pass
+                for btn in iter_visible(dialog, 'button'):
+                    label = btn.inner_text().strip()
+                    if not label:
+                        # Icon-only buttons (the close X) carry no text. They used
+                        # to reach the model as "btn_0", i.e. as a blank option
+                        # next to a fully spelled-out "Сохранить и продолжить" —
+                        # so the one button that just closes the thing was the
+                        # least legible item on the menu.
+                        label = (btn.get_attribute('aria-label')
+                                 or btn.get_attribute('data-qa')
+                                 or f"btn_{len(buttons)}")
+                    buttons.append({"index": len(buttons), "label": label})
+                    btn_els.append(btn)
+            except Exception as e:
+                print(f"   ⚠️ Modal: couldn't read its buttons ({e})")
 
             if not buttons:
                 return False

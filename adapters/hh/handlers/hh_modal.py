@@ -1,4 +1,5 @@
 from .base import BaseHandler, FormType, ProcessResult
+from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 
 try:
@@ -141,27 +142,23 @@ class HHModalHandler(BaseHandler):
     # ------------------------------------------------------------------
 
     def _find_cover_textarea(self, page):
-        """Finds cover letter textarea using verified selectors."""
-        selectors = [
+        """Finds cover letter textarea using verified selectors.
+
+        The modal-specific addresses go first, then the shared cascade — via
+        BaseHandler._find_cover_field, which is where the "never an employer's
+        question field" rule lives, and which walks EVERY match of each
+        selector rather than the first (this method used to hand-roll its own
+        copy of the single-match bug).
+        """
+        return self._find_cover_field(page, extra_selectors=[
             # Popup modal (verified 2026-04-06)
-            f'[data-qa="vacancy-response-popup-form-letter-input"] textarea',
+            '[data-qa="vacancy-response-popup-form-letter-input"] textarea',
             SELECTORS['popup_letter_input'],
             # Inline form (verified 2026-04-05)
             '[data-qa="vacancy-response-letter-informer"] textarea',
             '[data-qa="textarea-native-wrapper"] textarea',
             'textarea[data-qa*="response"]',
-        ] + SELECTORS['cover_textarea']
-
-        for selector in selectors:
-            try:
-                el = page.query_selector(selector)
-                if el and el.is_visible():
-                    # Exclude salary fields
-                    if not self._is_salary_field(el):
-                        return el
-            except Exception:
-                continue
-        return None
+        ], reject=self._is_salary_field)
 
     def _is_salary_field(self, element) -> bool:
         """Returns True if the element is a salary field."""
@@ -445,7 +442,14 @@ class HHModalHandler(BaseHandler):
                     if t:
                         return t[:300]
             return (inp.get_attribute("placeholder") or inp.get_attribute("aria-label") or "")[:200]
-        except Exception:
+        except Exception as e:
+            # An empty label does not just mean "unlabelled": the caller drops
+            # any field whose label is empty (`if label:`), so an extraction
+            # crash makes the field vanish from the LLM batch entirely, never
+            # gets answered, and — if it was required — resurfaces after submit
+            # as "a required field failed validation", blaming the model for an
+            # answer it was never asked to give.
+            print(f"   ⚠️ Couldn't read a field's label ({e}) — the field will be skipped")
             return ""
 
     def _extract_radio_option_text(self, inp) -> str:
@@ -549,8 +553,8 @@ class HHModalHandler(BaseHandler):
                           gui_message="This vacancy was already viewed — the employer wants to chat instead",
                           vacancy_id=vacancy_id)
 
-            chat_link = page.query_selector(SELECTORS['chat_link'])
-            if chat_link and chat_link.is_visible():
+            chat_link = find_chat_link(page)
+            if chat_link is not None:
                 # Plain print — folded into the line above for the GUI.
                 print("   🔹 Clicking 'Chat'...")
                 chat_link.click()

@@ -1,5 +1,6 @@
 from typing import Optional
 from .handlers.base import FormType, FormInfo
+from .dom import MODAL_SELECTORS, find_visible, find_chat_link, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 
 class FormDetector:
@@ -33,20 +34,31 @@ class FormDetector:
         info.has_salary_field = self._has_keywords(combined_text, FORM_KEYWORDS['salary'])
         info.has_cover_field = self._has_keywords(combined_text, FORM_KEYWORDS['cover'])
 
-        # Chat link detected via verified data-qa (2026-04-05)
+        # Chat link detected via verified data-qa (2026-04-05).
+        # All-match: post-apply pages carry this address exactly twice (24/24
+        # captured post-apply pages, 2026-08-11), so a single-match probe was
+        # deciding CHAT_INTERFACE routing on whichever copy came first in the DOM.
         try:
-            chat_el = page.query_selector('[data-qa="vacancy-response-link-view-topic"]')
-            info.has_chat_link = bool(chat_el and chat_el.is_visible())
-        except Exception:
+            info.has_chat_link = find_chat_link(page) is not None
+        except Exception as e:
+            print(f"   ⚠️ detect: chat-link probe failed ({e}) — treating as absent")
             info.has_chat_link = False
 
         # Post-apply cover letter submit button — "Резюме доставлено" flow (verified 2026-05-26)
         # Present when HH auto-submits resume and offers cover letter as second step.
         # Takes priority over chat_link: fill the form directly, do NOT navigate to chatik.
+        # NB 2026-08-11: 'vacancy-response-letter-submit' matched nothing in any
+        # of the 82 full-body captures on disk, including the 24 post-apply ones
+        # that DO carry a cover form — those use 'vacancy-response-submit-popup'.
+        # Both are probed now; the old one alone made this signal, and with it
+        # the COVER_ONLY branch of _classify_form, effectively unreachable.
         try:
-            submit_el = page.query_selector('[data-qa="vacancy-response-letter-submit"]')
-            info.has_response_submit = bool(submit_el and submit_el.is_visible())
-        except Exception:
+            info.has_response_submit = find_visible(page, [
+                SELECTORS['letter_submit'],
+                SELECTORS['popup_submit'],
+            ]) is not None
+        except Exception as e:
+            print(f"   ⚠️ detect: response-submit probe failed ({e}) — treating as absent")
             info.has_response_submit = False
         
         # Employer questions detected in popup (vacancy-response-question, verified 2026-04-06)
@@ -65,26 +77,31 @@ class FormDetector:
 
         # form-helper-error detection (Sber auto-read pattern, verified 2026-04-06)
         try:
-            err_el = page.query_selector(SELECTORS['form_error'])
-            info.has_form_error = bool(err_el and err_el.is_visible())
-        except Exception:
+            info.has_form_error = find_visible(page, SELECTORS['form_error']) is not None
+        except Exception as e:
+            print(f"   ⚠️ detect: form-error probe failed ({e}) — treating as absent")
             info.has_form_error = False
 
         # Test form detection (employer-asking-for-test, verified 2026-04-06)
         try:
-            test_el = page.query_selector(SELECTORS['test_form_marker'])
-            info.has_test_form = bool(test_el and test_el.is_visible())
-        except Exception:
+            info.has_test_form = find_visible(page, SELECTORS['test_form_marker']) is not None
+        except Exception as e:
+            print(f"   ⚠️ detect: test-form probe failed ({e}) — treating as absent")
             info.has_test_form = False
 
         # Cover-required response modal: role="dialog" overlay with a fillable textarea
         # (verified 2026-05-31 — "Сопроводительное обязательное", Откликнуться disabled until filled)
+        # Checks every dialog on the page, not just the first: hh stacks these
+        # (the 2026-08-11 run met three in a row), and the cover modal is not
+        # reliably the one that comes first in document order.
         try:
-            dialog = page.query_selector('[role="dialog"], [role="alertdialog"]')
-            if dialog and dialog.is_visible():
-                ta = dialog.query_selector('textarea')
-                info.has_modal_form = bool(ta and ta.is_visible())
-        except Exception:
+            for dialog in iter_visible(page, MODAL_SELECTORS):
+                ta = find_visible(dialog, 'textarea')
+                if ta is not None:
+                    info.has_modal_form = True
+                    break
+        except Exception as e:
+            print(f"   ⚠️ detect: modal-form probe failed ({e}) — treating as absent")
             info.has_modal_form = False
 
         info.form_type = self._classify_form(info, combined_text)

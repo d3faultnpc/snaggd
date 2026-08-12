@@ -3,6 +3,9 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
+from ..dom import find_visible, is_employer_question_field, iter_visible
+from config import SELECTORS
+
 class FormType(Enum):
     """HH application form types."""
     HH_MODAL_STEP1 = "hh_modal_step1"
@@ -93,26 +96,22 @@ class BaseHandler(ABC):
             '[data-qa*="response-popup"]',
             '.HH-Modal',
         ]
+        # Both probes moved off single-match query_selector: with the old code a
+        # hidden first match of '[role="dialog"]' read as "no modal on screen",
+        # and the absence branch below turns that straight into "submitted".
+        # Checking every match can only report the modal as still-present more
+        # often — the conservative direction for a success predicate.
         while time.time() < end:
-            # Success notification appeared
-            for sel in success_selectors:
-                try:
-                    el = page.query_selector(sel)
-                    if el and el.is_visible():
-                        return True
-                except Exception:
-                    pass
-            # Modal disappeared (submit closed the dialog)
-            modal_visible = False
-            for sel in modal_selectors:
-                try:
-                    el = page.query_selector(sel)
-                    if el and el.is_visible():
-                        modal_visible = True
-                        break
-                except Exception:
-                    pass
-            if not modal_visible:
+            # Success notification appeared — positive evidence, trust it.
+            if find_visible(page, success_selectors) is not None:
+                return True
+            # Modal disappeared (submit closed the dialog). This is an
+            # absence-based signal and inherits every weakness of one: it also
+            # fires if the modal selectors simply never matched this modal.
+            # Kept because handlers call it only AFTER their own submit click,
+            # where a closed dialog really is the outcome — but it is why a
+            # False here escalates to applied_unverified rather than a hard fail.
+            if find_visible(page, modal_selectors) is None:
                 return True
             time.sleep(0.5)
         return False
@@ -160,12 +159,50 @@ class BaseHandler(ABC):
         )
 
     def _find_element_by_selectors(self, page, selectors: list, visible_only: bool = True):
-        """Finds the first element matching any selector in the list."""
+        """First VISIBLE element matching any selector, in cascade order.
+
+        Used to call `page.query_selector()` per selector — first DOM match only.
+        If that one match was hidden, this gave up on the selector entirely and
+        moved to the next string in the cascade, even when a later match of the
+        SAME selector was visible and clickable. That is the identical bug that
+        made `click_apply_button` report "Apply button not found" on a page with
+        four visible Apply buttons (fixed there 2026-08-02, left standing here).
+
+        Live on the cover-letter path: cover_only.py finds both its textarea and
+        its send button through this helper.
+        """
+        return find_visible(page, selectors, visible_only=visible_only)
+
+    def _find_cover_field(self, page, extra_selectors: list = None, reject=None):
+        """The cover-letter textarea — never an employer's question field.
+
+        The last entry of SELECTORS['cover_textarea'] is a bare 'textarea',
+        deliberately, as a last resort for markup we have not seen. On an
+        employer questionnaire that entry matches every question box on the
+        page (one per question, no placeholder, no data-qa), so the cascade
+        would hand back question #1 and the caller would type a cover letter
+        into it and submit it to a real employer under the user's name.
+
+        Nothing above stopped that: _is_salary_field only rejects fields whose
+        placeholder or label mentions salary, and hh's question textareas carry
+        no placeholder at all.
+
+        Structural rejection instead of a keyword guess, and no LLM call: an
+        employer question field is identifiable by where it sits in the DOM
+        (inside task-body / vacancy-response-question, or name="task_N_text"),
+        which is a fact about the markup rather than about the wording.
+
+        `reject` is an extra per-candidate veto (hh_modal passes its salary
+        check). A rejected candidate is skipped, not fatal — the cascade keeps
+        going, which is what the hand-rolled loops it replaces did.
+        """
+        selectors = (extra_selectors or []) + list(SELECTORS['cover_textarea'])
         for selector in selectors:
-            try:
-                element = page.query_selector(selector)
-                if element and (not visible_only or element.is_visible()):
-                    return element
-            except:
-                continue
+            for el in iter_visible(page, selector):
+                if is_employer_question_field(el):
+                    print("   ⏭ Skipping an employer question field while looking for the cover box")
+                    continue
+                if reject is not None and reject(el):
+                    continue
+                return el
         return None

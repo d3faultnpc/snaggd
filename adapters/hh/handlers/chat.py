@@ -1,6 +1,7 @@
 import time
 
 from .base import BaseHandler, FormType, ProcessResult
+from ..dom import find_chat_link, find_visible
 from config import SELECTORS
 
 try:
@@ -88,8 +89,8 @@ class ChatHandler(BaseHandler):
         _vac_seq = kwargs.get("vacancy_seq")
         vid = str(_vac_seq) if _vac_seq is not None else None
         # 1. Click "Go to chat" — chat_link is on main page, not inside iframe
-        chat_link = page.query_selector(SELECTORS['chat_link'])
-        if not chat_link or not chat_link.is_visible():
+        chat_link = find_chat_link(page)
+        if chat_link is None:
             return ProcessResult(
                 success=False,
                 status="skipped_no_chat_button",
@@ -312,25 +313,39 @@ class ChatHandler(BaseHandler):
         scope is a Playwright Frame object (chatik.hh.ru iframe).
         Frame.wait_for_selector and Frame.query_selector have same API as Page equivalents.
         """
-        # Primary: text-based wait — works regardless of element tag or class
+        # Wait on the union, then choose address-first.
+        #
+        # This used to await the Russian :text() selector and only fall through
+        # to the data-qa cascade when that timed out — the exact inversion of
+        # the address-first rule the apply path was fixed to follow. Waiting and
+        # prioritising are separate concerns, and conflating them made the
+        # wording the primary mechanism: the cascade could only ever run after
+        # a 12s timeout, i.e. never on a healthy page.
+        #
+        # Chatik is a cross-origin iframe, so `scope` here is a Frame. Its
+        # wait_for_selector has the same API as Page's.
+        cascade = list(SELECTORS['chatik_add_cover'])
         try:
-            el = scope.wait_for_selector(
-                ':text("Добавить сопроводительное")',
-                timeout=12000,
-                state='visible'
-            )
-            if el:
-                print("   ✅ 'Добавить сопроводительное' found in chatik iframe")
-                return el
-        except Exception:
-            print("   ⚠️ :text() timed out in chatik iframe — trying data-qa cascade")
+            scope.wait_for_selector(", ".join(cascade), timeout=12000, state='visible')
+        except Exception as e:
+            # Either it genuinely never appeared, or Playwright refused the
+            # comma-joined union (the cascade mixes plain CSS with :has-text()).
+            # Both end up here, so retry the wording-only wait that was the
+            # primary before this change rather than give up on the send.
+            print(f"   ⚠️ union wait for 'Добавить сопроводительное' failed ({e}) — retrying by wording")
+            try:
+                scope.wait_for_selector(':text("Добавить сопроводительное")',
+                                        timeout=12000, state='visible')
+            except Exception:
+                print("   ⚠️ 'Добавить сопроводительное' didn't appear in chatik")
+                return None
 
-        # Fallback: data-qa / tag cascade
-        for selector in SELECTORS['chatik_add_cover']:
-            el = scope.query_selector(selector)
-            if el and el.is_visible():
-                print(f"   ✅ Found via cascade in iframe: {selector}")
-                return el
+        # `:text()` stays in the list, last: it is the broadest match (any tag)
+        # and the only one that survives hh changing the element type again.
+        el = find_visible(scope, cascade + [':text("Добавить сопроводительное")'])
+        if el is not None:
+            print("   ✅ 'Добавить сопроводительное' found in chatik iframe")
+            return el
 
         print("   ⚠️ 'Добавить сопроводительное' not found in chatik iframe")
         return None
