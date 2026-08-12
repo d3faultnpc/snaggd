@@ -1,6 +1,7 @@
 from typing import Optional
 from .handlers.base import FormType, FormInfo
-from .dom import MODAL_SELECTORS, find_visible, find_chat_link, iter_visible
+from .dom import (MODAL_SELECTORS, find_chat_link, find_topmost_dialog,
+                  find_visible, iter_visible)
 from config import SELECTORS, FORM_KEYWORDS
 
 class FormDetector:
@@ -9,9 +10,17 @@ class FormDetector:
     def detect(self, page) -> FormInfo:
         """Determines form type from current DOM state."""
 
-        inputs = page.query_selector_all(SELECTORS['inputs_all'])
-        labels = page.query_selector_all(SELECTORS['labels'])
-        buttons = page.query_selector_all(SELECTORS['buttons'])
+        # Scope: when a dialog is open, the form IS the dialog, and text from
+        # the page behind it is noise that decides routing. On 2026-08-11 the
+        # word "продолжить" — from a button in an unrelated overlay — was
+        # enough for _classify_form to call the page an HH modal step, and the
+        # handler that ran then reported "Fields: 0". Falls back to the whole
+        # page when nothing is open, which is the inline-form case.
+        scope = find_topmost_dialog(page) or page
+
+        inputs = scope.query_selector_all(SELECTORS['inputs_all'])
+        labels = scope.query_selector_all(SELECTORS['labels'])
+        buttons = scope.query_selector_all(SELECTORS['buttons'])
 
         all_labels_text = self._extract_visible_text(labels)
         all_buttons_text = self._extract_visible_text(buttons)

@@ -3,7 +3,8 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
-from ..dom import find_visible, is_employer_question_field, iter_visible
+from ..dom import (find_topmost_dialog, find_visible, is_employer_question_field,
+                   is_in_data_collector, iter_visible)
 from config import SELECTORS
 
 class FormType(Enum):
@@ -172,6 +173,61 @@ class BaseHandler(ABC):
         its send button through this helper.
         """
         return find_visible(page, selectors, visible_only=visible_only)
+
+    def _find_action_button(self, page, addresses: list, keywords: list):
+        """The button that advances this form. Returns (element, how) or (None, None).
+
+        Two tiers, and the order was never the problem here — both callers
+        already tried addresses before wording. What was wrong with the wording
+        tier was everything else about it:
+
+        * It searched the WHOLE PAGE. Any 'продолжить' anywhere — page chrome,
+          footer, an unrelated overlay — was a candidate. Scoped to the open
+          dialog now, falling back to the page only when no dialog is open.
+        * It did not know what it was clicking. hh's profile surveys carry a
+          "Сохранить и продолжить" that matches the navigation keywords
+          perfectly and writes to the user's hh profile rather than advancing
+          anything. That is exactly what got clicked on 2026-08-11. Survey
+          buttons are vetoed now.
+
+        The wording tier stays, deliberately. Across all 123 captured pages hh
+        ships NO data-qa on the "next/continue" button of a response modal —
+        the wording is the only handle that exists on markup hh has not
+        tagged. The goal is not zero Russian; it is that Russian is never the
+        primary mechanism, is confined to the form being acted on, and cannot
+        reach a button that does something else.
+
+        Deliberately NOT a third tier: asking the model to pick a button when
+        both of these miss. It would not remove a single hardcoded word — it
+        would sit behind them — while adding a new way to click an unknown
+        control on a real employer's form. If the canon/LLM boundary moves, it
+        should move as a designed whole (audit item 9), not per button.
+        """
+        scope = find_topmost_dialog(page) or page
+
+        for selector in addresses:
+            try:
+                page.wait_for_selector(f"{selector}:not([disabled])", timeout=5000)
+            except Exception:
+                pass  # already enabled, or genuinely absent — the query below decides
+            for btn in iter_visible(scope, selector):
+                try:
+                    if not btn.is_disabled():
+                        return btn, "address"
+                except Exception:
+                    continue
+
+        for btn in iter_visible(scope, SELECTORS['buttons']):
+            try:
+                if btn.is_disabled() or is_in_data_collector(btn):
+                    continue
+                label = btn.inner_text().strip().lower()
+            except Exception:
+                continue
+            if any(kw in label for kw in keywords):
+                return btn, "wording"
+
+        return None, None
 
     def _find_cover_field(self, page, extra_selectors: list = None, reject=None):
         """The cover-letter textarea — never an employer's question field.

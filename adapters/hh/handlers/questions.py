@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+from ..dom import find_visible
 from .base import BaseHandler, FormType, ProcessResult
 from config import CONFIG, SELECTORS
 
@@ -372,57 +373,49 @@ class QuestionsHandler(BaseHandler):
             return inp.get_attribute("value") or ""
 
     def _submit(self, page, filled_count: int, total: int) -> ProcessResult:
-        for selector in [SELECTORS["letter_submit"], SELECTORS["popup_submit"]]:
+        # One finder for both tiers — see BaseHandler._find_action_button. The
+        # wording tier used to scan every button on the page with no notion of
+        # which form it belonged to; it is scoped to the open dialog now and
+        # cannot pick up a button from one of hh's own profile surveys.
+        # Address order corrected too: popup_submit is the one that appears in
+        # captures, letter_submit has matched nothing since at least 2026-08.
+        btn, how = self._find_action_button(
+            page,
+            addresses=[SELECTORS["popup_submit"], SELECTORS["letter_submit"]],
+            keywords=["отправить", "откликнуться", "далее", "подтвердить"],
+        )
+        if btn is not None:
             try:
-                page.wait_for_selector(f"{selector}:not([disabled])", timeout=5000)
-                btn = page.query_selector(selector)
-                if btn and btn.is_visible() and not btn.is_disabled():
-                    label = btn.inner_text().strip()
-                    btn.scroll_into_view_if_needed()
-                    btn.click()
-                    self._wait_and_random_delay(page, 1000, 1500)
-                    try:
-                        # aria-invalid="true" covers standard HTML; Magritte uses a CSS class
-                        invalid = page.query_selector(
-                            '[aria-invalid="true"], span[data-qa="checkbox"][class*="magritte-invalid"]'
-                        )
-                        if invalid and invalid.is_visible():
-                            return ProcessResult(
-                                success=False, status="skipped_form_validation_error",
-                                reason="Form has a required field that failed validation after submit",
-                                scenario="questions_validation_error",
-                                details={"filled_count": filled_count},
-                                is_terminal=True, goal_reached=False
-                            )
-                    except Exception:
-                        pass
-                    self._wait_and_random_delay(page, 1000, 1500)
+                label = btn.inner_text().strip()
+                btn.scroll_into_view_if_needed()
+                btn.click()
+                self._wait_and_random_delay(page, 1000, 1500)
+                # aria-invalid="true" covers standard HTML; Magritte uses a CSS class.
+                # Checked on every path now — the wording fallback used to skip
+                # it entirely and report a clean "applied" over a form that had
+                # just rejected the submit.
+                invalid = find_visible(page,
+                    '[aria-invalid="true"], span[data-qa="checkbox"][class*="magritte-invalid"]')
+                if invalid is not None:
                     return ProcessResult(
-                        success=True, status="applied",
-                        reason=f"Questionnaire submitted ({filled_count} questions), button: '{label}'",
-                        scenario="questions_submitted",
-                        details={"filled_count": filled_count, "total_fields": total},
-                        is_terminal=False, goal_reached=True
-                    )
-            except Exception:
-                continue
-
-        for btn in page.query_selector_all("button"):
-            try:
-                if not btn.is_visible() or btn.is_disabled():
-                    continue
-                if any(kw in btn.inner_text().lower() for kw in ["отправить", "откликнуться", "далее", "подтвердить"]):
-                    btn.click()
-                    self._wait_and_random_delay(page, 2000, 3000)
-                    return ProcessResult(
-                        success=True, status="applied",
-                        reason=f"Questionnaire submitted via fallback ({filled_count} questions)",
-                        scenario="questions_submitted_fallback",
+                        success=False, status="skipped_form_validation_error",
+                        reason="Form has a required field that failed validation after submit",
+                        scenario="questions_validation_error",
                         details={"filled_count": filled_count},
-                        is_terminal=False, goal_reached=True
+                        is_terminal=True, goal_reached=False
                     )
-            except Exception:
-                continue
+                self._wait_and_random_delay(page, 1000, 1500)
+                return ProcessResult(
+                    success=True, status="applied",
+                    reason=f"Questionnaire submitted ({filled_count} questions), "
+                           f"button: '{label}' (found by {how})",
+                    scenario="questions_submitted" if how == "address" else "questions_submitted_fallback",
+                    details={"filled_count": filled_count, "total_fields": total,
+                             "button_found_by": how},
+                    is_terminal=False, goal_reached=True
+                )
+            except Exception as e:
+                print(f"   ⚠️ Submit click failed ({e}) — reporting as no-submit")
 
         return ProcessResult(
             success=False, status="skipped_no_submit",

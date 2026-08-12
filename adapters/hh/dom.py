@@ -122,6 +122,24 @@ def is_data_collector(dialog) -> bool:
         return False
 
 
+def is_in_data_collector(element) -> bool:
+    """True if this element belongs to one of hh's profile surveys.
+
+    The element-level counterpart of is_data_collector, for the button hunts:
+    a survey's "Сохранить и продолжить" is a perfect match for every
+    navigation keyword the code knows, and clicking it saves profile data
+    instead of advancing an application. Fails closed — an unanswerable check
+    means "leave it alone".
+    """
+    try:
+        return bool(element.evaluate(
+            "el => !!el.closest('[data-qa^=\"additional-data-collector__\"]')"
+            " || !!(el.getAttribute('data-qa')||'').startsWith('additional-data-collector__')"
+        ))
+    except Exception:
+        return True
+
+
 def find_topmost_dialog(scope):
     """The dialog the user is actually looking at, or None.
 

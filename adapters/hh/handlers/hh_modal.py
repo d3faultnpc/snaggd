@@ -479,39 +479,24 @@ class HHModalHandler(BaseHandler):
     def _find_nav_button(self, page):
         """Finds the navigation button ('Submit', 'Apply', 'Next', etc.).
 
-        Popup button starts disabled — wait up to 5 s for it to become enabled after form fill.
+        Popup button starts disabled — the address tier waits up to 5s for it
+        to become enabled after the form is filled.
+
+        Both tiers, the wait, the dialog scoping and the survey veto live in
+        BaseHandler._find_action_button — read its docstring for why the
+        keyword tier is still here and what it is no longer allowed to do.
+        On 2026-08-11 this method's page-wide keyword scan clicked
+        "Сохранить и продолжить" on one of hh's profile surveys.
         """
-        import time
-
-        # Verified data-qa selectors (inline and popup)
-        for selector in [SELECTORS['letter_submit'], SELECTORS['popup_submit']]:
-            try:
-                try:
-                    page.wait_for_selector(
-                        f"{selector}:not([disabled])",
-                        timeout=5000
-                    )
-                except Exception:
-                    pass  # Timeout — button may already be enabled
-                btn = page.query_selector(selector)
-                if btn and btn.is_visible() and not btn.is_disabled():
-                    return btn
-            except Exception:
-                pass
-
-        # Fallback by text (including "Откликнуться" in popup)
-        nav_keywords = FORM_KEYWORDS['navigation'] + ['откликнуться']
-        buttons = page.query_selector_all('button, a[role="button"]')
-        for btn in buttons:
-            try:
-                if not btn.is_visible():
-                    continue
-                text = btn.inner_text().strip().lower()
-                if any(kw in text for kw in nav_keywords):
-                    return btn
-            except Exception:
-                continue
-        return None
+        btn, how = self._find_action_button(
+            page,
+            addresses=[SELECTORS['popup_submit'], SELECTORS['letter_submit']],
+            keywords=FORM_KEYWORDS['navigation'] + ['откликнуться'],
+        )
+        if btn is not None and how == "wording":
+            print("   ℹ️ Navigation button matched by wording, not by address — "
+                  "hh ships no data-qa on this one")
+        return btn
 
     def verify_submission(self, page) -> bool:
         return self._poll_for_success(page, timeout_s=5)

@@ -75,6 +75,7 @@ def run(pw):
                                  find_visible, is_data_collector,
                                  is_employer_question_field, iter_visible)
     from adapters.hh.handlers.cover_only import CoverOnlyHandler
+    from adapters.hh.handlers.hh_modal import HHModalHandler
     from config import SELECTORS
 
     failures = []
@@ -193,6 +194,41 @@ def run(pw):
         failures.append("an ordinary dialog was misread as hh's profile survey")
     else:
         print("  ✅ ordinary dialogs still reach the model as before")
+
+    # 4c. The navigation-button hunt: address beats wording, wording is confined
+    #     to the open dialog, and hh's own survey buttons are never eligible.
+    handler = HHModalHandler()
+    nav_keywords = ['далее', 'подтвердить', 'продолжить', 'готово', 'отправить', 'откликнуться']
+
+    page.set_content("""<html><body>
+      <button>Продолжить</button>                      <!-- page chrome, not our form -->
+      <div role="dialog">
+        <button data-qa="vacancy-response-submit-popup">Отправить</button>
+      </div>
+    </body></html>""")
+    btn, how = handler._find_action_button(
+        page, addresses=[SELECTORS['popup_submit'], SELECTORS['letter_submit']], keywords=nav_keywords)
+    if how != "address" or btn.get_attribute('data-qa') != 'vacancy-response-submit-popup':
+        failures.append(f"address tier lost to wording: how={how}")
+    else:
+        print("  ✅ address beats wording when hh gives us one")
+
+    page.set_content("""<html><body>
+      <button>Продолжить</button>                      <!-- outside the dialog -->
+      <div role="dialog"><h2>Отклик</h2><button>Готово</button></div>
+    </body></html>""")
+    btn, how = handler._find_action_button(page, addresses=[SELECTORS['popup_submit']], keywords=nav_keywords)
+    if btn is None or btn.inner_text().strip() != 'Готово':
+        failures.append(f"wording tier reached outside the open dialog: {btn and btn.inner_text()!r}")
+    else:
+        print("  ✅ wording is confined to the form being acted on")
+
+    page.set_content(DATA_COLLECTOR)
+    btn, how = handler._find_action_button(page, addresses=[SELECTORS['popup_submit']], keywords=nav_keywords)
+    if btn is not None:
+        failures.append(f"a hh profile-survey button was offered as a form action: {btn.inner_text()!r}")
+    else:
+        print("  ✅ hh's survey buttons are never eligible as form actions")
 
     # 5. Against hh's own captured markup, when it is on disk.
     caps = sorted((REPO / "debug_screenshots").rglob("*.html")) if (REPO / "debug_screenshots").exists() else []
