@@ -1,5 +1,52 @@
 # Changelog
 
+## [0.5.0] — 2026-08-12 · Selector Hardening
+
+Six files had independently grown the same bug: `page.query_selector()` returns
+the first element in document order, and HH renders the same address several
+times per page. When the first copy was the hidden one, the code reported "not
+found" on a page where the element was plainly visible, and narrated a blocked
+application that was never blocked.
+
+### Added
+- `adapters/hh/dom.py` — one shared element lookup for the whole adapter: every
+  match of every selector, in the caller's priority order, first visible wins.
+  Also the single definition of "a dialog on HH", including which of a stack is
+  the live one and why a dialog's root is not interchangeable with its parts.
+- `onboarding/profile_guard.py` — a save may add to a profile or change it; it
+  may not empty it. Shape validation had no opinion on an unfilled wizard form
+  full of empty lists, and one such save replaced a full profile with a
+  placeholder skeleton. Every score computed afterwards was computed against
+  nothing, and nothing in the output said so.
+- `tests/test_dom_first_match.py`, `tests/test_profile_guard.py`.
+
+### Fixed
+- Cover letters can no longer be typed into an employer's screening question.
+  The cascade's last-resort bare `textarea` matches every question box on a
+  questionnaire; rejection is structural now, and fails closed.
+- HH's own profile-enrichment surveys ("which format suits you", "where do you
+  live", "what salary") are recognised by address and closed, not handed to the
+  model as an unrecognized dialog. The model reasonably pressed the big obvious
+  button, which wrote answers into the user's real HH profile.
+- Button lookup is scoped to the form being acted on. A page-wide keyword scan
+  could pick up a control from an unrelated overlay — and did.
+- `_parse_json()` returns a dict or the caller's fallback. It used to return
+  whatever `json.loads` produced, so a reply that was valid JSON of the wrong
+  shape failed a frame later, reported as "LLM unavailable" while the model was
+  answering normally.
+- Cover-letter cache is keyed by profile as well as vacancy, matching the score
+  cache. Editing a profile silently changed future scores but not future covers.
+- Dead selectors demoted below the addresses that actually appear in captured
+  markup; `company_name_fallback` removed outright (0 matches on 58 captured
+  vacancy pages while the primary matched all 58).
+- Silent failures given a voice: label extraction, employer rating, company
+  name, the salary check, and the detector's probes no longer make an exception
+  indistinguishable from "genuinely absent".
+
+### Changed
+- Profile backups move to `.backups/` with retention and a listing API, instead
+  of sibling `.bak` files that nothing surfaced.
+
 ## [0.4.1] — 2026-07-12 · 7-Step Wizard
 
 ### Summary

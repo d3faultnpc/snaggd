@@ -2,7 +2,12 @@
 
 > **One read = full picture.** For dev agents, contributors, and any model starting cold.
 > Use the TOC to jump to the section you need by header name.
-> Updated: 2026-08-01 (до-уборочная session — main's history rewritten back 19 commits and force-pushed clean; found and fixed a deeper leak this file's own narration-schema section carried, HORIZON/claw/brain, which turned out to be the private app's real branded UI vocabulary; generic terminology throughout now). Keep updated after major architecture changes.
+> Updated: 2026-08-12 (0.5.0 — selector hardening. One shared lookup module
+> (`adapters/hh/dom.py`) replaced six independent single-match implementations;
+> profile saves can no longer empty a profile; HH's own profile-enrichment
+> surveys are closed rather than answered. See §15 for the discipline that came
+> out of it, and CHANGELOG for the full list.) Keep updated after major
+> architecture changes.
 > **Authority:** CONTEXT.md is the authoritative technical map. L1_project.md summarises it for session load. When they diverge, CONTEXT.md wins.
 
 ---
@@ -51,6 +56,7 @@ main.py (orchestrator)
 ├── HHAdapter (adapters/hh/adapter.py)        ← SiteAdapter implementation
 │   ├── HHBrowser (adapters/hh/browser.py)    ← Playwright: context, cookies, clicks, scraping
 │   ├── FormDetector (adapters/hh/detector.py) ← DOM-based form classification, no LLM
+│   ├── dom.py (adapters/hh/dom.py)           ← shared element lookup; read it before writing a selector
 │   └── FormHandlers (adapters/hh/handlers/)
 │       ├── hh_modal.py     ← popup modal with cover letter textarea
 │       ├── cover_only.py   ← inline cover letter form
@@ -702,9 +708,28 @@ Current profiles: that profile, `support`.
 
 | # | Case | File | Status |
 |---|------|------|--------|
-| 1 | QuestionsHandler._submit() — submit after Q&A fill not verified live | `handlers/questions.py` | open |
-| 2 | Chat selectors (chatik-* data-qa) | `handlers/chat.py` | partially verified (#8 done; selectors may drift) |
+| 1 | QuestionsHandler._submit() — submit after Q&A fill | `handlers/questions.py` | verified live 2026-08-12 |
+| 2 | Chat selectors (chatik-* data-qa) | `handlers/chat.py` | partially verified; selectors may drift |
 | 3 | "Application already viewed" modal popup | `handlers/hh_modal.py` | not yet encountered live |
+| 4 | HH embeds employer pre-screening questions (`vacancy-response-question_*`) on the vacancy page itself, before any Apply click — a genuinely new page shape, not a misclassification | `adapters/hh/detector.py` | found, not designed for |
+| 5 | `_poll_for_success()` still treats "the modal is gone" as success. Called only after a submit click, and a False escalates to `applied_unverified` rather than a hard fail — but it is an absence-based predicate, the shape that caused the 2026-08-11 false "apply failed" | `handlers/base.py` | known, deliberate |
+| 6 | `applied_log.json` is rewritten wholesale from an in-memory copy loaded at session start, so two concurrent sessions would clobber each other's entries and any external edit made mid-session is lost | `logger.py` | known, not hit in single-session use |
+
+### Selector discipline (2026-08-12)
+
+Every element lookup goes through `adapters/hh/dom.py`. Three rules, each one
+paid for by a live failure:
+
+1. **Every match, not the first.** HH renders the same address several times per
+   page; the first copy is regularly the hidden one. `query_selector()` in new
+   code is a bug unless the element is provably unique.
+2. **Address first, wording last.** `data-qa` before Russian button text. Text
+   matching still exists because HH ships no address at all on some controls —
+   but it is scoped to the form being acted on, never the whole page, and it can
+   never select a control belonging to one of HH's own profile surveys.
+3. **A dialog is its root, not a piece of it.** HH's response modal keeps its
+   submit button in a footer that is a *sibling* of the content wrapper, and
+   both match a naive dialog selector.
 
 ---
 
