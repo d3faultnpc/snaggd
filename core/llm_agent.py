@@ -457,15 +457,43 @@ class LLMAgent:
         return False
 
     def _parse_json(self, raw: str, fallback: dict) -> dict:
+        """Parse a model reply into a dict, or return the caller's fallback.
+
+        The return type says dict and every caller believes it — they go
+        straight to .get(). Until 2026-08-12 this returned whatever json.loads
+        produced, so a reply that was valid JSON but the wrong SHAPE came back
+        as a list, a string or None and blew up one frame later, far from here.
+
+        Live: 2026-08-12, a scoring call answered with a JSON array. That
+        surfaced as `Score error: 'list' object has no attribute 'get'`, then
+        as "LLM unavailable — skipping vacancy", and every vacancy in the run
+        was skipped without a score. The model was reachable and answering the
+        whole time; nothing about that message was true.
+
+        Wrapping a single object in an array is the most common way a model
+        gets this wrong, so that one case is unwrapped rather than discarded.
+        Anything else falls back — a wrong-shaped answer is a missing answer.
+        """
         raw = raw.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+
+        parsed = None
         try:
-            return json.loads(raw)
+            parsed = json.loads(raw)
         except json.JSONDecodeError:
             if _HAS_JSON_REPAIR:
                 try:
-                    return json.loads(_repair_json(raw))
+                    parsed = json.loads(_repair_json(raw))
                 except Exception:
-                    pass
+                    parsed = None
+
+        if isinstance(parsed, dict):
+            return parsed
+        if isinstance(parsed, list) and len(parsed) == 1 and isinstance(parsed[0], dict):
+            print("   ℹ️ Model wrapped its JSON object in an array — unwrapped")
+            return parsed[0]
+        if parsed is not None:
+            print(f"   ⚠️ Model returned valid JSON of the wrong shape "
+                  f"({type(parsed).__name__}) — using the fallback")
         return fallback
