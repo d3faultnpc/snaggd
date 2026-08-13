@@ -142,7 +142,7 @@ def check(label, condition):
     results.append(bool(condition))
 
 
-handler = HHModalHandler()
+handler = HHModalHandler(data_dir=Path("/tmp/snaggd-test-profile"))
 
 # ── A text field + a select dropdown, both answered by the mocked LLM ──
 location_select = FakeElement(label="Локация", tag="select",
@@ -152,7 +152,7 @@ page = FakePage(inputs=[salary_text], selects=[location_select])
 
 fake_agent = MagicMock()
 fake_agent.fill_form.return_value = {"0": "250000", "select_0": "Удалённо"}
-with patch.object(hh_modal_module, "_agent", fake_agent):
+with patch.object(handler, "_agent", fake_agent):
     filled, ambiguous = handler._fill_generic_fields(page, "some vacancy text")
 
 check("_fill_generic_fields fills both fields (text + select)", filled == 2)
@@ -174,7 +174,7 @@ unanswered = FakeElement(label="Готовность к переезду", tag="
 page2 = FakePage(inputs=[unanswered], selects=[])
 fake_agent2 = MagicMock()
 fake_agent2.fill_form.return_value = {}  # empty answer
-with patch.object(hh_modal_module, "_agent", fake_agent2):
+with patch.object(handler, "_agent", fake_agent2):
     filled2, ambiguous2 = handler._fill_generic_fields(page2, "some vacancy text")
 check("field with no LLM answer is left untouched", unanswered.typed is None)
 check("filled count is 0 when nothing was answered", filled2 == 0)
@@ -183,14 +183,14 @@ check("no answer at all is not itself flagged ambiguous", ambiguous2 == [])
 # ── No fields at all on the page: returns (0, []), never calls the LLM ──
 empty_page = FakePage(inputs=[], selects=[])
 fake_agent3 = MagicMock()
-with patch.object(hh_modal_module, "_agent", fake_agent3):
+with patch.object(handler, "_agent", fake_agent3):
     filled3, ambiguous3 = handler._fill_generic_fields(empty_page, "some vacancy text")
 check("no fields on page → returns 0", filled3 == 0)
 check("no fields on page → returns no ambiguous reasons", ambiguous3 == [])
 check("no fields on page → fill_form never called", fake_agent3.fill_form.call_count == 0)
 
 # ── _agent unavailable (LLM down): returns (0, []) immediately, no crash ──
-with patch.object(hh_modal_module, "_agent", None):
+with patch.object(handler, "_agent", None):
     filled4, ambiguous4 = handler._fill_generic_fields(page, "some vacancy text")
 check("LLM unavailable → returns 0 without raising", filled4 == 0)
 
@@ -204,7 +204,7 @@ radio_open = FakeElement(label="Готовы к командировкам?", op
 radio_page = FakePage(inputs=[radio_yes, radio_no, radio_open], selects=[])
 fake_agent_radio = MagicMock()
 fake_agent_radio.fill_form.return_value = {"radio_travel": "Да"}
-with patch.object(hh_modal_module, "_agent", fake_agent_radio):
+with patch.object(handler, "_agent", fake_agent_radio):
     filled_r, ambiguous_r = handler._fill_generic_fields(radio_page, "some vacancy text")
 check("radio group: direct match clicks the right option", radio_yes.clicked is True)
 check("radio group: direct match doesn't click other options", radio_no.clicked is False)
@@ -222,7 +222,7 @@ revealed_ta = FakeElement(tag="textarea")
 radio_page2 = FakePage(inputs=[radio_yes2, radio_open2], selects=[], hidden_textarea=revealed_ta)
 fake_agent_radio2 = MagicMock()
 fake_agent_radio2.fill_form.return_value = {"radio_relocate": "open: готов при полной удалёнке"}
-with patch.object(hh_modal_module, "_agent", fake_agent_radio2):
+with patch.object(handler, "_agent", fake_agent_radio2):
     filled_r2, ambiguous_r2 = handler._fill_generic_fields(radio_page2, "some vacancy text")
 check("radio 'open:' answer clicks the value==open option, not a text-match guess",
       radio_open2.clicked is True and radio_yes2.clicked is False)
@@ -236,7 +236,7 @@ radio_only_yes = FakeElement(label="Есть загранпаспорт?", optio
 radio_page3 = FakePage(inputs=[radio_only_yes], selects=[])
 fake_agent_radio3 = MagicMock()
 fake_agent_radio3.fill_form.return_value = {"radio_passport": "не указано в анкете"}
-with patch.object(hh_modal_module, "_agent", fake_agent_radio3):
+with patch.object(handler, "_agent", fake_agent_radio3):
     filled_r3, ambiguous_r3 = handler._fill_generic_fields(radio_page3, "some vacancy text")
 check("radio group no-match: nothing clicked", radio_only_yes.clicked is False)
 check("radio group no-match: surfaced as ambiguous, not silently dropped",
@@ -254,7 +254,7 @@ cb_open._revealed_textarea = revealed_ta2
 cb_page = FakePage(inputs=[cb_a, cb_b, cb_open], selects=[])
 fake_agent_cb = MagicMock()
 fake_agent_cb.fill_form.return_value = {"cbgroup_0": "open: intermediate, могу проходить интервью"}
-with patch.object(hh_modal_module, "_agent", fake_agent_cb):
+with patch.object(handler, "_agent", fake_agent_cb):
     filled_cb, ambiguous_cb = handler._fill_generic_fields(cb_page, "some vacancy text")
 check("checkbox group 'Свой вариант' checks the right box", cb_open.checked is True)
 check("checkbox group 'Свой вариант' doesn't check the preset options",
@@ -274,7 +274,7 @@ relocation_select = FakeElement(label="Готовы к переезду?",
 select_page = FakePage(inputs=[], selects=[relocation_select], hidden_textarea=revealed_ta3)
 fake_agent_select = MagicMock()
 fake_agent_select.fill_form.return_value = {"select_0": "open: готов при переезде за счёт компании"}
-with patch.object(hh_modal_module, "_agent", fake_agent_select):
+with patch.object(handler, "_agent", fake_agent_select):
     filled_s, ambiguous_s = handler._fill_generic_fields(select_page, "some vacancy text")
 check("select 'open:' answer selects the 'свой ответ' option itself, not the freeform text",
       relocation_select.selected_label == "свой ответ")

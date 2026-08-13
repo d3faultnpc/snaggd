@@ -23,13 +23,6 @@ def _is_timeout(exc: Exception) -> bool:
     return "Timeout" in type(exc).__name__ or "Timeout" in str(exc)
 
 
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception:
-    _agent = None
-
-
 class ChatHandler(BaseHandler):
     """
     Handler for auto-read employers (Sber, PERX, etc.) — applies via chatik.
@@ -65,7 +58,19 @@ class ChatHandler(BaseHandler):
       chatik_message_delivered nesting — direction check inside HR-bot loop (from TZ doc, not independently re-verified live)
     """
 
-    def __init__(self):
+    def __init__(self, data_dir):
+        # Per-instance and profile-bound, not a module-level singleton built at
+        # import time. The singleton this replaces took no data_dir, so it read
+        # candidate.md from the flat legacy dir for every profile: HR answers
+        # claimed a job the candidate had already left, while cover letters —
+        # which do get data_dir — used the correct file. Same person, two
+        # different sets of facts going to the same employer (2026-08-13).
+        from core.llm_agent import LLMAgent
+        try:
+            self._agent = LLMAgent(data_dir=data_dir)
+        except Exception as _e:
+            self._agent = None
+            print(f"   ⚠️ ChatHandler: LLMAgent not initialized: {_e}")
         self._cover_typed = False
 
     def can_handle(self, form_type: FormType) -> bool:
@@ -457,7 +462,8 @@ class ChatHandler(BaseHandler):
         Called before the cover letter step. Returns immediately if no incoming
         (non-delivered) messages are found.
 
-        Answers via _agent.answer_question() — uses candidate profile directly.
+        Answers via self._agent.answer_question() — reads the active profile's
+        candidate.md, the same file the scorer and the cover writer read.
         Text input instead of quick-reply buttons: more accurate, not limited to preset options.
 
         Selectors are from the TZ live investigation (2026-06-12) — see config.py's
@@ -507,11 +513,11 @@ class ChatHandler(BaseHandler):
             self._narrate(reporter, f"   🤖 HR-bot question: {question_text[:80]}...")
 
             # Generate answer via LLM directly from candidate profile
-            if _agent is None:
+            if self._agent is None:
                 self._narrate(reporter, "   ⚠️ HR-bot: LLM unavailable — skipping bot loop")
                 return rounds, "llm_unavailable"
             try:
-                answer = _agent.answer_question(question_text)
+                answer = self._agent.answer_question(question_text)
             except Exception as e:
                 self._narrate(reporter, f"   ⚠️ HR-bot LLM error: {e} — skipping bot loop")
                 return rounds, f"llm_error: {e}"

@@ -87,7 +87,12 @@ class SessionStartRequest(BaseModel):
 
 
 class ConfigPatchRequest(BaseModel):
-    min_score: Optional[int] = None
+    # min_score is deliberately absent: the match threshold is per-resume, and
+    # its authority is the profile's own filters.json (min_match), reachable via
+    # PATCH /api/v1/profiles/{name}/min-match. A process-global setter here could
+    # silently override every profile at once in an API process that serves
+    # several — CONFIG.min_score survives only as the default for a profile that
+    # has never set one (see adapters/hh/adapter.py's threshold resolution).
     max_vacancies: Optional[int] = None
     max_skips: Optional[int] = None
 
@@ -609,7 +614,6 @@ def connector_login_status(name: str):
 def config_read():
     from config import CONFIG
     return {
-        "min_score": CONFIG.min_score,
         "max_vacancies": CONFIG.max_vacancies_per_session,
         "max_skips": CONFIG.max_skips,
         "headless": CONFIG.headless,
@@ -620,15 +624,12 @@ def config_read():
 @app.patch("/api/v1/config", dependencies=[Depends(_require_key)])
 def config_patch(req: ConfigPatchRequest):
     from config import CONFIG
-    if req.min_score is not None:
-        CONFIG.min_score = req.min_score
     if req.max_vacancies is not None:
         CONFIG.max_vacancies_per_session = req.max_vacancies
     if req.max_skips is not None:
         CONFIG.max_skips = req.max_skips
     return {
         "updated": True,
-        "min_score": CONFIG.min_score,
         "max_vacancies": CONFIG.max_vacancies_per_session,
         "max_skips": CONFIG.max_skips,
     }

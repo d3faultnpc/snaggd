@@ -200,7 +200,7 @@ def run(pw):
     else:
         print("  ✅ the dialog ROOT wins over its own content wrapper")
 
-    btn, how = HHModalHandler()._find_action_button(
+    btn, how = HHModalHandler(data_dir=Path("/tmp/snaggd-test-profile"))._find_action_button(
         page, addresses=[SELECTORS['popup_submit'], SELECTORS['letter_submit']],
         keywords=['далее', 'продолжить', 'откликнуться'])
     if btn is None:
@@ -243,7 +243,7 @@ def run(pw):
 
     # 4c. The navigation-button hunt: address beats wording, wording is confined
     #     to the open dialog, and hh's own survey buttons are never eligible.
-    handler = HHModalHandler()
+    handler = HHModalHandler(data_dir=Path("/tmp/snaggd-test-profile"))
     nav_keywords = ['далее', 'подтвердить', 'продолжить', 'готово', 'отправить', 'откликнуться']
 
     page.set_content("""<html><body>

@@ -17,11 +17,10 @@ def _norm(s: str) -> str:
 class QuestionsHandler(BaseHandler):
     """Fills employer question forms: collect all fields → one LLM batch call → fill."""
 
-    def __init__(self, data_dir: Path = None):
+    def __init__(self, data_dir: Path):
         from core.llm_agent import LLMAgent
-        _dir = data_dir or CONFIG.data_dir
         try:
-            self._agent = LLMAgent(data_dir=_dir)
+            self._agent = LLMAgent(data_dir=data_dir)
         except Exception as _e:
             self._agent = None
             print(f"   ⚠️ QuestionsHandler: LLMAgent not initialized: {_e}")

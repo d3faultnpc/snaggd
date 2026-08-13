@@ -46,7 +46,7 @@ NAVIGATES = """<html><body>
 def make_browser(page):
     with patch("adapters.hh.browser.sync_playwright"):
         from adapters.hh.browser import HHBrowser
-        b = HHBrowser()
+        b = HHBrowser(data_dir=Path("/tmp/snaggd-test-profile"))
     b.vacancy_page = page
     return b
 

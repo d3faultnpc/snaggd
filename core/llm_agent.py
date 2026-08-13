@@ -82,12 +82,23 @@ def set_session_reporter(reporter) -> None:
 
 
 class LLMAgent:
-    def __init__(self, data_dir: Path = None):
+    # data_dir is required, deliberately. It used to default to CONFIG.data_dir,
+    # which is resolved once at import from the DATA_DIR env var — a model that
+    # only holds when a process serves exactly one profile. The API serves many
+    # and resolves the active one per request, so the default silently pointed
+    # every caller that forgot the argument at the flat legacy directory. Two
+    # handlers forgot it for months and answered employers from a stale profile.
+    # A missing argument must fail here, loudly, instead of reading someone
+    # else's facts. Callers that genuinely have no profile (CLI entry points)
+    # pass CONFIG.data_dir explicitly, which states the intent at the call site.
+    def __init__(self, data_dir: Path):
         env_api_key = os.getenv("LLM_API_KEY")
         if not env_api_key:
             raise RuntimeError("LLM_API_KEY not set — add it to .env")
 
-        self._data_dir = data_dir or CONFIG.data_dir
+        if data_dir is None:
+            raise ValueError("LLMAgent requires an explicit data_dir (the active profile's directory)")
+        self._data_dir = Path(data_dir)
         self._env_api_key = env_api_key
         self._env_model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
         self._env_cover_model = os.getenv("COVER_MODEL", self._env_model)

@@ -70,10 +70,10 @@ if not targets:
     print("No applied vacancies found for this date. Exiting.")
     sys.exit(0)
 
-browser = HHBrowser()
+browser = HHBrowser(data_dir=CONFIG.data_dir)
 browser.start(debug=False)
 
-agent = LLMAgent()
+agent = LLMAgent(data_dir=CONFIG.data_dir)
 results = []
 
 for i, entry in enumerate(targets, 1):

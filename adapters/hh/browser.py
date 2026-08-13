@@ -21,9 +21,11 @@ class HHBrowser:
     # one process: every profile read the same global search_urls.txt.
     # HHAdapter already received and threaded a per-profile data_dir into
     # FormHandlers and LLMCover; search URLs were simply never included.
-    def __init__(self, reporter=None, data_dir=None):
+    def __init__(self, data_dir, reporter=None):
         from pathlib import Path as _Path
-        self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
+        if data_dir is None:
+            raise ValueError("HHBrowser requires an explicit data_dir (the active profile's directory)")
+        self._data_dir = _Path(data_dir)
         self.playwright = None
         self._pw_manager = None
         self.browser: Optional[Browser] = None

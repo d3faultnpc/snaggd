@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 def make_browser():
     with patch("adapters.hh.browser.sync_playwright"):
         from adapters.hh.browser import HHBrowser
-        return HHBrowser()
+        return HHBrowser(data_dir=Path("/tmp/snaggd-test-profile"))
 
 
 def test_close_when_never_started():

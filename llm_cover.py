@@ -8,11 +8,12 @@ from config import CONFIG
 from core.llm_agent import LLMAgent
 
 
-def get_agent(data_dir: "Path | None" = None) -> "LLMAgent | None":
-    """Returns a fresh LLMAgent for the given data_dir (or CONFIG default).
+def get_agent(data_dir: "Path") -> "LLMAgent | None":
+    """Returns a fresh LLMAgent bound to the given profile directory.
 
     Used by adapter code that needs a one-off agent (e.g. modal dismissal).
-    Not a singleton — each call creates a new instance.
+    Not a singleton — each call creates a new instance. data_dir is required:
+    see LLMAgent.__init__ for why there is no default.
     """
     try:
         return LLMAgent(data_dir=data_dir)
@@ -51,8 +52,10 @@ class LLMCover:
     without an extra LLM round-trip.
     """
 
-    def __init__(self, data_dir: Path = None):
-        self._data_dir = data_dir or CONFIG.data_dir
+    def __init__(self, data_dir: Path):
+        if data_dir is None:
+            raise ValueError("LLMCover requires an explicit data_dir (the active profile's directory)")
+        self._data_dir = Path(data_dir)
         self.cache_file = self._data_dir / "llm_cache.json"
         self.cover_cache_file = self._data_dir / "cover_cache.json"
         try:

@@ -65,7 +65,13 @@ def load_active_adapters() -> list:
     for site in active:
         if site == "hh":
             from adapters.hh import HHAdapter
-            adapters.append(HHAdapter())
+            from config import CONFIG
+            # CONFIG.data_dir is the resolved profile here — this module sets
+            # DATA_DIR from the active profile before config is first imported
+            # (see the note at the top). Passed explicitly because the components
+            # no longer accept an implicit default: one profile per CLI process
+            # is a property of this entry point, not of the components.
+            adapters.append(HHAdapter(data_dir=CONFIG.data_dir))
         else:
             print(f"⚠  Unknown site '{site}' — skipped. Supported: hh")
     return adapters

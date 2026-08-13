@@ -9,12 +9,12 @@ from .chat import ChatHandler
 from .test_form import TestFormHandler
 
 class FormHandlers:
-    def __init__(self, data_dir: Path = None):
+    def __init__(self, data_dir: Path):
         self.handlers = [
             SalaryHandler(),
             TestFormHandler(),
-            HHModalHandler(),
-            ChatHandler(),
+            HHModalHandler(data_dir=data_dir),
+            ChatHandler(data_dir=data_dir),
             QuestionsHandler(data_dir=data_dir),
             CoverOnlyHandler(),
         ]

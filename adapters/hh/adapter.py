@@ -31,10 +31,12 @@ class HHAdapter(SiteAdapter):
     def auth_method(self) -> str:
         return "cookie"
 
-    def __init__(self, data_dir=None, reporter=None):
+    def __init__(self, data_dir, reporter=None):
         from pathlib import Path as _Path
-        self._data_dir = _Path(data_dir) if data_dir else CONFIG.data_dir
-        self.browser = HHBrowser(reporter=reporter, data_dir=self._data_dir)
+        if data_dir is None:
+            raise ValueError("HHAdapter requires an explicit data_dir (the active profile's directory)")
+        self._data_dir = _Path(data_dir)
+        self.browser = HHBrowser(data_dir=self._data_dir, reporter=reporter)
         self.detector = FormDetector()
         self.handlers = FormHandlers(data_dir=self._data_dir)
         self.llm_cover = LLMCover(data_dir=self._data_dir)
@@ -101,7 +103,13 @@ class HHAdapter(SiteAdapter):
         initial_count = len(applied_log)
         self._unverified_count = 0
 
-        stop_filters = load_stop_filters(CONFIG.data_dir)
+        # self._data_dir, not CONFIG.data_dir: the API serves several profiles from
+        # one process and resolves the active one per request, so the import-time
+        # CONFIG default points at the flat legacy dir for every API run. Reading
+        # filters from there silently dropped the profile's own min_match — a 72%
+        # vacancy was applied to under a 75% setting on 2026-08-13, because the
+        # missing value fell back to CONFIG.min_score's default of 60.
+        stop_filters = load_stop_filters(self._data_dir)
         if not stop_filters.is_empty():
             self._say(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}",
                       gui_message=f"Filters active: {stop_filters.summary()}")

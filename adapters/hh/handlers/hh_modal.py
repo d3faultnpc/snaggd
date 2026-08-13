@@ -2,13 +2,6 @@ from .base import BaseHandler, FormType, ProcessResult
 from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 
-try:
-    from core.llm_agent import LLMAgent
-    _agent = LLMAgent()
-except Exception:
-    _agent = None
-
-
 class HHModalHandler(BaseHandler):
     """
     Handler for HH modals with navigation.
@@ -23,6 +16,17 @@ class HHModalHandler(BaseHandler):
          field, same fill_form() mechanism questions.py uses (session 56).
       C. After "Submit": error "Application already viewed" → click "Chat".
     """
+
+    def __init__(self, data_dir):
+        # See ChatHandler.__init__ for why this is per-instance rather than a
+        # module-level agent: the screening answers this handler produces were
+        # grounded in the flat legacy candidate.md, not the active profile's.
+        from core.llm_agent import LLMAgent
+        try:
+            self._agent = LLMAgent(data_dir=data_dir)
+        except Exception as _e:
+            self._agent = None
+            print(f"   ⚠️ HHModalHandler: LLMAgent not initialized: {_e}")
 
     # _narrate() lives on BaseHandler now (session 58 code-review — was
     # duplicated near-identically across 4 handlers, hoisted to avoid drift).
@@ -182,7 +186,7 @@ class HHModalHandler(BaseHandler):
         interaction threw), surfaced via needs_debug_review by the caller
         instead of disappearing into a print().
         """
-        if _agent is None:
+        if self._agent is None:
             return 0, []
 
         fields = []
@@ -249,8 +253,11 @@ class HHModalHandler(BaseHandler):
         if not fields:
             return 0, []
 
+        if self._agent is None:
+            print("   ⚠️ LLM unavailable — cannot answer this modal's fields")
+            return 0, []
         try:
-            answers = _agent.fill_form(vacancy_text, fields)
+            answers = self._agent.fill_form(vacancy_text, fields)
         except Exception as e:
             print(f"   ⚠️ LLM fill_form error: {e}")
             return 0, []
