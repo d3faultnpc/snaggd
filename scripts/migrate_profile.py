@@ -18,7 +18,6 @@ from pathlib import Path
 _PROFILE_FILES = [
     "candidate.md",
     "job_preferences.md",
-    "tone_of_voice.md",
     "search_urls.txt",
     "filters.json",
     "applied_log.json",

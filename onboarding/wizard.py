@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Onboarding wizard — run once per profile before first main.py session.
-Produces: data/profiles/<name>/{candidate.md, candidate.json, job_preferences.md, tone_of_voice.md}
+Produces: data/profiles/<name>/{candidate.md, candidate.json, job_preferences.md, search_urls.txt, filters.json}
 
 Usage:
     python onboarding/wizard.py                            # prompts for a profile name, runs steps 1-7
@@ -196,8 +196,9 @@ def _require_candidate(data_dir: Path) -> ResumeData | None:
 
 
 def _write_candidate(data_dir: Path, data: ResumeData) -> None:
-    """Shared disk-write for Resume-derived data: candidate.md (via to_md(), preserves any
-    free-text user section below the managed-block marker) + candidate.json + suggested_queries.txt."""
+    """Shared disk-write for Resume-derived data: candidate.md (via to_md(), which merges
+    section by section and leaves alone anything this wizard has nothing to say about —
+    see onboarding/md_merge.py) + candidate.json + suggested_queries.txt."""
     md_out = data_dir / "candidate.md"
     existing = md_out.read_text(encoding="utf-8") if md_out.exists() else ""
     md_out.write_text(ResumeParser(None).to_md(data, existing_content=existing), encoding="utf-8")
@@ -391,11 +392,6 @@ def step_4_projects() -> bool:
 
 
 # ── Step 5: Skills & Career Profile ────────────────────────────────────────────
-# TZ Task 6 table lists this step's old-block source as "Block A + Block C (tone)" but its
-# stated outputs are only skills[]/tools[]/languages[]/career_profile — tone_of_voice.md isn't
-# part of the candidate.json schema at all. Reading: fold Block C's tone collection in here as
-# an optional tail (same behavior as today, own file, unrelated to the JSON) rather than give it
-# a separate step. Flagging this interpretation — the TZ doesn't spell it out either way.
 
 def step_5_skills() -> bool:
     section("Step 5 — Skills & Career Profile")
@@ -432,9 +428,6 @@ def step_5_skills() -> bool:
     data.career_profile = cp
 
     _write_candidate(CONFIG.data_dir, data)
-
-    if ask("\nSet/update tone of voice for cover letters now? yes/no", "yes").lower().startswith("y"):
-        block_c()
 
     return True
 
@@ -719,38 +712,6 @@ def step_7_hh_connect() -> bool:
         return False
 
     print(f"✓  HH Connect done — {len(resumes)} resume(s) found.")
-    return True
-
-
-# ── Block C: Tone of voice → tone_of_voice.md ────────────────────────────────
-# Internal helper for step_5_skills() now — no longer independently CLI-exposed.
-
-def block_c() -> bool:
-    section("Block C — Tone of voice")
-    print("Controls how cover letters sound.\n")
-
-    formality = ask("Style: formal / semi-formal / friendly", "semi-formal")
-    sample    = ""
-    print("\nPaste a sample cover letter you like (press Enter twice when done, or just Enter to skip):")
-    lines = []
-    while True:
-        line = input()
-        if line == "" and (not lines or lines[-1] == ""):
-            break
-        lines.append(line)
-    if lines:
-        sample = "\n".join(lines).strip()
-
-    content = [
-        "# tone_of_voice.md",
-        f"formality: {formality}",
-    ]
-    if sample:
-        content += ["", "sample_cover: |", *("  " + l for l in sample.split("\n"))]
-
-    out = CONFIG.data_dir / "tone_of_voice.md"
-    out.write_text("\n".join(content), encoding="utf-8")
-    print(f"\n✓  Saved → {out}")
     return True
 
 

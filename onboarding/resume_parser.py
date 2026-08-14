@@ -12,6 +12,7 @@ candidate.json shape directly (nested dicts/lists) so dataclasses.asdict() round
 """
 
 import base64
+import copy
 import json
 import os
 import re
@@ -27,8 +28,9 @@ try:
 except ImportError:
     _HAS_JSON_REPAIR = False
 
-_BLOCK_START = "<!-- snaggd:start -->"
-_BLOCK_END = "<!-- snaggd:end -->"
+from onboarding import md_merge
+from onboarding.profile_frame import evidence_sections, normalise_kind
+
 _TOKEN_GUARD_CHARS = 6000
 
 
@@ -164,133 +166,173 @@ class ResumeParser:
     def to_md(self, data: ResumeData, existing_content: str = "") -> str:
         """Serialize ResumeData → candidate.md (dense format optimized for LLM tokens).
 
-        existing_content: previous file content, if any. Content after the managed block
-        end-marker is preserved verbatim (user's own free-text annotations survive re-runs).
+        existing_content: previous file content, if any. Merged section by section —
+        what this renderer emits wins, what it does not emit survives. candidate.md
+        holds preferences the schema has no field for (see onboarding/md_merge.py for
+        the real profile that made this necessary), and those must outlive a save.
+
+        Evidence is the exception, and is resolved before rendering — see
+        _carry_unclaimed_evidence. Section-by-section is the wrong unit for it.
         """
+        data = self._carry_unclaimed_evidence(data, existing_content)
         body = self._render_managed_block(data)
         if len(body) > _TOKEN_GUARD_CHARS:
             print(f"⚠️  candidate.md managed block exceeds {_TOKEN_GUARD_CHARS} chars — shortening", file=sys.stderr)
             body = self._render_managed_block(self._shorten_for_token_guard(data))
 
-        managed = f"{_BLOCK_START}\n{body}\n{_BLOCK_END}"
+        return md_merge.merge(existing_content or "", body)
 
-        user_section = ""
-        if existing_content and _BLOCK_END in existing_content:
-            user_section = existing_content.split(_BLOCK_END, 1)[1]
+    @staticmethod
+    def _carry_unclaimed_evidence(data: ResumeData, existing_content: str) -> ResumeData:
+        """Evidence is owned by kind, not by section.
 
-        return managed + user_section
+        The contract a person signs by re-running the wizard, in their words: a CV
+        overwrites what was already known and adds what was not. Applying that per
+        section cannot work, because the same two real projects can sit in the file
+        under one heading and arrive from a CV under another — and then "add what
+        was not known" writes them a second time. It happened live: one profile
+        ended up asserting `english: B2` and `english: C1` at once.
+
+        Per kind, it works and needs no identity for individual items — which is
+        just as well, since a person rewording their own case history is the normal
+        thing and no key survives it:
+
+            a save that states evidence of kind K replaces all of kind K
+            a save that says nothing about kind K leaves kind K alone
+            a save with no evidence at all changes no evidence at all
+
+        `other` is deliberately not protected by the second rule. It is not a kind;
+        it is the mark of a classification that did not happen, and a CV parser
+        never emits it — so "says nothing about `other`" is true of every save
+        forever, and anything landing there would be trapped for good. Treating it
+        as superseded by any real evidence keeps the one-way door from existing.
+        How often it appears at all is the measure of whether the frame's
+        vocabulary fits real CVs.
+        """
+        if not data.cases or not existing_content:
+            return data
+        from onboarding.md_parse import parse_candidate_md
+
+        claimed = {normalise_kind(c.get("type")) for c in data.cases}
+        carried = [c for c in parse_candidate_md(existing_content).get("cases", [])
+                   if normalise_kind(c.get("type")) not in claimed
+                   and normalise_kind(c.get("type")) != "other"]
+        if not carried:
+            return data
+        merged = copy.copy(data)
+        merged.cases = list(data.cases) + carried
+        return merged
 
     # ── Rendering ─────────────────────────────────────────────────────────────
 
     def _render_managed_block(self, data: ResumeData) -> str:
+        """Only what this data actually carries — never a placeholder for what it does not.
+
+        Placeholders used to be written here (`# HINT: add your city`, `# SKIPPABLE`,
+        `MISSING — add your name`). candidate.md goes into the system prompt verbatim,
+        so those instructions-to-the-user were read by the model as candidate facts —
+        visibly enough that prompts/match_scoring.md had to grow a clause telling it to
+        ignore the word "SKIPPABLE". Guidance belongs in the wizard UI, where a person
+        reads it. Here, absent means absent, and md_merge relies on exactly that: a
+        section this renderer omits is a section the wizard has nothing to say about,
+        so whatever is already in the file stays.
+        """
         identity = data.identity or {}
-        role = identity.get("role") or "MISSING — add your target role"
-        lines = [f"# {role}"]
+        lines = []
+        if identity.get("role"):
+            lines.append(f"# {identity['role']}")
 
         # ── Identity ───────────────────────────────────────────────────────
-        lines += ["", "## Identity"]
-        lines.append(f"name: {identity.get('name') or 'MISSING — add your name'}")
-        lines.append(f"location: {identity.get('location') or '# HINT: add your city — used for relocation/location HR questions'}")
-        contacts = identity.get("contacts") or []
-        if contacts:
-            for c in contacts:
-                lines.append(_typed_contact_line(c))
-        else:
-            lines.append("# HINT: add LinkedIn/GitHub/Telegram/email — used to answer HR form contact questions")
-
+        identity_lines = []
+        if identity.get("name"):
+            identity_lines.append(f"name: {identity['name']}")
+        if identity.get("location"):
+            identity_lines.append(f"location: {identity['location']}")
+        for c in identity.get("contacts") or []:
+            identity_lines.append(_typed_contact_line(c))
         if data.pitch:
-            lines += ["", data.pitch]
+            identity_lines.append(data.pitch)
+        if identity_lines:
+            lines += ["", "## Identity"] + identity_lines
 
         # ── Career Profile ────────────────────────────────────────────────
-        lines += ["", "## Career Profile"]
         cp = data.career_profile or {}
-        lines.append(f"role_type: {cp['role_type']}" if cp.get("role_type")
-                     else "role_type: # SKIPPABLE — fill via wizard if useful for scoring (Builder/Growth/Operator/Researcher, or leave blank if none fit)")
-        lines.append(f"edge: {cp['edge']}" if cp.get("edge")
-                     else "edge: # HINT: one-sentence unique angle vs other candidates")
-        lines.append(f"aspiration: {cp['aspiration']}" if cp.get("aspiration")
-                     else "aspiration: # HINT: direction you want to move toward, even if your cases don't show it yet")
+        career_lines = [f"{k}: {cp[k]}" for k in ("role_type", "edge", "aspiration") if cp.get(k)]
+        # `not_looking_for` is where "soft-skip anything with X" actually works, and it has
+        # worked for a long time — as prose in a hand-written candidate.md that the model
+        # reads. There is no numeric penalty behind it anywhere in the engine, so the wizard
+        # collected `rules.penalize` into candidate.json and nothing ever read it. Writing it
+        # here connects the field to the mechanism that already existed.
+        penalize = [str(p).strip() for p in ((data.rules or {}).get("penalize") or []) if str(p).strip()]
+        if penalize:
+            career_lines.append(f"not_looking_for: {', '.join(penalize)}")
+        if career_lines:
+            lines += ["", "## Career Profile"] + career_lines
 
         # ── Relocation & Work Format ─────────────────────────────────────
-        lines += ["", "## Relocation & Work Format"]
         lg = data.logistics or {}
-        if lg.get("relocation") or lg.get("work_format"):
-            if lg.get("relocation"):
-                lines.append(f"relocation: {lg['relocation']}")
-            if lg.get("work_format"):
-                lines.append(f"work_format: {lg['work_format']}")
-        else:
-            lines.append("# — empty · SKIPPABLE, agent uses defaults, never fabricates")
+        logistics_lines = [f"{k}: {lg[k]}" for k in ("relocation", "work_format") if lg.get(k)]
+        if logistics_lines:
+            lines += ["", "## Relocation & Work Format"] + logistics_lines
+
+        # No target-roles section here, deliberately (decided 2026-08-14). candidate.md is
+        # the one file the scorer reads to answer "how well does this vacancy fit THIS
+        # person", and it must describe the person only. A list of roles being hunted is a
+        # description of the wanted vacancy, and putting it in the same file hands the model
+        # a second thing to compare against — it can start scoring the sought role against
+        # the resume instead of the actual vacancy against the resume. Conditions the person
+        # wants (salary, work format, relocation) are candidate attributes and belong here;
+        # the job title being chased is not one. The vacancy feed comes from the HH wise
+        # link, which is where "what am I looking for" is expressed for now.
 
         # ── Desired Salary ────────────────────────────────────────────────
-        lines += ["", "## Desired Salary"]
         salary = (data.search or {}).get("salary")
-        lines.append(salary if salary else "# — empty · SKIPPABLE, agent uses market average, never fabricates")
+        if salary:
+            lines += ["", "## Desired Salary", salary]
 
         # ── Skills ────────────────────────────────────────────────────────
-        lines += ["", "## Skills"]
         if data.skills:
-            lines += [f"- {s}" for s in data.skills]
-        else:
-            lines.append("# EMPTY — add professional skills (e.g. platform thinking, API design, SQL)")
+            lines += ["", "## Skills"] + [f"- {s}" for s in data.skills]
 
-        # ── Work Experience / Education / Projects & Credentials ─────────
-        _EDU_TYPES = {"education"}
-        _PROJECT_TYPES = {"project", "certification", "publication", "volunteering", "research"}
-        edu_cases = [c for c in data.cases if c.get("type") in _EDU_TYPES]
-        project_cases = [c for c in data.cases if c.get("type") in _PROJECT_TYPES]
-        # Catch-all: anything not education/project-family renders as Work Experience —
-        # including None and any type value outside the known set, so an unrecognized
-        # `type` from LLM output never silently disappears from candidate.md.
-        work_cases = [c for c in data.cases
-                      if c.get("type") not in _EDU_TYPES and c.get("type") not in _PROJECT_TYPES]
-
-        lines += ["", "## Work Experience"]
-        if work_cases:
-            for case in work_cases:
-                lines += self._render_case(case, data.target_market, include_zone=True)
-        else:
-            lines.append("# EMPTY — add work history via wizard or edit candidate.md directly")
-
-        if edu_cases:
-            lines += ["", "## Education"]
-            for case in edu_cases:
-                lines += self._render_case(case, data.target_market, include_zone=False)
-
-        lines += ["", "## Projects & Credentials"]
-        if project_cases:
-            for case in project_cases:
-                lines += self._render_case(case, data.target_market, include_zone=False)
-        else:
-            lines.append("# SKIPPABLE — add personal/side projects, certifications, publications")
+        # ── Evidence, one section per kind that has anything in it ────────
+        # One list in the schema, grouped here. Three headings used to hold seven
+        # kinds, so a certificate and a diploma came back from the file identical
+        # and a hand-written heading matched none of them. The frame declares both
+        # the kinds and their headings — see onboarding/profile_frame.py.
+        for heading, cases in evidence_sections(data.cases):
+            lines += ["", f"## {heading}"]
+            for case in cases:
+                # A zone-of-responsibility block is something employment has. A
+                # certificate or a talk has no ongoing duties.
+                lines += self._render_case(
+                    case, data.target_market,
+                    include_zone=normalise_kind(case.get("type")) == "employment")
 
         # ── Tools ─────────────────────────────────────────────────────────
-        lines += ["", "## Tools"]
-        lines.append(", ".join(data.tools) if data.tools else "# HINT: add tools you use (Jira, Figma, SQL, etc.)")
+        # `tools:` rather than a bare line: a key is what lets this content be
+        # placed when it turns up in a section someone invented (profile_frame's
+        # KEY_OWNERS). It also makes the section merge per key like its neighbours.
+        if data.tools:
+            lines += ["", "## Tools", "tools: " + ", ".join(data.tools)]
 
         # ── Languages ─────────────────────────────────────────────────────
-        lines += ["", "## Languages"]
         if data.languages:
+            lines += ["", "## Languages"]
             for lang in data.languages:
                 note = f" ({lang['note']})" if lang.get("note") else ""
                 lines.append(f"{lang.get('lang', '')}: {lang.get('level', '')}{note}")
-        else:
-            lines.append("# HINT: add language proficiency (e.g. english: B2, russian: native)")
 
         # ── Additional ────────────────────────────────────────────────────
-        lines += ["", "## Additional"]
-        added_any = False
+        additional_lines = []
         if data.interests:
-            lines.append(f"interests: {', '.join(data.interests)}")
-            added_any = True
+            additional_lines.append(f"interests: {', '.join(data.interests)}")
         if data.hints:
-            lines.append("hints (low-confidence — verify before relying on):")
-            lines += [f"- {h}" for h in data.hints]
-            added_any = True
-        if not added_any:
-            lines.append("# — empty")
+            additional_lines.append("hints (low-confidence — verify before relying on):")
+            additional_lines += [f"- {h}" for h in data.hints]
+        if additional_lines:
+            lines += ["", "## Additional"] + additional_lines
 
-        return "\n".join(lines)
+        return "\n".join(lines).lstrip("\n")
 
     def _render_case(self, case: dict, target_market: str, include_zone: bool) -> list:
         header_parts = [x for x in [case.get("company"), case.get("role"),
@@ -303,10 +345,14 @@ class ResumeParser:
         highlights = case.get("highlights") or []
         responsibilities = case.get("responsibilities") or []
 
+        # Rendered whenever it exists, not only for a case with nothing else. The old
+        # condition silently dropped the prose of any case that also had bullets, which
+        # is the ordinary shape of a hand-written project entry.
         ctx = case.get("context")
-        if ctx and not highlights and not responsibilities:
-            # Bare context-only case (e.g. an earlier role at the same company, no metrics)
+        if ctx:
             lines.append(f"Context: {ctx}")
+        for key, value in (case.get("notes") or {}).items():
+            lines.append(f"{key}: {value}")
 
         if include_zone and target_market != "western" and target_market != "global" and responsibilities:
             lines += ["", "#### Zone of Responsibility"]
@@ -392,7 +438,10 @@ class ResumeParser:
             '  "pitch": "1-2 sentence narrative summary/elevator pitch, only if the CV has one, else null",\n'
             '  "cases": [\n'
             '    {\n'
-            '      "type": "employment | education | project | certification | publication | volunteering | research",\n'
+            '      "type": "employment | education | credential | project | publication | '
+            'volunteering | award | other — credential covers certificates, licences and '
+            'courses; use other only when none of the rest fits, and say what it is in `label`",\n'
+            '      "label": "only for type=other — what this section of the CV is called",\n'
             '      "company": "Company / institution / project name",\n'
             '      "role": "Job title / degree / project role",\n'
             '      "period": "2022–2024",\n'

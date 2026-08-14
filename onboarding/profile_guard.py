@@ -29,10 +29,13 @@ from pathlib import Path
 # and a wizard step that only sets a region must stay allowed to save.
 SUBSTANCE_FIELDS = ("cases", "skills", "tools", "languages")
 
-# Markers `ResumeParser.to_md()` writes in place of content it does not have.
-# Their presence is what makes a rendered candidate.md a skeleton rather than a
-# profile — see onboarding/resume_parser.py.
-_SKELETON_MARKERS = ("# EMPTY — ", "MISSING — add", "# SKIPPABLE — ")
+# Placeholders `ResumeParser.to_md()` USED to write in place of content it did
+# not have. It no longer writes any of them (2026-08-14 — they were going into
+# the system prompt as if they were candidate facts), but files written before
+# that are still on disk, so a skeleton has to stay recognisable by them. Only
+# the ones that can appear mid-line matter here; the rest begin with '#' and are
+# skipped as comments/headings by the scan below.
+_SKELETON_MARKERS = ("# EMPTY — ", "MISSING — add", "MISSING — ", "# SKIPPABLE", "# HINT:")
 
 
 def substance_of(candidate: dict) -> int:
@@ -54,10 +57,26 @@ def md_looks_like_skeleton(markdown: str) -> bool:
     exactly why its wipe went unnoticed: with no candidate.json on disk there
     was no structured 'before' to compare against, so a substance check that
     only read the JSON would have found nothing to protect.
+
+    Asks whether the file carries any substance at all, rather than whether it
+    contains a known placeholder string. The marker-matching version could only
+    recognise skeletons the renderer of the day happened to produce; since that
+    renderer now writes nothing at all for an absent value, an emptied profile
+    is headings and blank lines, and matches no marker. A content predicate
+    survives the next change to the renderer too.
     """
     if not markdown or not markdown.strip():
         return True
-    return any(marker in markdown for marker in _SKELETON_MARKERS)
+    for raw in markdown.splitlines():
+        line = raw.strip()
+        # Headings, comments and the legacy managed-block markers are structure,
+        # not content: a file that is only structure is a skeleton.
+        if not line or line.startswith("#") or line.startswith("<!--"):
+            continue
+        if any(marker in line for marker in _SKELETON_MARKERS):
+            continue
+        return False
+    return True
 
 
 def existing_substance(data_dir: Path) -> int:
