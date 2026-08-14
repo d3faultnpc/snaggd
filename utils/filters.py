@@ -68,11 +68,23 @@ class StopFilters:
         return ", ".join(parts) if parts else "none"
 
 
-def patch_filters_json(data_dir: Path, *, stop_companies=None, stop_title_keywords=None,
-                        min_employer_rating=None, min_match=None) -> None:
+_UNSET = object()
+"""'Caller said nothing about this field.' Distinct from None, which means 'clear it'.
+
+None used to mean both, and the two callers that pass it mean the second: the CLI wizard's
+rating prompt says "Enter = no filter" and the GUI's says the same by leaving the box empty.
+Under the old contract either one silently kept whatever rating was already on disk, so a
+filter could be added and never removed. Nothing passed None meaning "skip" — omitting the
+argument is how that has always been expressed."""
+
+
+def patch_filters_json(data_dir: Path, *, stop_companies=_UNSET, stop_title_keywords=_UNSET,
+                        min_employer_rating=_UNSET, min_match=_UNSET) -> None:
     """Merge caller-supplied hard-filter rules into data/filters.json. Shared writer for
     the wizard (onboarding) and the Settings API (live per-profile edits) — same file,
-    same schema, single implementation instead of two copies drifting apart."""
+    same schema, single implementation instead of two copies drifting apart.
+
+    Omit an argument to leave that rule alone; pass None to remove it."""
     path = data_dir / "filters.json"
     try:
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -82,14 +94,17 @@ def patch_filters_json(data_dir: Path, *, stop_companies=None, stop_title_keywor
         data["_comment"] = "Machine-only stop rules. Edited by wizard/settings. Never sent to LLM."
     data.setdefault("stop_title_keywords", [])
     data.setdefault("stop_companies", [])
-    if stop_companies is not None:
-        data["stop_companies"] = stop_companies
-    if stop_title_keywords is not None:
-        data["stop_title_keywords"] = stop_title_keywords
-    if min_employer_rating is not None:
-        data["min_employer_rating"] = min_employer_rating
-    if min_match is not None:
-        data["min_match"] = min_match
+    if stop_companies is not _UNSET:
+        data["stop_companies"] = stop_companies or []
+    if stop_title_keywords is not _UNSET:
+        data["stop_title_keywords"] = stop_title_keywords or []
+    for key, value in (("min_employer_rating", min_employer_rating), ("min_match", min_match)):
+        if value is _UNSET:
+            continue
+        if value is None:
+            data.pop(key, None)
+        else:
+            data[key] = value
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 

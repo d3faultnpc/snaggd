@@ -367,10 +367,14 @@ class LLMAgent:
             "You are a job application assistant. "
             "Help craft personalized applications based on the candidate profile below.\n"
         ]
+        # Two files, and the loop skips either one silently when it is absent. That silence
+        # is load-bearing and also dangerous: a profile missing job_preferences.md gets no
+        # JOB PREFERENCES block and no warning, which is how GUI-built profiles ended up
+        # without stop categories. Only the CLI wizard writes that file; its sections belong
+        # in candidate.md, and the loop drops to one entry once they move.
         for filename, label in [
             ("candidate.md",       "CANDIDATE PROFILE"),
             ("job_preferences.md", "JOB PREFERENCES"),
-            ("tone_of_voice.md",   "TONE & STYLE"),
         ]:
             content = self._load_profile(filename)
             if content:

@@ -130,7 +130,6 @@ with patch.dict("os.environ", {"LLM_API_KEY": "test", "API_KEY": "test-api-key"}
 
     _expected_fields = {
         "SessionStartRequest": {"profile", "max_vacancies", "dry_run", "debug", "target_url"},
-        "ConfigPatchRequest": {"min_score", "max_vacancies", "max_skips"},
         "ResumeParseRequest": {"filename", "content_b64"},
         "MinMatchPatchRequest": {"min_match"},
         # overwrite (2026-08-12): opt-in acknowledgement that a save erases an
@@ -138,15 +137,31 @@ with patch.dict("os.environ", {"LLM_API_KEY": "test", "API_KEY": "test-api-key"}
         # skills, tools or languages is refused when the profile on disk has
         # them — see onboarding/profile_guard.py for the wipe that motivated it.
         "CandidateSaveRequest": {"profile", "candidate", "overwrite"},
+        # The hand-edit path for candidate.md (2026-08-14). Same overwrite rule as
+        # above and for the same reason: a cleared textarea is the hand-edit shape
+        # of a blank wizard form.
+        "CandidateMdSaveRequest": {"candidate_md", "overwrite"},
     }
     for model_name, expected in _expected_fields.items():
         model_cls = getattr(_api_module, model_name, None)
         if model_cls is None:
             check(f"api.py defines {model_name}", False)
             continue
+        # One-directional on purpose: a field appearing without being written down here
+        # is the thing worth catching. A field disappearing is caught by whatever used it.
         extra = set(model_cls.model_fields) - expected
         check(f"{model_name} has no fields beyond its documented set "
               f"(unexpected: {sorted(extra) or 'none'})", not extra)
+
+    # Removed 2026-08-14: a process-global setter, in a process serving several profiles,
+    # with no caller in any frontend bundle. min_score had already been taken out of it
+    # after a per-resume threshold turned out to be settable process-wide. GET stays.
+    check("PATCH /api/v1/config is gone, not merely unused",
+          not any(getattr(r, "path", None) == "/api/v1/config" and "PATCH" in getattr(r, "methods", set())
+                  for r in _api_module.app.routes))
+    check("GET /api/v1/config is still there — reading the resolved config mutates nothing",
+          any(getattr(r, "path", None) == "/api/v1/config" and "GET" in getattr(r, "methods", set())
+              for r in _api_module.app.routes))
 
 print()
 total = len(results)

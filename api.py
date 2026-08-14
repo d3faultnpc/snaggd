@@ -86,17 +86,6 @@ class SessionStartRequest(BaseModel):
     target_url: Optional[str] = None
 
 
-class ConfigPatchRequest(BaseModel):
-    # min_score is deliberately absent: the match threshold is per-resume, and
-    # its authority is the profile's own filters.json (min_match), reachable via
-    # PATCH /api/v1/profiles/{name}/min-match. A process-global setter here could
-    # silently override every profile at once in an API process that serves
-    # several — CONFIG.min_score survives only as the default for a profile that
-    # has never set one (see adapters/hh/adapter.py's threshold resolution).
-    max_vacancies: Optional[int] = None
-    max_skips: Optional[int] = None
-
-
 class ResumeParseRequest(BaseModel):
     filename: str
     content_b64: str
@@ -111,6 +100,11 @@ class CandidateSaveRequest(BaseModel):
     candidate: dict
     # Opt-in acknowledgement that this save erases an existing profile's content.
     # See onboarding/profile_guard.py for the wipe this exists to prevent.
+    overwrite: bool = False
+
+
+class CandidateMdSaveRequest(BaseModel):
+    candidate_md: str
     overwrite: bool = False
 
 
@@ -621,18 +615,14 @@ def config_read():
     }
 
 
-@app.patch("/api/v1/config", dependencies=[Depends(_require_key)])
-def config_patch(req: ConfigPatchRequest):
-    from config import CONFIG
-    if req.max_vacancies is not None:
-        CONFIG.max_vacancies_per_session = req.max_vacancies
-    if req.max_skips is not None:
-        CONFIG.max_skips = req.max_skips
-    return {
-        "updated": True,
-        "max_vacancies": CONFIG.max_vacancies_per_session,
-        "max_skips": CONFIG.max_skips,
-    }
+# PATCH /api/v1/config is gone (2026-08-14). It mutated the process-global CONFIG
+# singleton in a process that serves several profiles: max_vacancies and max_skips are
+# per-run settings, and a run already carries max_vacancies in its own start request.
+# min_score had already been removed from it for the same reason after it turned out a
+# per-resume threshold was being set process-wide. Nothing called the endpoint — verified
+# across every compiled frontend bundle — so what remained was a global setter with no
+# caller and one demonstrated way to go wrong. GET stays: reading the resolved config is
+# useful for diagnosis and mutates nothing.
 
 
 # ── Profile endpoints ─────────────────────────────────────────────────────────
@@ -694,21 +684,37 @@ def profile_detail(name: str):
     # the single-profile route (GET /api/v1/profiles' list stays lean), so the
     # GUI wizard can prefill a re-run instead of starting blank.
     candidate_path = data_dir / "candidate.json"
-    info["candidate"] = None
+    stored_json = None
     if candidate_path.exists():
         try:
-            info["candidate"] = json.loads(candidate_path.read_text(encoding="utf-8"))
+            stored_json = json.loads(candidate_path.read_text(encoding="utf-8"))
         except Exception:
             pass
     # Raw rendered text too — ProfileTab's markdown pane shows this directly,
     # not a re-render of the candidate dict above.
     md_path = data_dir / "candidate.md"
     info["candidate_md"] = md_path.read_text(encoding="utf-8") if md_path.exists() else None
+    # What the wizard opens with. Read from candidate.md, because that IS the profile —
+    # candidate.json only holds the answers of the last wizard run, and the two can
+    # disagree badly: a profile existed with 104 lines of real markdown next to a JSON
+    # whose every field was null. The wizard read the JSON and opened an empty seven-step
+    # form over a full profile, one click away from becoming it. The JSON now supplies
+    # only what markdown cannot carry (schema_version, locale, target_market, the finer
+    # case types). See onboarding/md_parse.py; the round trip is pinned by
+    # tests/test_candidate_md_roundtrip.py.
+    from onboarding.md_parse import merge_over_json
+    info["candidate"] = merge_over_json(info["candidate_md"] or "", stored_json) or stored_json
     # Live filters.json values, not candidate["rules"] above — that copy isn't read by the
     # apply loop (see wizard.py Step 6 comment); this is what adapter.py actually enforces.
+    # The wizard prefills its stop-rule fields from these, for the same reason: it must
+    # read from the file it writes to. It used to read candidate["rules"], and since
+    # 2026-08-14 it writes filters.json — prefilling from the other file would have shown
+    # an empty form over a profile with real rules, and the next save would have erased them.
     stop_filters = load_stop_filters(data_dir)
     info["min_match"] = stop_filters.min_match
     info["min_employer_rating"] = stop_filters.min_employer_rating
+    info["stop_companies"] = stop_filters.companies
+    info["stop_title_keywords"] = stop_filters.title_keywords
     return info
 
 
@@ -719,6 +725,49 @@ def profile_min_match_patch(name: str, req: MinMatchPatchRequest):
         raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
     patch_filters_json(data_dir, min_match=req.min_match)
     return {"updated": True, "min_match": req.min_match}
+
+
+@app.post("/api/v1/profiles/{name}/candidate-md", dependencies=[Depends(_require_key)])
+def profile_candidate_md_save(name: str, req: CandidateMdSaveRequest):
+    """Write candidate.md exactly as the user typed it.
+
+    There was no writer for this file at all until 2026-08-14 — the only path to
+    disk was the wizard, through the schema. Settings' own profile pane offered a
+    hand-edit box ("edit by hand below", hint `esc · save`) that put the edit in
+    component state and nowhere else: the text re-rendered, looked saved, and was
+    replaced by the file on the next fetch. candidate.md is what every agent
+    grounds on, and it is the only place to express a preference the schema has
+    no field for, so editing it by hand has to actually mean something.
+
+    Deliberately leaves candidate.json alone. candidate.md is the profile; the
+    JSON is the wizard's saved answers. A hand edit to a key the wizard also
+    manages will lose to the next wizard save of that key, and nothing else here
+    loses to a hand edit — which is the right way round for a file a person
+    opened on purpose.
+    """
+    from onboarding.profile_guard import backup_profile, md_looks_like_skeleton
+
+    data_dir = PROFILES_DIR / name
+    if not data_dir.is_dir():
+        raise HTTPException(status_code=404, detail=f"Profile '{name}' not found")
+
+    md_path = data_dir / "candidate.md"
+    existing = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    # Same rule as a wizard save, for the same reason: this may add or change,
+    # it may not empty. A cleared textarea is the hand-edit shape of the 2026-08-11
+    # blank-wizard wipe, and it is never what someone means by pressing save.
+    if md_looks_like_skeleton(req.candidate_md) and not md_looks_like_skeleton(existing) and not req.overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail="This save would empty the profile: the text carries no content and "
+                   "the profile on disk has some. Nothing was written. Pass overwrite=true "
+                   "if erasing it is genuinely what you want.",
+        )
+
+    stamp = backup_profile(data_dir, filenames=("candidate.md",))
+    text = req.candidate_md if req.candidate_md.endswith("\n") else req.candidate_md + "\n"
+    md_path.write_text(text, encoding="utf-8")
+    return {"saved": True, "profile": name, "backup": stamp}
 
 
 # ── Onboarding endpoints (GUI wizard) ───────────────────────────────────────
@@ -804,6 +853,29 @@ def onboarding_save(req: CandidateSaveRequest):
     stamp = backup_profile(data_dir)
 
     md_out.write_text(rendered_md, encoding="utf-8")
+
+    # Stop rules go to the file the apply loop actually reads. Until 2026-08-14 they were
+    # written into candidate.json's `rules` and nowhere else, so the wizard's own promises
+    # ("company or word — instant skip", "skip anything below this rating") were inert: the
+    # adapter reads filters.json, and nothing in this save path ever wrote it. One list feeds
+    # both machine tiers — title match (level 0, no page open) and company match (level 1,
+    # after open) — because the field asks for "a company or a word" and a person should not
+    # have to know which tier their answer lands in. See utils/filters.py.
+    # Keyed off the RAW payload, not `data.rules`, which the dataclass defaults to {} —
+    # so a caller that never mentions rules is indistinguishable there from one clearing
+    # them, and would silently wipe the profile's filters. Present means authoritative
+    # (empty clears, which is what an emptied box means); absent means leave alone.
+    raw_rules = req.candidate.get("rules") if isinstance(req.candidate.get("rules"), dict) else None
+    if raw_rules is not None:
+        patch_kwargs = {}
+        if "stop" in raw_rules:
+            stop_terms = [str(s).strip() for s in (raw_rules.get("stop") or []) if str(s).strip()]
+            patch_kwargs["stop_companies"] = stop_terms
+            patch_kwargs["stop_title_keywords"] = stop_terms
+        if "min_employer_rating" in raw_rules:
+            patch_kwargs["min_employer_rating"] = raw_rules["min_employer_rating"]
+        if patch_kwargs:
+            patch_filters_json(data_dir, **patch_kwargs)
 
     payload = dataclasses.asdict(data)
     payload.pop("suggested_queries", None)  # parser convenience field, not part of the schema
