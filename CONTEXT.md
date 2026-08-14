@@ -164,7 +164,7 @@ onboarding/
 **Two independent agents:**
 - **Playwright agent** — all browser interaction, zero LLM tokens
 - **LLM agent** (core/llm_agent.py) — cover / score / form fill / HR answers
-  - System prompt (cached per session): candidate.md + job_preferences.md + tone_of_voice.md ≈ 1300 tok
+  - System prompt (cached per session): candidate.md + job_preferences.md ≈ 1200 tok
   - Per vacancy user message: vacancy_text ≈ 600 tok
 
 ---
@@ -176,9 +176,8 @@ onboarding/
 ```
 python onboarding/wizard.py --profile <name>
 
-  Block A → parsers/resume_parser.py → data/profiles/<name>/candidate.md
+  Block A → onboarding/resume_parser.py → data/profiles/<name>/candidate.md
   Block B → data/profiles/<name>/job_preferences.md + data/profiles/<name>/search_urls.txt
-  Block C → data/profiles/<name>/tone_of_voice.md  (optional)
   Block D → .env  (API keys, HEADLESS, MAX_VACANCIES, MIN_SCORE, ...)
 
 python login.py → browser login → data/hh_cookies.json  (shared across profiles)
@@ -202,11 +201,8 @@ there is no flat/legacy `data/` fallback in any code path. `DATA_DIR` always end
 disk, no code path reads or writes there anymore since the law above landed:
 - `data/candidate.md` — original PM profile (updated 2026-05-29). Historical PM
   application context; will be merged into profile log at app launch.
-- `data/applied_log.json` — legacy PM log (pre-profiles). Holds PM applications before the
-  profiles refactor. Source of truth for historical PM statistics.
-  **Do not delete.** To be merged with `data/profiles/pm/applied_log.json` when app ships.
-- `data/llm_cache.json` / `data/cover_cache.json` — deleted 2026-07-12: pure regenerable cache
-  (unlike the two files above), stale since before the profiles split, no data lost.
+- `data/_legacy-flat/` — quarantined single-user-era files, read by nothing. See §12.
+- Caches (`llm_cache.json`, `cover_cache.json`) are per-profile and freely regenerable.
 
 ### Runtime (main.py)
 
@@ -215,7 +211,7 @@ python main.py --profile pm        # selects data/profiles/pm/ as DATA_DIR
 python main.py --list-profiles     # lists all available profiles
 
 LLMAgent._build_system_prompt()
-  ← candidate.md + job_preferences.md + tone_of_voice.md  (all from DATA_DIR)
+  ← candidate.md + job_preferences.md  (both from the profile directory)
   → cached system prompt for session
 
 HHAdapter.verify()
@@ -232,8 +228,7 @@ per vacancy loop:
   ┌─ open vacancy page → wait 15–25s (human-like)
   ├─ get_vacancy_text() → raw text
   │
-  ├─ LLMCover.generate(vacancy_text)        ← SCORING HAPPENS HERE, before any Apply click
-  │    → cover_letter (string)
+  ├─ LLMCover.score(vacancy_text)           ← SCORING HAPPENS HERE, before any Apply click
   │    → match_score (0–100)
   │    → matched_skills, gaps, signals
   │
@@ -247,7 +242,10 @@ per vacancy loop:
   ├─ [if SALARY_FORM or UNKNOWN] → log 'skipped_*', done
   │
   ├─ handler = FormHandlers.get_handler(form_type)
-  ├─ result = handler.process(page, cover_letter, vacancy_text=vacancy_text, **kwargs)
+  ├─ result = handler.process(page, vacancy_text=..., vacancy_id=..., llm_cover=..., **kwargs)
+  │    └─ the handler calls llm_cover.cover(...) itself, at the moment it has a field to
+  │       type into — chat.py, hh_modal.py and cover_only.py each do this at their own
+  │       typing point. A vacancy that never reaches a cover field never pays for a cover.
   └─ Logger.log_result() → <DATA_DIR>/applied_log.json
 ```
 
@@ -363,20 +361,25 @@ Built by `LLMAgent._build_system_prompt()` from three files in `DATA_DIR`:
 ```
 candidate.md          → "CANDIDATE PROFILE" section
 job_preferences.md    → "JOB PREFERENCES" section
-tone_of_voice.md      → "TONE & STYLE" section  (optional)
-Total: ≈ 1300 tokens
+Total: ≈ 1200 tokens
 ```
 `DATA_DIR` = `data/profiles/<name>/`, always — see the profile resolution law in §3.
 
 ### Per-Vacancy Calls
 
-1. `LLMCover.generate(vacancy_text)` → calls two LLM endpoints:
-   - `LLMAgent.score_vacancy(text)` → `{score: 0–100, matched_skills: [], gaps: [], signals: []}`
-   - `LLMAgent.generate_cover(text)` → cover letter string, same language as vacancy
+1. Two calls, deliberately not made together:
+   - `LLMCover.score(vacancy_text)` → `LLMAgent.score_vacancy(text)` →
+     `{score: 0–100, matched_skills: [], gaps: [], signals: []}`. Always, early, before
+     the Apply click, because it is what decides whether to click at all.
+   - `LLMCover.cover(vacancy_text, vacancy_id)` → `LLMAgent.generate_cover(text,
+     match_context=...)` → cover letter string, same language as vacancy. Called on demand
+     by whichever handler is about to type it in. Cached by vacancy_id so two layers asking
+     for "the" cover of one vacancy get identical text.
 
 2. `QuestionsHandler` (EMPLOYER_QUESTIONS form type):
    - Collects ALL visible fields with labels in one pass
-   - Cover-letter fields: pre-filled with the pre-generated cover letter directly
+   - Cover-letter-shaped fields: recognized by meaning, then filled from `llm_cover.cover()`
+     requested at that point
    - Remaining fields: one batch call `LLMAgent.fill_form(vacancy_text, fields)` → `{idx: answer}`
    - Prompt: `prompts/form_fill.md`. LLM uses candidate profile to answer in vacancy language.
    - No file-based Q&A bank. No per-question LLM calls.
@@ -390,7 +393,10 @@ Cover letters are generated in the same language as the vacancy. Instruction in 
 
 Two separate caches in `DATA_DIR`:
 - `llm_cache.json` — score cache, keyed by MD5(vacancy_text + model + candidate_hash)
-- `cover_cache.json` — cover letter cache, keyed by vacancy_id (duplicates always get fresh cover at temp>0)
+- `cover_cache.json` — cover letter cache, keyed by vacancy_id. A repeat request for the
+  same vacancy returns the cached text, so two layers that both need "the" cover of one
+  vacancy type the same thing. Sampling is left at the provider default: `temperature` is
+  not set anywhere in `core/llm_agent.py` or `llm_cover.py`.
 
 ---
 
@@ -398,17 +404,21 @@ Two separate caches in `DATA_DIR`:
 
 **File:** `onboarding/resume_parser.py` — both `ResumeParser` class and `ResumeData` dataclass live here.
 **Formats:** PDF (multimodal LLM, no local lib), DOCX (python-docx), PNG/JPG (multimodal), .md
-**Output:** `<DATA_DIR>/candidate.md` (rendered text, system prompt, wrapped in
-  `<!-- snaggd:start/end -->` managed-block markers — content after the end marker is a user's own
-  free-text and survives re-renders) + `<DATA_DIR>/candidate.json` (structured source of truth,
-  written by wizard Step 1; `ResumeData` mirrors this shape 1:1 via `dataclasses.asdict()`).
-  Schema rewritten session 42 (2026-07-11): nested `identity/career_profile/logistics/search/
-  rules/cases[]` shape, replaces old flat fields (`jobs`/`side_projects`/`contacts: dict`/etc).
-  Rendering fixes session 44 (2026-07-12): `case["url"]` now actually renders (was extracted but
-  silently dropped); bare domains (`github.com/x`) get `https://` prepended via `_ensure_https()`
-  so they auto-link in standard MD viewers; the `# completeness: X% | source: Y | updated: Z`
-  header line was removed entirely — pure metadata already in `candidate.json`'s own fields,
-  no prompt uses it, cost tokens for zero function.
+**Output:** `<DATA_DIR>/candidate.md` (the profile every agent reads) + `<DATA_DIR>/candidate.json`
+  (the wizard's saved answers; `ResumeData` mirrors its shape 1:1 via `dataclasses.asdict()`).
+
+  `to_md()` merges into whatever `candidate.md` already holds, section by section, and inside a
+  keyed section key by key: **what the renderer emits wins, what it does not emit survives**. So a
+  key the schema has never heard of — `not_looking_for`, `relocation_cities`, a salary table keyed
+  by domain, a note telling the form-filler how to answer — outlives every wizard save. The rule
+  reads unambiguously only because the renderer writes nothing at all for an absent value: no
+  placeholders, no hints, no `SKIPPABLE` markers. Guidance belongs in the wizard UI; this file goes
+  into the system prompt verbatim, so anything written here is read as a candidate fact.
+  See `onboarding/md_merge.py`, `tests/test_candidate_md_merge.py`.
+
+  Schema shape: nested `identity/career_profile/logistics/search/rules/cases[]`. `case["url"]`
+  renders; bare domains (`github.com/x`) get `https://` prepended via `_ensure_https()` so they
+  auto-link in standard MD viewers.
 **Prompt:** inline in `_extraction_prompt()` — no `prompts/resume_parser.md` file.
 **Smoke test:** `python scripts/sanity_parser.py`
 
@@ -434,11 +444,8 @@ confirmation prompt (if the live file already exists) required to promote.
 **Run:** `python onboarding/wizard.py --profile <name>` (full onboarding, steps 1-7 in order) or
 `--step N` (single step, 1-7) or `--setup-keys` (`.env` only, profile-agnostic)
 
-Rewritten session 44 (2026-07-12) from a 4-block CLI model (Block A/B/C/D) to a 7-step,
-`candidate.json`-first model. The old blocks are gone from the CLI surface entirely — a clean
-cut, not a compat shim: `block_a`/its helpers were deleted outright once steps 1-6 replaced
-them; `block_b`/`block_c`/`block_d` survive only as internal helpers steps 5/6 and `--setup-keys`
-still call, no longer independently reachable from the CLI.
+Seven steps, `candidate.json`-first. `block_b`/`block_d` exist only as internal helpers that
+steps 6 and `--setup-keys` call; neither is independently reachable from the CLI.
 
 | Step | What it does | Writes |
 |------|--------------|--------|
@@ -446,7 +453,7 @@ still call, no longer independently reachable from the CLI.
 | 2. Identity | Review/edit `identity.*` + `pitch` — shows current values as defaults, Enter keeps them | `candidate.json` |
 | 3. History | Review/edit employment + education cases — edit existing by number or `new` to add | `candidate.json` |
 | 4. Projects | Same case-review UI as Step 3, filtered to `project`/`certification`/`publication`/`volunteering`/`research` types — the split mirrors `resume_parser.py`'s own render-time bucketing exactly (`_PROJECT_TYPES`), so wizard-side and render-side classification can't drift apart | `candidate.json` |
-| 5. Skills | `skills[]`/`tools[]`/`languages[]` + `career_profile` (`role_type`/`edge`/`aspiration`), optional tone-of-voice tail | `candidate.json` (+ `tone_of_voice.md` if opted in) |
+| 5. Skills | `skills[]`/`tools[]`/`languages[]` + `career_profile` (`role_type`/`edge`/`aspiration`) | `candidate.json` |
 | 6. Search & Rules | Wraps the pre-existing job-prefs flow unchanged (stop lists, wise-link auto-detect, search directions, salary) — writes the same real files it always did, then additionally dual-writes `search`/`rules`/`logistics` into `candidate.json` | `job_preferences.md` + `search_urls.txt` + `filters.json` + `candidate.md` (salary patch) + `candidate.json` |
 | 7. HH Connect | Subprocess wrapper around `login.py` (unmodified) — asks for confirmation first, verifies `hh_resumes.json` actually has entries afterward rather than trusting `login.py`'s exit code alone (that code only reflects the cookie-save phase) | `data/hh_cookies.json` + `data/hh_resumes.json` (shared across profiles, not written to the profile dir) |
 
@@ -584,33 +591,28 @@ Each profile lives in `data/profiles/<name>/`. Created by `wizard.py --profile <
 | File | Created by | Notes |
 |------|-----------|-------|
 | `data/profiles/<name>/candidate.md` | wizard Step 1 | candidate profile for LLM system prompt |
-| `data/profiles/<name>/candidate.json` | wizard Step 1 (+ steps 2-6 edit it) | structured source of truth, session 44. Not yet read by the live apply loop (§9) |
+| `data/profiles/<name>/candidate.json` | wizard Step 1 (+ steps 2-6 edit it) | the wizard's saved answers, so a re-run prefills instead of opening blank. Deliberately not a runtime input: the apply loop reads `candidate.md`, `filters.json` and `search_urls.txt` and nothing else. `tests/test_settings_reach_engine.py` pins that |
 | `data/profiles/<name>/job_preferences.md` | wizard Step 6 | role, city, salary, stop filters |
 | `data/profiles/<name>/search_urls.txt` | wizard Step 6 | HH search URLs for this profile |
-| `data/profiles/<name>/tone_of_voice.md` | wizard Step 5 (optional tail) | cover letter tone (optional) |
 | `data/profiles/<name>/applied_log.json` | runtime (logger.py) | per-profile application log |
 | `data/profiles/<name>/llm_cache.json` | runtime (llm_cover.py) | MD5 cache per profile |
 | `data/profiles/<name>/cover_cache.json` | runtime (llm_cover.py) | cover letter cache keyed by vacancy_id |
 | `data/hh_cookies.json` | login.py (via wizard Step 7) | **shared** across profiles (one HH account) |
 | `data/hh_resumes.json` | login.py (via wizard Step 7) | [{title, uuid}] for all HH resumes; used by wizard Step 6 for auto-wise-link |
 
-As of session 44: neither that profile nor `support` has a real `candidate.json` yet (only `candidate.md`,
-pre-schema format) — migration to the new schema is a deliberate, explicit, user-run action
-(`scripts/migrate_candidate.py`), not automatic. See §7/§8/§9.
+Migration of a pre-schema profile to `candidate.json` is a deliberate, explicit, user-run
+action (`scripts/migrate_candidate.py`), never automatic. See §7/§8/§9.
 
-Current profiles: that profile, `support`.
+### `data/_legacy-flat/`
 
-### Legacy flat files (pre-profiles, data/ root)
+Everything the single-user era kept loose in `data/` is quarantined here. Nothing reads it:
+every runtime component takes an explicit `data_dir` and resolves a profile directory, which
+`tests/test_data_dir_is_explicit.py` enforces. The directory exists so that a component that
+somehow bypasses profile resolution fails instead of silently reading plausible-looking data
+from the wrong place. `data/_legacy-flat/WHY-THIS-EXISTS.md` states the terms of its removal.
 
-**Do not delete** — contain historical data to be merged at app launch.
-
-| File | Status | Notes |
-|------|--------|-------|
-| `data/candidate.md` | Legacy PM profile (updated 2026-05-29) | Historical PM candidate context. Will be merged. |
-| `data/applied_log.json` | Legacy PM log (pre-profiles) | PM applications before profiles refactor. Merge target at app launch with `data/profiles/pm/applied_log.json` for unified statistics. |
-| `data/applied_log.json.bak` | Backup | Keep. |
-| `data/resume_facts.md` | Legacy LLM-parsed output | Pre-profiles. Superseded by `profiles/pm/candidate.md`. |
-| `data/job_preferences.md` | Legacy PM prefs | Pre-profiles. |
+`data/hh_cookies.json` and `data/hh_resumes.json` stay at the root and are NOT legacy — one HH
+account per person with several resumes inside it makes them account-scoped, not profile-scoped.
 
 ### Code files (committed)
 
