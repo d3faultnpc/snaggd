@@ -715,6 +715,10 @@ def profile_detail(name: str):
     info["min_employer_rating"] = stop_filters.min_employer_rating
     info["stop_companies"] = stop_filters.companies
     info["stop_title_keywords"] = stop_filters.title_keywords
+    # Same rule, one file over: semantic categories are read back from where the
+    # save writes them — candidate.md — so a re-run of the wizard prefills what is
+    # actually in force rather than an older copy of it.
+    info["stop_categories"] = stop_filters.categories
     return info
 
 
