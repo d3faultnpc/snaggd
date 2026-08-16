@@ -105,11 +105,16 @@ def section(title: str):
 
 
 def _llm_client():
+    """The parser's LLM transport, routed through the gateway rather than a raw
+    OpenAI client — one home for per-call policy and instrumentation, so the CV
+    parse is no longer the only call nobody can see. The agent here reads no
+    profile content: the resume being parsed is the input."""
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
         return None
-    from openai import OpenAI
-    return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+    from app_paths import get_data_root
+    from core.llm_agent import GatewayClient, LLMAgent
+    return GatewayClient(LLMAgent(data_dir=get_data_root()), call_type="resume_parse")
 
 
 # ── Helpers: file patchers ────────────────────────────────────────────────────

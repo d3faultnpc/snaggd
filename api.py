@@ -791,8 +791,14 @@ def onboarding_parse(req: ResumeParseRequest):
     except Exception:
         raise HTTPException(status_code=400, detail="content_b64 is not valid base64")
 
-    from openai import OpenAI
-    client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+    # Through the gateway, not a raw OpenAI client: that is the single place
+    # per-call policy and instrumentation live, and the CV parse used to be the
+    # one call it could not see. The agent is a transport only — it never reads
+    # candidate.md, since the resume being parsed IS the input and onboarding
+    # runs before any profile content exists.
+    from app_paths import get_data_root
+    from core.llm_agent import GatewayClient, LLMAgent
+    client = GatewayClient(LLMAgent(data_dir=get_data_root()), call_type="resume_parse")
 
     tmp_path = None
     try:

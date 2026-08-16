@@ -18,7 +18,6 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from openai import OpenAI
 from onboarding.resume_parser import ResumeParser
 
 BASE_DIR = Path(__file__).parent.parent
@@ -33,10 +32,12 @@ if not resume_file.exists():
     print(f"ERROR: file not found: {resume_file}")
     sys.exit(1)
 
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=api_key,
-)
+# Same gateway every other LLM call goes through, so this sanity check
+# exercises the real route rather than a private one.
+from app_paths import get_data_root
+from core.llm_agent import GatewayClient, LLMAgent
+
+client = GatewayClient(LLMAgent(data_dir=get_data_root()), call_type="resume_parse")
 
 print(f"Parsing: {resume_file.name}")
 print(f"  TEXT_MODEL  = {ResumeParser.TEXT_MODEL} (this file)")

@@ -69,6 +69,20 @@ _expected_llm_agent_module_names = {
     "_PROMPTS_DIR", "_MAX_VACANCY_CHARS", "_SCORE_PLACEHOLDER_TEXT",
     "_PLACEHOLDER_TOKEN_RE", "_CALL_TYPE_NARRATION", "_CALL_SEQ",
     "_SESSION_REPORTER", "set_session_reporter", "LLMAgent",
+    # Per-call observability (2026-08-16): records what a call actually did —
+    # whether the reply was cut off at max_tokens, whether json_repair had to
+    # rescue it. Local facts about a local call; no transport, tier or billing
+    # concept enters through them, which is what this guard is for.
+    "_TRUNCATED", "LAST_CALL", "_note_call", "_note_json_repair",
+    # Sampling temperature stated per call type (2026-08-16) — a local property
+    # of a local call, same as max_tokens beside it.
+    "_STRUCTURED_TEMPERATURE", "_PROSE_TEMPERATURE", "_CALL_TEMPERATURE",
+    "_temperature_for",
+    # GatewayClient: the raw-client interface ResumeParser expects, routed
+    # through _chat_completion so the CV parse stops being the one call with a
+    # private route. Deliberately transport-agnostic — it knows only that an
+    # agent has a gateway.
+    "GatewayClient",
 }
 _extra_module_names = _top_level_defined_names(_llm_agent_src) - _expected_llm_agent_module_names
 check(f"core/llm_agent.py defines no module-level names beyond its documented set "

@@ -81,6 +81,80 @@ def set_session_reporter(reporter) -> None:
     _SESSION_REPORTER = reporter
 
 
+# ── Sampling temperature, stated per call type ───────────────────────────────
+# Never set before 2026-08-16: every call ran at whatever the provider defaults
+# to, which for most models is 1.0 — the most creative setting there is, applied
+# to scoring and to CV parsing alike.
+#
+# What that cost: the same vacancy scored twice returned different numbers, so a
+# MIN_SCORE gate was a coin flip for anything near the threshold; the same CV
+# parsed twice produced a different structure, which makes any acceptance metric
+# over a corpus unmeasurable — you cannot tell a prompt change from a re-roll.
+#
+# Two values, because there are two kinds of call. Structured calls answer with
+# JSON or a decision and want the likeliest answer every time. Prose calls are
+# written for a human, and there the spread is the point — which is also why
+# these two constants are the natural home for a future "strict → creative"
+# control: it moves _PROSE_TEMPERATURE and the tone instruction together, and by
+# construction cannot reach the structured calls.
+_STRUCTURED_TEMPERATURE = 0.0
+_PROSE_TEMPERATURE = 0.7
+_CALL_TEMPERATURE = {
+    "score": _STRUCTURED_TEMPERATURE,
+    "fill_form": _STRUCTURED_TEMPERATURE,
+    "modal_action": _STRUCTURED_TEMPERATURE,
+    "resume_parse": _STRUCTURED_TEMPERATURE,
+    "cover": _PROSE_TEMPERATURE,
+    "answer_question": _PROSE_TEMPERATURE,
+}
+
+
+def _temperature_for(call_type: str | None) -> float:
+    """The temperature for this call type. A call type nobody declared is a gap
+    in this table, not a licence to fall back to the provider's default — that
+    default is exactly the invisible state this table exists to end. It is
+    treated as structured and said out loud."""
+    if call_type in _CALL_TEMPERATURE:
+        return _CALL_TEMPERATURE[call_type]
+    print(f"   ⚠️  no temperature declared for call type {call_type!r} — "
+          f"using {_STRUCTURED_TEMPERATURE}; add it to _CALL_TEMPERATURE")
+    return _STRUCTURED_TEMPERATURE
+
+
+# ── Per-call observability ───────────────────────────────────────────────────
+# Everything that explains a bad answer is knowable here and used to be dropped
+# with the response object. Two facts in particular:
+#
+#   finish_reason == "length" — the reply was cut off at max_tokens. What comes
+#   back is not malformed, it is SHORT: the tail is simply missing, and every
+#   later frame sees a plausible answer.
+#
+#   a json_repair rescue — the reply was not valid JSON on its own. Repair then
+#   makes a truncated stump into a well-formed object, so the two failures
+#   compound into something indistinguishable from success.
+#
+# Recorded, not enforced: nothing here changes what a call returns.
+_TRUNCATED = "length"
+LAST_CALL: dict = {}
+
+
+def _note_call(*, model: str, max_tokens: int, finish_reason: str | None,
+               call_type: str | None = None, temperature: float | None = None) -> None:
+    LAST_CALL.update(model=model, max_tokens=max_tokens, finish_reason=finish_reason,
+                     call_type=call_type, temperature=temperature, json_repaired=False)
+    if finish_reason == _TRUNCATED:
+        print(f"   ⚠️  reply cut off at max_tokens={max_tokens} "
+              f"(model={model}, call={call_type or '?'}) — the tail is lost, not malformed")
+        if _SESSION_REPORTER is not None:
+            _SESSION_REPORTER.emit("The model's answer was cut short — some of it is missing.",
+                                   actor="llm", level="warn")
+
+
+def _note_json_repair(where: str) -> None:
+    LAST_CALL["json_repaired"] = True
+    print(f"   ⚠️  JSON repair fired ({where}) — the reply was not valid JSON on its own")
+
+
 class LLMAgent:
     # data_dir is required, deliberately. It used to default to CONFIG.data_dir,
     # which is resolved once at import from the DATA_DIR env var — a model that
@@ -213,9 +287,13 @@ class LLMAgent:
         print(f"   {_call_msg}")
         if _SESSION_REPORTER is not None and _gui_msg is not None:
             _SESSION_REPORTER.emit(_gui_msg, actor="llm")
+        temperature = _temperature_for(call_type)
         resp = self.client.chat.completions.create(
-            model=model, messages=messages, max_tokens=max_tokens,
+            model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
         )
+        _note_call(model=model, max_tokens=max_tokens, call_type=call_type,
+                   temperature=temperature,
+                   finish_reason=getattr(resp.choices[0], "finish_reason", None))
         return resp.choices[0].message.content or ""
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -500,6 +578,7 @@ class LLMAgent:
             if _HAS_JSON_REPAIR:
                 try:
                     parsed = json.loads(_repair_json(raw))
+                    _note_json_repair(LAST_CALL.get("call_type") or "unknown call")
                 except Exception:
                     parsed = None
 
@@ -512,3 +591,40 @@ class LLMAgent:
             print(f"   ⚠️ Model returned valid JSON of the wrong shape "
                   f"({type(parsed).__name__}) — using the fallback")
         return fallback
+
+
+class GatewayClient:
+    """Drop-in replacement for a raw OpenAI client's .chat.completions.create()
+    interface — routes through _chat_completion() instead of calling OpenRouter
+    directly, with no change needed at the caller's own call sites.
+
+    Exists so per-call policy has exactly one home. onboarding/resume_parser.py
+    takes a *client*, not an agent, and issued its own calls; the CV parse was
+    therefore the single call the gateway could not see — and it is the call
+    with by far the largest token ceiling, the one place a reply cut short is
+    quietly repaired into a shorter profile with no complaint anywhere.
+
+    Narrow on purpose: model/messages/max_tokens in, response.choices[0].
+    message.content out. Any other raw-client caller with that same shape can
+    use it.
+    """
+
+    def __init__(self, agent: "LLMAgent", call_type: str | None = None):
+        self._agent = agent
+        self._call_type = call_type
+
+    @property
+    def chat(self):
+        return self
+
+    @property
+    def completions(self):
+        return self
+
+    def create(self, *, model: str, messages: list, max_tokens: int):
+        content = self._agent._chat_completion(
+            model=model, messages=messages, max_tokens=max_tokens, call_type=self._call_type,
+        )
+        _Msg = type("_Msg", (), {"content": content})
+        _Choice = type("_Choice", (), {"message": _Msg()})
+        return type("_Response", (), {"choices": [_Choice()]})()

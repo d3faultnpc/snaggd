@@ -54,8 +54,11 @@ def _llm_client():
     api_key = os.getenv("LLM_API_KEY")
     if not api_key:
         return None
-    from openai import OpenAI
-    return OpenAI(base_url="https://openrouter.ai/api/v1", api_key=api_key)
+    # Same gateway every other LLM call goes through — a script that parses a
+    # CV should not be the one caller with its own private route.
+    from app_paths import get_data_root
+    from core.llm_agent import GatewayClient, LLMAgent
+    return GatewayClient(LLMAgent(data_dir=get_data_root()), call_type="resume_parse")
 
 
 # ── Legacy wizard-state reader (deterministic, no LLM) ────────────────────────
