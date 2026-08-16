@@ -469,6 +469,13 @@ class HHAdapter(SiteAdapter):
                 'matched_skills': llm_cover.last_matched_skills,
                 'gaps': llm_cover.last_gaps,
                 'signals': signals,
+                # The blocking category belongs in the record itself, not only in
+                # the human-readable `reason` line below. Without it a log entry
+                # said stop_match: null about the very vacancy it had blocked on
+                # stop_match, so blocks could not be counted or reviewed except by
+                # regex over prose — which is how a whole class of false blocks
+                # went unnoticed until one had a funny company name.
+                'stop_match': stop_match,
                 'company': company or '',
                 'employer_rating': employer_rating,
             }
