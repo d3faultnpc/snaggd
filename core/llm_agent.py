@@ -557,10 +557,10 @@ class LLMAgent:
         Both requirements come from reviewing every block one profile had made: of
         29, five were plainly wrong and one was not a category at all but a UI
         object's repr that had leaked into the reply, blocking a bank because a
-        non-empty string is truthy. The wrong ones shared a shape — an adjacent
-        domain read as the domain itself: a games studio, a payments company, a
-        payroll project at a bank, and a faith app whose company name resembled a
-        betting brand.
+        non-empty string is truthy. The wrong ones shared a shape — a
+        neighbouring field read as the field itself: products sharing users or
+        mechanics with a blocked category, a vendor selling tooling into one, and
+        an employer whose name merely resembled a brand in one.
 
         Undeclared category, missing basis or missing evidence all mean the same
         thing here: not a block. Erring toward applying is deliberate — a false

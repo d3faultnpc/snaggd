@@ -490,7 +490,8 @@ def block_b(append: bool = False) -> dict:
 
     stop_co   = ask_list("Stop-companies (companies you don't want to apply to)")
     stop_kw   = ask_list("Stop-keywords in vacancy titles (e.g. junior, intern)")
-    stop_cats = ask_list("Stop industries/domains — LLM semantic filter (e.g. gambling, adult, MLM, outsource)")
+    stop_cats = ask_list("Stop industries/domains — the semantic filter, in your own words "
+                         "(a domain you will not work in, however the posting words it)")
     min_rating_str = ask("Min employer HH rating to apply (1.0–5.0, e.g. 3.6, Enter = no filter)")
 
     # Load suggested queries from Step 1's parse (if available)

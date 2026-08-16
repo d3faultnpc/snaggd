@@ -21,14 +21,13 @@ A block means the application is never sent, so it has to rest on evidence, and
 your answer must say which kind:
 - "text" — the vacancy's own wording establishes it. Quote the phrase in
   stop_evidence.
-- "company_knowledge" — the text does not say it, but you know this employer
-  operates in that category. State the fact in stop_evidence, e.g. "builds
-  software for online casinos".
+- "company_knowledge" — the text does not say it, but you know this employer's
+  business is in that category. State the fact in stop_evidence.
 
 What is not evidence:
-- An adjacent domain. Video games, entertainment, loyalty and VIP programmes,
-  engagement mechanics, payments and high-risk fintech are not gambling.
-  Adjacency belongs in signals, never in a block.
+- A neighbouring field. A domain that shares users, mechanics, vocabulary or
+  regulation with a blocked category is not that category. Neighbouring belongs
+  in signals, never in a block.
 - A company whose CLIENT is in the blocked category. A B2B vendor is in its own
   business, not its customer's.
 - A company name that resembles a known brand in the category. Reason from what
@@ -118,13 +117,17 @@ Do NOT use them as strong match signals — they are table stakes, not evidence 
 Focus on domain depth, specific product or context expertise, and the candidate's actual
 track record that goes beyond the baseline for this type of role.
 
-stop_match examples, assuming "gambling" is on this candidate's own list:
-- Text says "iGaming platform" / "betting" / "casino" → stop_match "gambling",
-  stop_basis "text", stop_evidence the quoted phrase.
-- A bookmaker whose posting never says so → stop_match "gambling", stop_basis
-  "company_knowledge", stop_evidence what the company is known to operate.
-- A B2B analytics vendor whose clients include casinos → stop_match null,
-  signal "gambling_adjacent".
-- A mobile app for a faith community, a payroll project at a bank, a video game
-  with loyalty mechanics → stop_match null.
-- "gambling" not on this candidate's list → stop_match null, whatever the text says.
+stop_match examples. <CATEGORY> stands for whatever this candidate actually
+listed — the reasoning is identical for any of them, and a category not on their
+list is not a category at all:
+- The posting's own words put the employer in <CATEGORY> → stop_match
+  "<CATEGORY>", stop_basis "text", stop_evidence the quoted phrase.
+- The posting never says it, but you know this employer's business is <CATEGORY>
+  → stop_match "<CATEGORY>", stop_basis "company_knowledge", stop_evidence the
+  fact you are relying on.
+- A B2B vendor selling tooling INTO <CATEGORY> → stop_match null, and
+  "<CATEGORY>_adjacent" in signals.
+- A product in a neighbouring field — shared users, shared mechanics, shared
+  vocabulary — that is not itself <CATEGORY> → stop_match null.
+- <CATEGORY> is not on this candidate's list → stop_match null, whatever the
+  posting says.

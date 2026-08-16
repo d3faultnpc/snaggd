@@ -162,20 +162,21 @@ def run():
         cat_dir = root / "categories"
         cat_dir.mkdir(parents=True, exist_ok=True)
         cat_md = ResumeParser(None).to_md(ResumeData(
-            identity={"name": "T"}, rules={"stop_categories": ["gambling", "MLM"]}))
+            identity={"name": "T"}, rules={"stop_categories": ["example_category", "second_category"]}))
         (cat_dir / "candidate.md").write_text(cat_md, encoding="utf-8")
 
         check("a saved profile writes the stop_categories line",
-              "stop_categories: gambling, MLM" in cat_md)
+              "stop_categories: example_category, second_category" in cat_md)
         check("and the engine reads it back, normalised",
-              load_stop_filters(cat_dir).categories == ["gambling", "mlm"])
+              load_stop_filters(cat_dir).categories == ["example_category", "second_category"])
         check("the frame owns the key, so a hand-written line lands in one place",
               KEY_OWNERS.get("stop_categories") == "Career Profile")
 
         (cat_dir / "job_preferences.md").write_text(
-            "stop_categories:\n  - tobacco\n", encoding="utf-8")
+            "stop_categories:\n  - third_category\n", encoding="utf-8")
         check("a CLI-era profile's own categories are still read, not replaced",
-              load_stop_filters(cat_dir).categories == ["gambling", "mlm", "tobacco"])
+              load_stop_filters(cat_dir).categories ==
+              ["example_category", "second_category", "third_category"])
 
         bare = root / "declares-nothing"
         bare.mkdir(parents=True, exist_ok=True)

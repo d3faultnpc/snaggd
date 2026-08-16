@@ -7,10 +7,14 @@ DECLARED (the category is one the candidate themselves listed) and EVIDENCED
 Both rules come from reviewing every block one real profile had made. Of 29,
 five were plainly wrong and one was not a category at all — a UI object's repr
 had leaked into the reply, and a non-empty string is truthy, so a bank got
-blocked by `Panel(layout='column', ...)`. The wrong ones shared a shape: an
-adjacent domain read as the domain itself — a games studio, a payments company,
-a payroll project, and an app whose company name merely resembled a betting
-brand.
+blocked by `Panel(layout='column', ...)`. The wrong ones shared a shape: a
+neighbouring field read as the field itself — products sharing users or mechanics
+with a blocked category, a vendor selling tooling into one, and an employer whose
+name merely resembled a brand in one.
+
+The fixtures below use stand-in category names on purpose. A category is one
+person's own decision; baking a real one into a shipped test would quietly turn
+one user's preference into the product's example of what people refuse.
 
 Three correct blocks, though, rested on nothing in the posting at all: the
 employer was known to operate in the category and never said so. That is why
@@ -57,13 +61,13 @@ def _verdict(agent, **fields):
 
 # ── The vocabulary is the candidate's own list ───────────────────────────────
 print("\nOnly a declared category can block:")
-_agent = _agent_declaring("gambling", "mlm")
+_agent = _agent_declaring("example_category", "second_category")
 
-_r = _verdict(_agent, stop_match="gambling", stop_basis="text",
-              stop_evidence="the posting says 'iGaming platform'")
-check("a declared category with evidence blocks", _r["stop_match"] == "gambling")
+_r = _verdict(_agent, stop_match="example_category", stop_basis="text",
+              stop_evidence="the posting says 'the category, named outright'")
+check("a declared category with evidence blocks", _r["stop_match"] == "example_category")
 
-_r = _verdict(_agent, stop_match="crypto", stop_basis="text", stop_evidence="mentions tokens")
+_r = _verdict(_agent, stop_match="a_category_never_declared", stop_basis="text", stop_evidence="the posting mentions it")
 check("a category the candidate never declared does not block", _r["stop_match"] is None)
 
 _r = _verdict(_agent, stop_match="Panel(layout='column', items=[], background='transparent')",
@@ -71,32 +75,32 @@ _r = _verdict(_agent, stop_match="Panel(layout='column', items=[], background='t
 check("a leaked object repr is not a category and blocks nothing",
       _r["stop_match"] is None)
 
-_r = _verdict(_agent_declaring(), stop_match="gambling", stop_basis="text",
-              stop_evidence="says casino")
+_r = _verdict(_agent_declaring(), stop_match="example_category", stop_basis="text",
+              stop_evidence="the posting says so")
 check("a profile that declares nothing blocks nothing", _r["stop_match"] is None)
 
-_r = _verdict(_agent, stop_match="  GAMBLING  ", stop_basis="text", stop_evidence="says casino")
+_r = _verdict(_agent, stop_match="  EXAMPLE_CATEGORY  ", stop_basis="text", stop_evidence="the posting says so")
 check("case and stray spacing do not decide whether a rule applies",
-      _r["stop_match"] == "gambling")
+      _r["stop_match"] == "example_category")
 
 
 # ── A block must say what it rests on ────────────────────────────────────────
 print("\nA block must say what it rests on:")
-_r = _verdict(_agent, stop_match="gambling")
+_r = _verdict(_agent, stop_match="example_category")
 check("no basis at all → not a block", _r["stop_match"] is None)
 
-_r = _verdict(_agent, stop_match="gambling", stop_basis="text", stop_evidence="   ")
+_r = _verdict(_agent, stop_match="example_category", stop_basis="text", stop_evidence="   ")
 check("empty evidence → not a block", _r["stop_match"] is None)
 
-_r = _verdict(_agent, stop_match="gambling", stop_basis="vibes", stop_evidence="feels like it")
+_r = _verdict(_agent, stop_match="example_category", stop_basis="vibes", stop_evidence="feels like it")
 check("a basis outside the two allowed kinds → not a block", _r["stop_match"] is None)
 
-_r = _verdict(_agent, stop_match="gambling", stop_basis="company_knowledge",
-              stop_evidence="the employer runs an online casino")
+_r = _verdict(_agent, stop_match="example_category", stop_basis="company_knowledge",
+              stop_evidence="the employer's business is that category")
 check("a block on company knowledge is allowed — three real correct ones were",
-      _r["stop_match"] == "gambling" and _r["stop_basis"] == "company_knowledge")
+      _r["stop_match"] == "example_category" and _r["stop_basis"] == "company_knowledge")
 check("and the fact behind it is kept, since the posting cannot confirm it later",
-      _r["stop_evidence"] == "the employer runs an online casino")
+      _r["stop_evidence"] == "the employer's business is that category")
 
 
 # ── The prompt no longer teaches the mistake ─────────────────────────────────
@@ -104,9 +108,12 @@ print("\nThe prompt no longer teaches recognition by name:")
 _prompt = (_REPO_ROOT / "prompts" / "match_scoring.md").read_text(encoding="utf-8")
 check("no example telling the model to block a company by its name alone",
       "with no explicit keyword" not in _prompt)
+check("and no real category is baked in as the product's own example",
+      not any(w in _prompt.lower() for w in ("gambling", "casino", "betting", "igaming", "mlm")))
 check("name resemblance is named as NOT evidence",
       "resembles a known brand" in _prompt or "what its name sounds like" in _prompt)
-check("adjacency is named as NOT evidence", "Adjacency belongs in signals" in _prompt)
+check("a neighbouring field is named as NOT evidence",
+      "Neighbouring belongs\nin signals" in _prompt or "Neighbouring belongs" in _prompt)
 check("a vendor is not its client's business", "CLIENT" in _prompt)
 check("uncertainty is told to produce null, not a block",
       "If unsure, do not block" in _prompt)
