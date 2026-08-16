@@ -75,6 +75,7 @@ else:
     os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
 
 from config import CONFIG
+from onboarding.profile_frame import KIND_HEADINGS, normalise_kind
 from onboarding.resume_parser import ResumeParser, ResumeData
 from utils.filters import patch_filters_json
 
@@ -298,11 +299,12 @@ def step_2_identity() -> bool:
 
 
 # ── Steps 3 & 4: History / Projects & Credentials ─────────────────────────────
-# Shared case-review UI, split by type: Step 3 = employment+education, Step 4 = the
-# project-family types. Split mirrors resume_parser.py's own _PROJECT_TYPES bucketing
-# exactly, so wizard-side and render-side classification never drift apart.
+# Shared case-review UI, split by kind: Step 3 = employment+education, Step 4 = the
+# rest. The vocabulary is profile_frame's, not a second copy of it — this used to
+# list "certification" and "research", which the frame retired, so the CLI offered a
+# person two values that normalise away the moment they are saved.
 
-_PROJECT_TYPES = {"project", "certification", "publication", "volunteering", "research"}
+_PROJECT_TYPES = set(KIND_HEADINGS) - {"employment", "education"}
 
 
 def _case_summary(case: dict) -> str:
@@ -312,8 +314,8 @@ def _case_summary(case: dict) -> str:
 
 def _edit_case_fields(case: dict) -> dict:
     case = dict(case)
-    case["type"] = ask("Type (employment/education/project/certification/publication/volunteering/research)",
-                        case.get("type") or "employment")
+    case["type"] = normalise_kind(
+        ask("Type (" + "/".join(KIND_HEADINGS) + ")", case.get("type") or "employment"))
     case["company"] = ask("Company / institution / project name", case.get("company") or "") or None
     case["role"] = ask("Role / degree / project role", case.get("role") or "") or None
     case["period"] = ask("Period (e.g. 2022–2024)", case.get("period") or "") or None

@@ -239,6 +239,23 @@ def run():
     check("an emptied JSON list does not win over real markdown content", len(merged["skills"]) == 2)
     check("JSON-only fields are kept", merged["target_market"] == "cis")
 
+    # ── An entry with nothing to name it still round-trips ────────────────
+    # The heading is a boundary md_parse reads; its text is content. When a case
+    # carries no company, role, period or domain, the heading is bare — it used
+    # to print "MISSING — company/role/period", and candidate.md goes into the
+    # system prompt verbatim, so an instruction meant for a person was read by
+    # the model as a fact about the candidate.
+    unnamed = ResumeParser(None).to_md(ResumeData(
+        identity={"name": "Test Person"},
+        cases=[{"type": "project",
+                "highlights": [{"label": None, "context": "Did a thing.", "results": []}]}],
+    ))
+    check("an unnamed entry renders a bare heading, not a note to the reader",
+          "###" in unnamed and "MISSING" not in unnamed)
+    _again = ResumeParser(None).to_md(
+        ResumeData(**parse_candidate_md(unnamed)), existing_content=unnamed)
+    check("and it survives a parse and a re-save unchanged", _again == unnamed)
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0

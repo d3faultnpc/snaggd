@@ -354,7 +354,12 @@ class ResumeParser:
     def _render_case(self, case: dict, target_market: str, include_zone: bool) -> list:
         header_parts = [x for x in [case.get("company"), case.get("role"),
                                      case.get("period"), case.get("domain")] if x]
-        lines = ["", f"### {' | '.join(header_parts) if header_parts else 'MISSING — company/role/period'}"]
+        # A bare "###" when nothing names this entry. The heading is a boundary
+        # md_parse reads; its text is content, and content that does not exist is
+        # not written. It used to print "MISSING — company/role/period", which
+        # went verbatim into the system prompt — an instruction for a person,
+        # read by the model as a fact about the candidate.
+        lines = ["", f"### {' | '.join(header_parts)}".rstrip()]
 
         if case.get("url"):
             lines.append(f"url: {_ensure_https(case['url'])}")
@@ -455,10 +460,13 @@ class ResumeParser:
             '  "pitch": "1-2 sentence narrative summary/elevator pitch, only if the CV has one, else null",\n'
             '  "cases": [\n'
             '    {\n'
-            '      "type": "employment | education | credential | project | publication | '
-            'volunteering | award | other — credential covers certificates, licences and '
-            'courses; use other only when none of the rest fits, and say what it is in `label`",\n'
-            '      "label": "only for type=other — what this section of the CV is called",\n'
+            '      "type": "EXACTLY ONE OF: employment | education | credential | project | '
+            'publication | volunteering | award | other. These eight and no others — a value '
+            'outside this list is discarded and the entry becomes other. credential covers '
+            'certificates, licences and courses. Use other only when none of the seven fits, '
+            'and then `label` is required",\n'
+            '      "label": "required for type=other, null otherwise — what this part of the CV '
+            'is called, in the CV\'s own words",\n'
             '      "company": "Company / institution / project name",\n'
             '      "role": "Job title / degree / project role",\n'
             '      "period": "2022–2024",\n'
@@ -492,8 +500,14 @@ class ResumeParser:
             "B — Bullet split: if a bullet has a project/initiative name followed by metrics, put the "
             "name in highlights[].label and the metrics as separate strings in highlights[].results. "
             "Do not put the project name inside results.\n"
+            "B1 — What a label is: a name that stands on its own, the way it would appear on a slide "
+            "or a badge ('Onboarding v2', 'Marketplace Checkout', 'ISO 27001 audit'). It is NOT the "
+            "thing a verb acts on: in 'grew the development team from 3 to 11', the label is not 'the "
+            "development team' — that bullet has no name, so leave label null and let the sentence be "
+            "the context. A label that only makes sense with the verb in front of it is not a label.\n"
             "C — Education: type='education', company=institution name, role=degree/program, "
-            "period=years. Short courses/certifications → type='certification'.\n"
+            "period=years. Short courses and certificates → type='credential', not a type of "
+            "their own.\n"
             "D — Responsibilities vs highlights: explicit responsibility/duty bullets with no single "
             "crisp metric → responsibilities[]. Bullets with a concrete before/after metric → "
             "highlights[]. An achievement cluster with several unrelated points and no one metric also "
