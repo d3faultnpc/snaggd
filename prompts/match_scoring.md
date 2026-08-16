@@ -57,14 +57,20 @@ domain, context, and product type. vacancy_role_type = this vacancy's contributi
 the candidate's role_type vocabulary where possible.
 
 Scoring guide:
-- 80–100: strong match — most key requirements met AND domain aligns with candidate's background
+- 80–100: strong match — most key requirements met, and the domain aligns with the candidate's
+  background where the profile states one (a profile that states no domain can still score here)
 - 60–79: good match — solid skills overlap, minor gaps or adjacent domain
 - 40–59: partial match — transferable skills but notable domain or experience gaps
 - 0–39: poor fit — major mismatch in skills or domain
 
 Domain alignment (apply BEFORE finalising the score):
-Compare the vacancy's primary domain and product type against the candidate's domain and
-background as described in CANDIDATE PROFILE.
+If CANDIDATE PROFILE states no domain or industry background at all — apply NO modifier, and do
+not treat the silence as a mismatch. Plenty of real professions are described without an industry
+(a barista, a warehouse worker, a nurse), and a profile that names none is not evidence of
+distance from this vacancy; it is evidence of nothing. Score on the skills and experience that
+are actually stated.
+Otherwise, compare the vacancy's primary domain and product type against the candidate's domain
+and background as described in CANDIDATE PROFILE.
 - Same or closely related domain / product type → no modifier
 - Adjacent: transferable skills, overlapping patterns → –5 to –10 points
 - Clear mismatch: substantial domain gap, different industry patterns → –20 to –30 points
@@ -92,10 +98,10 @@ If the candidate profile states a career aspiration (Career Profile → aspirati
 - Do NOT apply to a vacancy you are blocking (any non-null stop_match)
 
 Role type alignment (apply AFTER domain alignment):
-If candidate's role_type is absent, empty, or still the "SKIPPABLE" placeholder — apply NO
-modifier. Many real professions (e.g. a barista, a dentist) don't map onto this vocabulary at
-all, and an absent value is not evidence of a mismatch. Still classify vacancy_role_type below
-(used elsewhere, e.g. cover letter context) and set role_type_match to null.
+If candidate's role_type is absent or empty — apply NO modifier. Many real professions (e.g. a
+barista, a dentist) don't map onto this vocabulary at all, and an absent value is not evidence of
+a mismatch. Still classify vacancy_role_type below (used elsewhere, e.g. cover letter context)
+and set role_type_match to null.
 Otherwise: look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
 Classify the vacancy's required contribution style and compare it to the candidate's role_type.
 Use the same vocabulary as the candidate's role_type where possible.
