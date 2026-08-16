@@ -31,6 +31,23 @@ except ImportError:
 from onboarding import md_merge
 from onboarding.profile_frame import evidence_sections, normalise_kind
 
+# Output ceiling for one CV extraction. Raised from 2500 on 2026-08-16: a rich
+# resume — seven kinds of evidence, each case carrying its own prose — ran past
+# it, and a reply cut off at the ceiling is not malformed, just short. json_repair
+# then closed the stump into valid JSON, so the profile simply arrived with its
+# last cases missing and nothing anywhere said so.
+#
+# A ceiling is a cap, never a target: a model that finishes in 900 tokens still
+# finishes in 900 and is billed for 900. Raising this costs nothing on the
+# answers that were already fitting; it only stops charging the ones that were
+# not fitting a silent amputation.
+#
+# Truncation past this stays non-fatal by decision (2026-08-16): the user gets
+# the profile that was read rather than an error posing a problem they cannot
+# act on. It is recorded at the gateway (core.llm_agent._note_call), so how
+# often it still happens is a question with an answer.
+_PARSE_MAX_TOKENS = 5000
+
 _TOKEN_GUARD_CHARS = 6000
 
 
@@ -395,7 +412,7 @@ class ResumeParser:
         b64 = base64.b64encode(path.read_bytes()).decode()
         response = self.llm.chat.completions.create(
             model=self.MULTIMODAL_MODEL,
-            max_tokens=2500,
+            max_tokens=_PARSE_MAX_TOKENS,
             messages=[{
                 "role": "user",
                 "content": [
@@ -410,7 +427,7 @@ class ResumeParser:
     def _extract_with_llm(self, text: str, source_file: str) -> ResumeData:
         response = self.llm.chat.completions.create(
             model=self.TEXT_MODEL,
-            max_tokens=2500,
+            max_tokens=_PARSE_MAX_TOKENS,
             messages=[{
                 "role": "user",
                 "content": f"{self._extraction_prompt()}\n\nCV text:\n{text}",
