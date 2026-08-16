@@ -177,6 +177,8 @@ class LLMAgent:
         self._env_model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
         self._env_cover_model = os.getenv("COVER_MODEL", self._env_model)
         self._system_prompt: str | None = None
+        # Read lazily from the profile on first use — see _declared_stop_categories.
+        self._stop_categories: set | None = None
         # Client is built lazily (see `client` property below) and cached
         # against the key it was built for.
         self._client_cache: OpenAI | None = None
@@ -352,6 +354,8 @@ class LLMAgent:
             "gaps": [],
             "signals": [],
             "stop_match": None,
+            "stop_basis": None,
+            "stop_evidence": None,
         })
         # Sanitize score: some models embed emoji or extraneous text alongside the
         # integer (e.g. DeepSeek occasionally returns "紙 67"). Extract the first
@@ -511,7 +515,8 @@ class LLMAgent:
         """
         if self._is_template_echo(result):
             return {"score": 50, "matched_skills": [], "gaps": [], "signals": [],
-                    "stop_match": None, "vacancy_role_type": None}
+                    "stop_match": None, "stop_basis": None, "stop_evidence": None,
+                    "vacancy_role_type": None}
 
         score = result.get("score", 50)
         if not isinstance(score, int):
@@ -526,10 +531,63 @@ class LLMAgent:
                 result[key] = []
             else:
                 result[key] = [str(x) for x in val if isinstance(x, (str, int, float)) and str(x).strip()]
-        sm = result.get("stop_match")
-        if sm is not None and not isinstance(sm, str):
-            result["stop_match"] = None
+        result.update(self._validated_block(result))
         return result
+
+    def _declared_stop_categories(self) -> set:
+        """The candidate's own stop_categories — the entire vocabulary a block may
+        use. Read from the profile rather than hardcoded, because which categories
+        exist at all is the person's decision: a category nobody declared is not a
+        rule, it is the model improvising."""
+        if self._stop_categories is None:
+            try:
+                from utils.filters import load_stop_filters
+                self._stop_categories = {
+                    str(c).strip().lower()
+                    for c in load_stop_filters(self._data_dir).categories if str(c).strip()
+                }
+            except Exception:
+                self._stop_categories = set()
+        return self._stop_categories
+
+    def _validated_block(self, result: dict) -> dict:
+        """A block is the strongest thing done to a vacancy — no application is sent
+        at all — so it has to be declared and it has to be evidenced.
+
+        Both requirements come from reviewing every block one profile had made: of
+        29, five were plainly wrong and one was not a category at all but a UI
+        object's repr that had leaked into the reply, blocking a bank because a
+        non-empty string is truthy. The wrong ones shared a shape — an adjacent
+        domain read as the domain itself: a games studio, a payments company, a
+        payroll project at a bank, and a faith app whose company name resembled a
+        betting brand.
+
+        Undeclared category, missing basis or missing evidence all mean the same
+        thing here: not a block. Erring toward applying is deliberate — a false
+        block costs an opportunity the person never learns they had, while a
+        missed block costs one application they can see and stop.
+        """
+        none = {"stop_match": None, "stop_basis": None, "stop_evidence": None}
+        raw = result.get("stop_match")
+        if not isinstance(raw, str) or not raw.strip():
+            return none
+
+        category = raw.strip().lower()
+        declared = self._declared_stop_categories()
+        if category not in declared:
+            print(f"   ℹ️ not blocking on {raw!r} — this profile declares "
+                  f"{sorted(declared) or 'no stop categories'}")
+            return none
+
+        basis = result.get("stop_basis")
+        evidence = result.get("stop_evidence")
+        if basis not in ("text", "company_knowledge") or not (
+                isinstance(evidence, str) and evidence.strip()):
+            print(f"   ℹ️ not blocking on {category!r} — no basis or evidence given")
+            return none
+
+        return {"stop_match": category, "stop_basis": basis,
+                "stop_evidence": evidence.strip()}
 
     def _is_template_echo(self, result: dict) -> bool:
         """True if any field is match_scoring.md's own JSON-example placeholder — either the

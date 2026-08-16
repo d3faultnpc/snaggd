@@ -476,6 +476,12 @@ class HHAdapter(SiteAdapter):
                 # regex over prose — which is how a whole class of false blocks
                 # went unnoticed until one had a funny company name.
                 'stop_match': stop_match,
+                # Why the block was made, and on what. "company_knowledge" means
+                # the posting itself never said it — those are the ones worth
+                # looking at later, and the only way to find them again is to
+                # write the basis down at the moment it is known.
+                'stop_basis': llm_cover.last_stop_basis,
+                'stop_evidence': llm_cover.last_stop_evidence,
                 'company': company or '',
                 'employer_rating': employer_rating,
             }
@@ -484,12 +490,20 @@ class HHAdapter(SiteAdapter):
 
             # ── Level 2: semantic stop_match from LLM ───────────────────────────
             if stop_match:
-                self._say(f"   🚫 semantic_blocked: LLM detected '{stop_match}'", actor="llm",
-                          gui_message=f"[BLCK] not a fit ({stop_match})",
+                # A block made on company knowledge is marked as such everywhere it
+                # is shown. The posting does not support it, so it is the one kind
+                # of block a person can only check by looking the company up — and
+                # three of one profile's correct blocks were exactly this kind, so
+                # the answer is to flag them, not to stop making them.
+                _by_knowledge = llm_cover.last_stop_basis == "company_knowledge"
+                _mark = " · unconfirmed by the posting" if _by_knowledge else ""
+                self._say(f"   🚫 semantic_blocked: LLM detected '{stop_match}'"
+                          f"{' (company knowledge)' if _by_knowledge else ''}", actor="llm",
+                          gui_message=f"[BLCK] not a fit ({stop_match}){_mark}",
                           vacancy_id=str(index), company=company, position=title)
                 return {
                     'status': 'semantic_blocked',
-                    'reason': f"LLM detected blocked category: '{stop_match}'",
+                    'reason': f"LLM detected blocked category: '{stop_match}'{_mark}",
                     'scenario': 'skip',
                     'details': score_details,
                 }

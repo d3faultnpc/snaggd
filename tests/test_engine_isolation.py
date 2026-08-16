@@ -93,6 +93,11 @@ _expected_llm_agent_class_members = {
     "generate_cover", "score_vacancy", "fill_form", "ask_modal_action", "answer_question",
     "_chat_completion", "_system", "_build_system_prompt", "_build_match_hint",
     "_load_profile", "_load_prompt", "_sanitize_score_result", "_is_template_echo", "_parse_json",
+    # A block is only as good as its vocabulary and its evidence (2026-08-16):
+    # the categories come from the candidate's own profile, and an answer that
+    # cannot say what its block rests on does not get to make one. Both read
+    # local profile files; neither knows anything about transport or tiers.
+    "_declared_stop_categories", "_validated_block",
 }
 from core import llm_agent  # noqa: E402
 

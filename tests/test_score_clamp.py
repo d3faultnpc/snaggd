@@ -52,7 +52,8 @@ print("All tests passed.")
 from core.llm_agent import _SCORE_PLACEHOLDER_TEXT
 
 RESET_DEFAULTS = {"score": 50, "matched_skills": [], "gaps": [], "signals": [],
-                  "stop_match": None, "vacancy_role_type": None}
+                  "stop_match": None, "stop_basis": None, "stop_evidence": None,
+                  "vacancy_role_type": None}
 
 echo_cases = [
     ("signals contains placeholder",

@@ -70,6 +70,12 @@ class LLMCover:
         self.last_matched_skills: list = []
         self.last_gaps: list = []
         self.last_stop_match: Optional[str] = None
+        # Why the block was made: "text" (the posting says so) or
+        # "company_knowledge" (it does not, but the employer is known to operate
+        # there), plus the quote or fact behind it. A block on company knowledge
+        # cannot be re-checked from the record later unless the record says so.
+        self.last_stop_basis: Optional[str] = None
+        self.last_stop_evidence: Optional[str] = None
         self.last_vacancy_role_type: Optional[str] = None
         self.last_signals: list = []
         self.last_cover_template_name: Optional[str] = None
@@ -120,6 +126,8 @@ class LLMCover:
         self.last_matched_skills = score_data.get("matched_skills", [])
         self.last_gaps = score_data.get("gaps", [])
         self.last_stop_match = score_data.get("stop_match", None)
+        self.last_stop_basis = score_data.get("stop_basis", None)
+        self.last_stop_evidence = score_data.get("stop_evidence", None)
         self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
         self.last_signals = score_data.get("signals", [])
 
@@ -131,7 +139,7 @@ class LLMCover:
         self.cache[text_hash] = [
             None, "pending", self.last_signals, self.last_score,
             self.last_matched_skills, self.last_gaps, self.last_stop_match,
-            self.last_vacancy_role_type,
+            self.last_vacancy_role_type, self.last_stop_basis, self.last_stop_evidence,
         ]
         self._save_cache()
         print("   🤖 Scored via LLM")
@@ -193,6 +201,8 @@ class LLMCover:
         self.last_matched_skills = []
         self.last_gaps = []
         self.last_stop_match = None
+        self.last_stop_basis = None
+        self.last_stop_evidence = None
         self.last_vacancy_role_type = None
         self.last_signals = []
 
@@ -225,6 +235,9 @@ class LLMCover:
     def _restore_score_from_cache(self, entry: list) -> list:
         """Restores last_score / skills / gaps / stop_match / vacancy_role_type from cache.
 
+        Cache format v4: v3 + [stop_basis, stop_evidence] — appended, so a v3 entry
+        still restores; it simply has no basis to restore, which is the truth about
+        an entry written before a block had to state one.
         Cache format v3: [cover, template, signals, score, skills, gaps, stop_match, role_type]
         Cache format v2: [cover, template, signals, score, skills, gaps, stop_match]
         Cache format v1: [cover, template, signals, score, skills, gaps]
@@ -236,6 +249,8 @@ class LLMCover:
             self.last_gaps = entry[5]
             self.last_stop_match = entry[6]
             self.last_vacancy_role_type = entry[7] if len(entry) >= 8 else None
+            self.last_stop_basis = entry[8] if len(entry) >= 9 else None
+            self.last_stop_evidence = entry[9] if len(entry) >= 10 else None
         elif len(entry) >= 6:
             self.last_score = entry[3]
             self.last_matched_skills = entry[4]

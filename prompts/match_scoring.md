@@ -8,10 +8,35 @@ Use the HH Employer Rating as a signal in your assessment:
 - "no reviews on HH" → add signal "no_hh_reviews"
 Do NOT change the score based on rating alone — it is a signal, not a score modifier.
 
-Also check if the vacancy belongs to any blocked category listed under
-"stop_categories" in the candidate's JOB PREFERENCES (see system prompt).
-If a match is found, set stop_match to the matched category name.
-If the stop_categories list is absent or no match is found, set stop_match to null.
+Blocked categories (stop_match)
+
+The categories listed under "stop_categories" in the candidate's JOB PREFERENCES
+(see system prompt) are the entire vocabulary available to you here. If that list
+is absent, or the vacancy matches nothing on it, stop_match is null. Never invent
+a category and never return one that is not on that list — a value outside it is
+discarded and blocks nothing.
+
+A block means the application is never sent, so it has to rest on evidence, and
+your answer must say which kind:
+- "text" — the vacancy's own wording establishes it. Quote the phrase in
+  stop_evidence.
+- "company_knowledge" — the text does not say it, but you know this employer
+  operates in that category. State the fact in stop_evidence, e.g. "builds
+  software for online casinos".
+
+What is not evidence:
+- An adjacent domain. Video games, entertainment, loyalty and VIP programmes,
+  engagement mechanics, payments and high-risk fintech are not gambling.
+  Adjacency belongs in signals, never in a block.
+- A company whose CLIENT is in the blocked category. A B2B vendor is in its own
+  business, not its customer's.
+- A company name that resembles a known brand in the category. Reason from what
+  a company does, never from what its name sounds like.
+- Your own uncertainty. If unsure, do not block: return null and say why in
+  signals.
+
+If the signals you are producing for this vacancy contradict the category you
+are about to block on, do not block.
 
 Return ONLY valid JSON, no markdown fences. The block below is the SHAPE of your answer only —
 every `<PLACEHOLDER>` must be replaced with your real analysis; never copy a placeholder verbatim:
@@ -21,6 +46,8 @@ every `<PLACEHOLDER>` must be replaced with your real analysis; never copy a pla
   "gaps": ["<REAL_GAP_1>", "<REAL_GAP_2>"],
   "signals": ["<REAL_TAG_1>", "<REAL_TAG_2>", "<REAL_TAG_3>"],
   "stop_match": null,
+  "stop_basis": null,
+  "stop_evidence": null,
   "vacancy_role_type": "<REAL_CONTRIBUTION_STYLE>",
   "role_type_match": true
 }
@@ -62,7 +89,7 @@ If the candidate profile states a career aspiration (Career Profile → aspirati
   within a product whose primary domain is something else.
 - Apply only when the candidate profile has real delivery evidence for the aspiration domain — an
   aspiration statement alone, with no supporting cases, should not move the score.
-- Do NOT apply to hard-blocked categories (gambling, MLM, or any stop_match category)
+- Do NOT apply to a vacancy you are blocking (any non-null stop_match)
 
 Role type alignment (apply AFTER domain alignment):
 If candidate's role_type is absent, empty, or still the "SKIPPABLE" placeholder — apply NO
@@ -84,8 +111,13 @@ Do NOT use them as strong match signals — they are table stakes, not evidence 
 Focus on domain depth, specific product or context expertise, and the candidate's actual
 track record that goes beyond the baseline for this type of role.
 
-stop_match examples:
-- Vacancy at "1x Bet" or "Pin-Up" with no explicit keyword → stop_match: "gambling"
-- Vacancy mentioning "iGaming", "betting", "casino" → stop_match: "gambling"
-- Vacancy clearly in MLM/network marketing → stop_match: "mlm"
-- Normal vacancy → stop_match: null
+stop_match examples, assuming "gambling" is on this candidate's own list:
+- Text says "iGaming platform" / "betting" / "casino" → stop_match "gambling",
+  stop_basis "text", stop_evidence the quoted phrase.
+- A bookmaker whose posting never says so → stop_match "gambling", stop_basis
+  "company_knowledge", stop_evidence what the company is known to operate.
+- A B2B analytics vendor whose clients include casinos → stop_match null,
+  signal "gambling_adjacent".
+- A mobile app for a faith community, a payroll project at a bank, a video game
+  with loyalty mechanics → stop_match null.
+- "gambling" not on this candidate's list → stop_match null, whatever the text says.
