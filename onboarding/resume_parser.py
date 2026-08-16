@@ -283,6 +283,14 @@ class ResumeParser:
         penalize = [str(p).strip() for p in ((data.rules or {}).get("penalize") or []) if str(p).strip()]
         if penalize:
             career_lines.append(f"not_looking_for: {', '.join(penalize)}")
+        # Semantic categories the person refuses outright — the hard tier of the same
+        # preference `not_looking_for` states softly. Rendered here so it lands in the
+        # one file the model already reads, which is also the list the block validator
+        # checks an answer against: one line, one meaning, no second copy to drift.
+        stop_categories = [str(c).strip() for c in ((data.rules or {}).get("stop_categories") or [])
+                           if str(c).strip()]
+        if stop_categories:
+            career_lines.append(f"stop_categories: {', '.join(stop_categories)}")
         if career_lines:
             lines += ["", "## Career Profile"] + career_lines
 

@@ -10,8 +10,9 @@ Do NOT change the score based on rating alone — it is a signal, not a score mo
 
 Blocked categories (stop_match)
 
-The categories listed under "stop_categories" in the candidate's JOB PREFERENCES
-(see system prompt) are the entire vocabulary available to you here. If that list
+The categories on the candidate's own `stop_categories:` line in CANDIDATE PROFILE
+(or, for older profiles, under "stop_categories" in JOB PREFERENCES) are the entire
+vocabulary available to you here. If that list
 is absent, or the vacancy matches nothing on it, stop_match is null. Never invent
 a category and never return one that is not on that list — a value outside it is
 discarded and blocks nothing.

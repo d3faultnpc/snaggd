@@ -147,6 +147,40 @@ def run():
         check("no runtime module reads candidate.json — it is the wizard's saved answers, "
               f"not a source of configuration (offenders: {offenders or 'none'})",
               not offenders)
+
+        # ── Semantic stop categories ──────────────────────────────────────
+        # The audit's gap #7 in its final form. Nothing in the app ever wrote
+        # job_preferences.md, so a profile built there declared no semantic
+        # categories at all — and once a block has to name a declared category,
+        # that means the semantic tier does not exist for those users. The
+        # category now lives on a keyed line in candidate.md: the file the model
+        # already receives, so the list it reads and the list its answer is
+        # checked against are one line, not two copies that can disagree.
+        from onboarding.profile_frame import KEY_OWNERS
+        from onboarding.resume_parser import ResumeParser, ResumeData
+
+        cat_dir = root / "categories"
+        cat_dir.mkdir(parents=True, exist_ok=True)
+        cat_md = ResumeParser(None).to_md(ResumeData(
+            identity={"name": "T"}, rules={"stop_categories": ["gambling", "MLM"]}))
+        (cat_dir / "candidate.md").write_text(cat_md, encoding="utf-8")
+
+        check("a saved profile writes the stop_categories line",
+              "stop_categories: gambling, MLM" in cat_md)
+        check("and the engine reads it back, normalised",
+              load_stop_filters(cat_dir).categories == ["gambling", "mlm"])
+        check("the frame owns the key, so a hand-written line lands in one place",
+              KEY_OWNERS.get("stop_categories") == "Career Profile")
+
+        (cat_dir / "job_preferences.md").write_text(
+            "stop_categories:\n  - tobacco\n", encoding="utf-8")
+        check("a CLI-era profile's own categories are still read, not replaced",
+              load_stop_filters(cat_dir).categories == ["gambling", "mlm", "tobacco"])
+
+        bare = root / "declares-nothing"
+        bare.mkdir(parents=True, exist_ok=True)
+        check("a profile declaring nothing declares nothing — no invented defaults",
+              load_stop_filters(bare).categories == [])
     finally:
         api.PROFILES_DIR = real_profiles_dir
         shutil.rmtree(root, ignore_errors=True)

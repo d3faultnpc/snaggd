@@ -84,6 +84,12 @@ KEY_OWNERS: dict[str, str] = {
     "edge": "Career Profile",
     "aspiration": "Career Profile",
     "not_looking_for": "Career Profile",
+    # Semantic categories the person refuses outright. A preference of theirs, so it
+    # belongs in the file that describes them — and it has to be THIS file, because
+    # the model reads it here and the block validator reads the same line, instead of
+    # two copies in two files drifting apart. The machine tier (exact company and
+    # title matches) stays in filters.json, which never reaches the model at all.
+    "stop_categories": "Career Profile",
     "relocation": "Relocation & Work Format",
     "work_format": "Relocation & Work Format",
     "tools": "Tools",

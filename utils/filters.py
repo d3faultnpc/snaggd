@@ -36,7 +36,10 @@ class StopFilters:
     """Matched against company name from vacancy DOM. Hit → skip after page open."""
 
     categories: list = field(default_factory=list)
-    """Semantic categories read from job_preferences.md → injected into LLM scoring prompt."""
+    """Semantic categories the candidate declared — the entire vocabulary a semantic
+    block may use (see core.llm_agent._validated_block). Read from candidate.md's
+    `stop_categories:` line, and from job_preferences.md for profiles built by the
+    CLI before that line existed."""
 
     min_employer_rating: Optional[float] = None
     """Minimum employer review rating (e.g. 3.6 on a 1–5 scale). None = no filter."""
@@ -110,16 +113,42 @@ def patch_filters_json(data_dir: Path, *, stop_companies=_UNSET, stop_title_keyw
 
 def load_stop_filters(data_dir: Path) -> StopFilters:
     """
-    Load stop filter config from two sources:
+    Load stop filter config from three sources:
       1. data_dir/filters.json       → machine rules (title_kw, companies, min_rating)
-      2. data_dir/job_preferences.md → stop_categories (LLM-semantic, parsed as fallback)
+      2. data_dir/candidate.md       → stop_categories (LLM-semantic), the writable home
+      3. data_dir/job_preferences.md → stop_categories, for CLI-era profiles only
 
-    Either file may be absent — returns what's available, empty StopFilters if both missing.
+    candidate.md is where a semantic category is declared now, for one reason worth
+    stating: it is the file the model already receives verbatim. The list the model
+    reads and the list the validator checks its answer against are then the same
+    line, rather than two copies that can disagree. job_preferences.md is still read
+    and no longer written — a profile built before this keeps working untouched.
+
+    Any file may be absent — returns what's available, empty StopFilters if all missing.
     """
     filters = StopFilters()
     _load_from_json(data_dir / "filters.json", filters)
+    _load_categories_from_profile(data_dir / "candidate.md", filters)
     _load_categories_from_prefs(data_dir / "job_preferences.md", filters)
     return filters
+
+
+def _load_categories_from_profile(path: Path, filters: StopFilters) -> None:
+    """Read the `stop_categories:` line from candidate.md.
+
+    One key, one line, comma-separated — the frame's own rule for a keyed line, so
+    the wizard, a hand edit and a save all produce the same shape.
+    """
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.lower().startswith("stop_categories:"):
+            continue
+        for raw in line.split(":", 1)[1].split(","):
+            val = raw.strip().lower()
+            if val and val not in filters.categories:
+                filters.categories.append(val)
+        return
 
 
 # ── Private parsers ───────────────────────────────────────────────────────────
