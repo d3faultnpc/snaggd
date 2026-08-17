@@ -108,15 +108,22 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
             continue
         if case is None:
             continue
-        if line.startswith("#### "):
-            label = line[5:].strip()
+        # `####` on its own is the boundary between groups of bullets inside one
+        # entry, and it is all it is. Text after it is read for two reasons and
+        # two only: the frame's own `Zone of Responsibility`, and a file written
+        # before 2026-08-17, when the group's name lived in this line instead of
+        # on a `label:` below it. Read tolerantly, write strictly — one save
+        # converts the old shape, so this is one legacy form, not a table of them.
+        if line.startswith("####"):
+            label = line[4:].strip()
+            close_highlight()
             if label == "Zone of Responsibility":
-                close_highlight()
                 in_zone = True
             else:
-                close_highlight()
                 in_zone = False
-                highlight = {"label": label, "results": []}
+                highlight = {"results": []}
+                if label:
+                    highlight["label"] = label
             continue
         if line.startswith("url: "):
             case["url"] = line[5:].strip()
@@ -129,6 +136,10 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
                 case["context"] = ctx
             continue
         keyed = _KEY_RE.match(line)
+        # The group's name, now that it is content rather than a heading.
+        if keyed and keyed.group(1) == "label" and highlight is not None:
+            highlight["label"] = keyed.group(2).strip()
+            continue
         if keyed and highlight is None:
             # A prose line a person wrote themselves — `Architecture: …`, `Stack: …`.
             # The schema has one prose slot per case (`context`) and a real profile

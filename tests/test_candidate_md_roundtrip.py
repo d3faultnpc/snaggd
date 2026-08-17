@@ -256,6 +256,64 @@ def run():
         ResumeData(**parse_candidate_md(unnamed)), existing_content=unnamed)
     check("and it survives a parse and a re-save unchanged", _again == unnamed)
 
+    # ── A group of bullets is bounded whether or not it has a name ─────────
+    # Until 2026-08-17 the boundary WAS the name: `#### {label}` was written only
+    # when the model had invented one, so two unnamed groups in one entry came
+    # back as a single merged group (2 in, 1 out — reproduced deterministically,
+    # no model involved). The same line also made a model's phrase a heading in
+    # a person's own file. Split in two: `####` is the boundary and says nothing;
+    # `label:` is the name, written as content beside `Context:` and `url:`.
+    print("\nGroups of bullets inside one entry:")
+
+    def _groups(cases):
+        md = ResumeParser(None).to_md(ResumeData(
+            identity={"name": "Test Person"}, cases=cases))
+        back = parse_candidate_md(md)["cases"][0]
+        return md, (back.get("highlights") or [])
+
+    _two = [{"type": "employment", "company": "Example Corp", "role": "PM",
+             "highlights": [{"results": ["a", "b"]}, {"results": ["c"]}]}]
+    _md, _hl = _groups(_two)
+    check("two unnamed groups come back as two, not as one", len(_hl) == 2)
+    check("and the second one's bullet did not join the first",
+          _hl[0]["results"] == ["a", "b"] and _hl[1]["results"] == ["c"])
+
+    _one = [{"type": "employment", "company": "Example Corp", "role": "PM",
+             "highlights": [{"results": ["a", "b"]}]}]
+    _md, _hl = _groups(_one)
+    check("a single unnamed group needs no boundary line at all", "####" not in _md)
+    check("and still reads back as one group", len(_hl) == 1)
+
+    _named = [{"type": "employment", "company": "Example Corp", "role": "PM",
+               "highlights": [{"label": "Storefront MVP", "results": ["a"]}]}]
+    _md, _hl = _groups(_named)
+    check("a group's name is content, not a heading",
+          "#### Storefront MVP" not in _md and "label: Storefront MVP" in _md)
+    check("and it comes back attached to its group",
+          len(_hl) == 1 and _hl[0].get("label") == "Storefront MVP")
+    check("the only text ever written after #### is the frame's own",
+          all(l.strip() in ("####", "#### Zone of Responsibility")
+              for l in _md.splitlines() if l.startswith("####")))
+
+    # A file saved before the split still reads, and one save converts it —
+    # read tolerantly, write strictly, so this stays one legacy form rather
+    # than a table of accepted shapes.
+    _legacy = ("# PM\n\n## Identity\nname: Test Person\n\n## Work Experience\n\n"
+               "### Example Corp | PM\n\n#### Storefront MVP\n- a\n\n"
+               "#### Zone of Responsibility\n- own the roadmap\n")
+    _read = parse_candidate_md(_legacy)["cases"][0]
+    check("the old shape still names its group",
+          (_read.get("highlights") or [{}])[0].get("label") == "Storefront MVP")
+    check("and the frame's own heading still means responsibilities",
+          _read.get("responsibilities") == ["own the roadmap"])
+    _converted = ResumeParser(None).to_md(
+        ResumeData(**parse_candidate_md(_legacy)), existing_content=_legacy)
+    check("one save rewrites it into the new shape",
+          "#### Storefront MVP" not in _converted and "label: Storefront MVP" in _converted)
+    check("without losing anything on the way",
+          (parse_candidate_md(_converted)["cases"][0].get("highlights") or [{}])[0]
+          .get("label") == "Storefront MVP")
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0

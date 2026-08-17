@@ -429,10 +429,24 @@ class ResumeParser:
             lines += ["", "#### Zone of Responsibility"]
             lines += [f"- {r}" for r in responsibilities]
 
-        for h in highlights:
+        # A group's boundary and a group's name are two different things, and
+        # writing them as one line made the name load-bearing: a group only got a
+        # boundary when the model had named it, so two unnamed groups came back as
+        # one (reproduced: 2 in, 1 out). And the name, invented by the model, was
+        # a heading in a person's own file — the same "string IS the slot" the
+        # frame removed from `##` and never removed from here.
+        #
+        # So: `####` is the boundary and carries nothing; `label:` is the name,
+        # written as content among content, next to `Context:` and `url:`. The
+        # first group needs no separator — bullets straight under the entry
+        # already read back as one unnamed group — but a named one does, because
+        # its `label:` has to attach to a group rather than to the entry.
+        for index, h in enumerate(highlights):
             label, h_ctx, results = h.get("label"), h.get("context"), (h.get("results") or [])
+            if index > 0 or label:
+                lines += ["", "####"]
             if label:
-                lines += ["", f"#### {label}"]
+                lines.append(f"label: {label}")
             if h_ctx:
                 lines.append(f"Context: {h_ctx}")
             lines += [f"- {r}" for r in results]
