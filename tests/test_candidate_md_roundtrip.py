@@ -314,6 +314,23 @@ def run():
           (parse_candidate_md(_converted)["cases"][0].get("highlights") or [{}])[0]
           .get("label") == "Storefront MVP")
 
+    # ── Skills is read in both shapes it exists in ────────────────────────
+    # `to_md` writes skills as bullets and tools as a `tools:` line — the same
+    # kind of list, two shapes, adjacent in the file. A person editing Skills by
+    # hand writes what Tools taught them, and until 2026-08-17 `skills: a, b`
+    # matched nothing here: the section parsed to an empty list and the profile
+    # lost every skill it had, with no error anywhere.
+    print("\nSkills, however it was written:")
+    _bulleted = "# X\n\n## Identity\nname: N\n\n## Skills\n- python\n- sql\n"
+    _keyed_md = "# X\n\n## Identity\nname: N\n\n## Skills\nskills: python, sql\n"
+    _bare_md = "# X\n\n## Identity\nname: N\n\n## Skills\npython, sql\n"
+    check("bullets, as the wizard writes them",
+          parse_candidate_md(_bulleted).get("skills") == ["python", "sql"])
+    check("a `skills:` line, as someone copying the Tools section writes it",
+          parse_candidate_md(_keyed_md).get("skills") == ["python", "sql"])
+    check("and a bare list, as older files hold it",
+          parse_candidate_md(_bare_md).get("skills") == ["python", "sql"])
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0

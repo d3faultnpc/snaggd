@@ -216,7 +216,23 @@ def parse_candidate_md(markdown: str) -> dict:
     if salary:
         data["search"] = {"salary": salary}
 
+    # Two shapes, because two exist in the wild and only one of them was read.
+    # `to_md` writes skills as bullets and tools as a `tools:` line — the same
+    # kind of list, in two shapes, sitting next to each other in the file. So a
+    # person hand-editing Skills writes what Tools taught them, `skills: a, b`,
+    # and until 2026-08-17 that vanished entirely: nothing here matched, the key
+    # went nowhere, and the profile silently lost every skill it had. Read both.
+    # (Which shape the writer should emit is a separate, deliberate decision —
+    # changing it rewrites a section in every existing file.)
     skills = [l.strip()[2:].strip() for l in sec.get("Skills", []) if l.strip().startswith("- ")]
+    if not skills:
+        for raw in sec.get("Skills", []):
+            line = raw.strip()
+            if not line:
+                continue
+            m = _KEY_RE.match(line)
+            skills = _split_list(m.group(2) if m and m.group(1) == "skills" else line)
+            break
     if skills:
         data["skills"] = skills
 
