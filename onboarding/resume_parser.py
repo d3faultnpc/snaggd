@@ -100,8 +100,49 @@ def _ensure_https(url: str) -> str:
     return url
 
 
+# A contact is asked for bare and often comes back wearing its own label —
+# "Telegram: @x", "Email: x@y". Sniffing that string and then adding a label of
+# our own wrote `telegram: Telegram: @x` into the file, and the ones that missed
+# every branch (the space after the colon is enough to miss the email branch)
+# went through untouched, so `Email: x@y` became a line keyed `Email` — a key the
+# frame does not own, which `section_for_key` therefore files under Languages and
+# `md_parse` reads as part of the person's pitch. One label, ours, on a value
+# that carries none.
+_KNOWN_CONTACT_LABEL_RE = re.compile(
+    r"^(?:telegram|tg|e-?mail|mail|phone|tel|mobile|cell|github|linkedin|contact)"
+    r"\s*[:\-–—]\s*",
+    re.IGNORECASE,
+)
+
+# Any other word used as a label. Listing labels by name would only ever cover
+# the ones already seen — and the damage does not depend on which word it is,
+# only on a colon surviving into the file. What separates a label from a URI
+# scheme is the whitespace after the colon: `https://t.me/x` and `mailto:x` have
+# none and must come through untouched.
+_ANY_LABEL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9 _-]{0,20}:\s+")
+
+
+def _strip_contact_label(raw: str) -> str:
+    """Drop a label the source already wrote in front of the value."""
+    prev = None
+    out = raw.strip()
+    # "Contact: Telegram: @x" is one line wearing two labels. The loop terminates
+    # because every pass that changes the string also shortens it.
+    while out != prev:
+        prev = out
+        out = _KNOWN_CONTACT_LABEL_RE.sub("", out, count=1)
+        out = _ANY_LABEL_RE.sub("", out, count=1).strip()
+    return out
+
+
 def _typed_contact_line(raw: str) -> str:
-    """Type-sniff a raw contact string into a labeled line for MD rendering."""
+    """Type-sniff a raw contact string into a labeled line for MD rendering.
+
+    Whatever fails every branch is returned genuinely unlabeled, which is what
+    `md_parse` documents this function as doing: a bare single token reads back
+    as a contact, and only real prose falls through to the pitch.
+    """
+    raw = _strip_contact_label(raw)
     low = raw.lower()
     if "t.me/" in low or raw.startswith("@"):
         return f"telegram: {_ensure_https(raw)}"
