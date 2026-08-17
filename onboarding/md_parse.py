@@ -37,6 +37,7 @@ import re
 from onboarding.profile_frame import kind_for_heading
 
 _KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+_EMPTY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:\s*$")
 
 # `_typed_contact_line()`'s labels, inverted. Anything else in the Identity
 # section that is not one of these and not a known key is the pitch.
@@ -67,10 +68,19 @@ def _sections(markdown: str) -> tuple[str, dict[str, list[str]]]:
 
 
 def _keyed(body: list[str]) -> dict[str, str]:
+    """`key: value` lines, skipping keys that carry no value.
+
+    A named slot with nothing in it is structure, not an answer — the same
+    reading profile_guard's skeleton predicate takes, and the same one the
+    prompting layer already takes of an absent field (absence is neutral, it is
+    not evidence of a mismatch). Without it, a blank profile that names its slots
+    and fills none of them parses into `name: ""`, `location: ""` and a desired
+    salary of `default:` — answers nobody gave.
+    """
     out = {}
     for line in body:
         m = _KEY_RE.match(line.strip())
-        if m:
+        if m and m.group(2).strip():
             out[m.group(1)] = m.group(2).strip()
     return out
 
@@ -182,6 +192,10 @@ def parse_candidate_md(markdown: str) -> dict:
             if not line:
                 continue
             m = _KEY_RE.match(line)
+            # A key with nothing after it names a slot and fills none of it — see
+            # _keyed. Empty contact keys used to arrive as empty contacts.
+            if m and not m.group(2).strip():
+                continue
             if m and m.group(1) == "name":
                 identity["name"] = m.group(2).strip()
             elif m and m.group(1) == "location":
@@ -212,7 +226,9 @@ def parse_candidate_md(markdown: str) -> dict:
     if lg:
         data["logistics"] = lg
 
-    salary = "\n".join(l for l in sec.get("Desired Salary", []) if l.strip())
+    # Same rule as _keyed: a key with no value is a slot, not a number.
+    salary = "\n".join(l for l in sec.get("Desired Salary", [])
+                       if l.strip() and not _EMPTY_KEY_RE.match(l.strip()))
     if salary:
         data["search"] = {"salary": salary}
 

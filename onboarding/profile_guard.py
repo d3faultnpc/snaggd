@@ -22,6 +22,7 @@ candidate.json is therefore not an inert file — it is the next wipe of
 candidate.md, waiting for the user to touch any wizard step at all.
 """
 
+import re
 from pathlib import Path
 
 # The fields that carry a profile's actual substance. Identity, salary and
@@ -36,6 +37,8 @@ SUBSTANCE_FIELDS = ("cases", "skills", "tools", "languages")
 # the ones that can appear mid-line matter here; the rest begin with '#' and are
 # skipped as comments/headings by the scan below.
 _SKELETON_MARKERS = ("# EMPTY — ", "MISSING — add", "MISSING — ", "# SKIPPABLE", "# HINT:")
+# `name:` with nothing after it — a named slot, filled with nothing.
+_EMPTY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:\s*$")
 
 
 def substance_of(candidate: dict) -> int:
@@ -72,6 +75,13 @@ def md_looks_like_skeleton(markdown: str) -> bool:
         # Headings, comments and the legacy managed-block markers are structure,
         # not content: a file that is only structure is a skeleton.
         if not line or line.startswith("#") or line.startswith("<!--"):
+            continue
+        # A key with nothing after it is structure too — it names a slot and
+        # fills none of it, exactly like a heading. Without this, a blank profile
+        # written as its own keys with no values reads as substance, and is then
+        # allowed to overwrite a real one — the wipe this predicate exists to
+        # stop, arriving in the shape of an empty form rather than an empty file.
+        if _EMPTY_KEY_RE.match(line):
             continue
         if any(marker in line for marker in _SKELETON_MARKERS):
             continue
