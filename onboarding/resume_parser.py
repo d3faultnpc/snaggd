@@ -358,7 +358,19 @@ class ResumeParser:
 
         # ── Skills ────────────────────────────────────────────────────────
         if data.skills:
-            lines += ["", "## Skills"] + [f"- {s}" for s in data.skills]
+            # One shape for both lists of the same nature. Skills used to be
+            # bullets while Tools, the section directly below it, was a single
+            # `tools:` line — so the file taught two grammars for one kind of
+            # thing, and a person editing Skills by hand wrote the other one.
+            #
+            # The keyed line wins on all three counts that were weighed: it costs
+            # the same to read (18 real skills — 354 characters as bullets, 343 on
+            # one line, so nothing is paid for the compactness), it takes 2 lines
+            # instead of 19 in a pane a person scrolls, and every character in it
+            # is one they can type. A separator they cannot reach on a keyboard
+            # would make the file's own format something they can read and not
+            # write, which is the opposite of why this file is editable.
+            lines += ["", "## Skills", "skills: " + ", ".join(data.skills)]
 
         # ── Evidence, one section per kind that has anything in it ────────
         # One list in the schema, grouped here. Three headings used to hold seven

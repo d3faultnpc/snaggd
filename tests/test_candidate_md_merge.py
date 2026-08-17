@@ -100,8 +100,12 @@ def run():
 
     # ── What the save is actually allowed to change ───────────────────────
     check("a rendered key overwrites the existing one", "role_type: builder" in merged)
+    # Written `skills: a, b` since 2026-08-17, not one bullet per line — Tools,
+    # the section directly below it, had always been the keyed form, and one kind
+    # of list deserves one shape. What this check is about is unchanged: the new
+    # content is in and the old content is gone.
     check("a section the wizard owns is replaced by its new content",
-          "- SQL" in merged and "- platform thinking" not in merged)
+          "skills: product discovery, SQL" in merged and "platform thinking" not in merged)
     check("a section the wizard has nothing for is left alone",
           "interests: Bitcoin Ordinals, UTXO data model" in merged)
     check("an absent value does not erase the existing one",
