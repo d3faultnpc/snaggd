@@ -437,9 +437,27 @@ class ResumeParser:
         for key, value in (case.get("notes") or {}).items():
             lines.append(f"{key}: {value}")
 
-        if include_zone and target_market != "western" and target_market != "global" and responsibilities:
-            lines += ["", "#### Zone of Responsibility"]
+        # The HEADING is an employment convention — an award or a certificate has
+        # no ongoing duties, so it gets no "Zone of Responsibility" line. The
+        # CONTENT is not a convention; it is what the person typed.
+        #
+        # Until 2026-08-18 the two were gated together, so every kind except
+        # employment lost its bullets on save — silently, with no error and no
+        # re-homing. The wizard's tag editor writes into `responsibilities` for
+        # EVERY card regardless of kind (see WizardOverlay's setField), so this
+        # was not a rare shape: found live on an Awards entry whose six bullets
+        # sat in candidate.json and in the mirror, and never reached the file.
+        #
+        # Unlabelled bullets straight under the entry are already how an unnamed
+        # group is written here, and md_parse reads them back as one — so the
+        # content survives through a path that already exists, and the file grows
+        # no new shape. Round trip pinned in tests/test_candidate_md_roundtrip.py.
+        wrote_leading_group = False
+        if responsibilities and target_market != "western" and target_market != "global":
+            if include_zone:
+                lines += ["", "#### Zone of Responsibility"]
             lines += [f"- {r}" for r in responsibilities]
+            wrote_leading_group = True
 
         # A group's boundary and a group's name are two different things, and
         # writing them as one line made the name load-bearing: a group only got a
@@ -455,7 +473,11 @@ class ResumeParser:
         # its `label:` has to attach to a group rather than to the entry.
         for index, h in enumerate(highlights):
             label, h_ctx, results = h.get("label"), h.get("context"), (h.get("results") or [])
-            if index > 0 or label:
+            # `wrote_leading_group` matters for the same reason `index > 0` does:
+            # the bullets above already occupy the entry's first unnamed group, so
+            # a first highlight without a label needs a boundary or the two read
+            # back as one group and the next save writes them merged.
+            if index > 0 or label or wrote_leading_group:
                 lines += ["", "####"]
             if label:
                 lines.append(f"label: {label}")
