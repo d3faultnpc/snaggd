@@ -1,0 +1,45 @@
+name: tests
+
+# The engine had no CI at all until 2026-08-19. Its tests existed and were run
+# by hand, which meant they only ever caught what someone thought to check —
+# and on the day this was added they had already caught, in one session, a
+# return contract broken across two call sites, a guard silently dropped, and a
+# prompt change that would have sent applications into a category the profile
+# refuses. All three were found locally, none of them by anything automatic.
+#
+# Browsers are deliberately NOT installed. Nothing here drives a page: the
+# tests read captured HTML and synthetic fixtures. `playwright` is installed
+# because importing `adapters.hh` pulls it in, not because it is used.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the engine's tests
+        # Plain scripts, not pytest — each returns non-zero on failure and
+        # prints its own checks. Run every one, then fail once at the end, so a
+        # single early break does not hide the rest.
+        run: |
+          failed=0
+          for t in tests/test_*.py; do
+            echo "── $t"
+            python "$t" || failed=1
+          done
+          exit $failed
