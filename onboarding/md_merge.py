@@ -212,6 +212,14 @@ def _merge_keyed(existing_body: list[str], rendered_body: list[str]) -> list[str
                 used.add(key)
             else:
                 out.append(line)
+                # The mirror of the bare-line case below: this line states behind
+                # a key exactly what the render is about to state without one, so
+                # the render's copy is dropped and the key survives. A label is
+                # information — it is what routes the line to its section and what
+                # lets the next merge match it at all.
+                _value = line.split(":", 1)[1].strip() if ":" in line else None
+                if _value:
+                    rendered_loose = [l for l in rendered_loose if l.strip() != _value]
         elif line.strip() in rendered_values:
             # The same content, once as a bare line and once behind a key. That is
             # what a section looks like the first time it is saved after its format

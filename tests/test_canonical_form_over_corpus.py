@@ -199,6 +199,28 @@ def run():
     check("…even when the marker is literally line 1",
           _extract_headline("<!-- snaggd:start -->\n# Some Role\n") == "Some Role")
 
+    # ── An unlabelable contact does not accumulate ───────────────────────
+    # `_typed_contact_line` returns what it cannot type WITHOUT a label, by
+    # design and by the test next door: inventing `Skype:` would hand the frame
+    # a key nobody owns. The cost showed up elsewhere. The keyed line it came
+    # from survives the merge beside the bare one, the next read counts both as
+    # contacts, and the file grew by one line every save — 0, 1, 2, 3 — found on
+    # a real profile whose phone had been masked by hand, which put it under the
+    # seven-digit threshold. Masking was temporary; any short number reaches it.
+    _md = "# Role\n\n## Identity\nname: A\nphone: +1*2\n"
+    _once = _save(_md)
+    _grown = _once
+    for _ in range(4):
+        _grown = _save(_grown)
+    check("an unlabelable contact is stated once, not once per save",
+          _grown.count("+1*2") == 1)
+    check("…and it is the labelled line that survives, not the bare copy",
+          "phone: +1*2" in _grown)
+    check("saving is a fixed point for it", _save(_once) == _once)
+    check("a contact that can be typed is untouched by any of this",
+          "telegram: https://t.me/x"
+          in _save("# R\n\n## Identity\ntelegram: https://t.me/x\n"))
+
     # ── Population: every profile on this machine, if there are any ───────
     corpus = sorted((Path(__file__).parent.parent / "data" / "profiles").glob("*/candidate.md"))
     if not corpus:

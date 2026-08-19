@@ -134,7 +134,18 @@ class HHAdapter(SiteAdapter):
         # given the failure mode observed was "override silently didn't
         # apply, normal search vacancies got real applications submitted."
         if target_url:
-            if len(vacancies) != 1 or target_url.split('?')[0].rstrip('/') not in vacancies[0][0]:
+            # Compared by vacancy id, not by URL text. hh geo-redirects
+            # hh.ru/vacancy/N to <city>.hh.ru/vacancy/N — reproducible from a cold
+            # curl, nothing of ours involved — and get_vacancies() canonicalises the
+            # host back off. Matching the raw request against the canonical result
+            # made this guard fire on our own normalisation and call it a page
+            # mismatch, which is what stopped every single-URL run started from a
+            # link copied out of a browser. The id survives the redirect.
+            import re as _re
+            _want = _re.search(r'/vacancy/(\d+)', target_url)
+            _got = _re.search(r'/vacancy/(\d+)', vacancies[0][0]) if vacancies else None
+            if (len(vacancies) != 1 or _want is None or _got is None
+                    or _want.group(1) != _got.group(1)):
                 self._say(
                     f"❌ [{self.name()}] Single-URL safety check failed — "
                     f"expected exactly [{target_url}], got {vacancies}. Stopping, "
@@ -560,7 +571,22 @@ class HHAdapter(SiteAdapter):
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_after_apply_click")
 
             current_page = self.browser.get_current_page()
-            self._dismiss_blocking_modal(current_page, index=index)
+
+            # The chooser BEFORE the dismisser, here as well as in the layer loop.
+            # This call site is the one that actually meets it on the classic
+            # path: the chooser modal opens the instant Apply is clicked, and the
+            # dismisser below would hand it to the model, which presses the
+            # primary button — sending the application with whatever resume hh
+            # happened to preselect. Guarding only the loop left this door open,
+            # and an application went out through it.
+            choice = self._handle_resume_chooser(current_page, str(index))
+            if choice == "blocked":
+                return {'status': 'skipped_resume_unresolved',
+                        'reason': "Resume chooser could not be resolved — "
+                                  "not applying with a CV this profile did not choose",
+                        'scenario': 'skip'}
+            if choice != "submitted":
+                self._dismiss_blocking_modal(current_page, index=index)
 
             # Immediate-apply (no form)
             try:
@@ -609,6 +635,20 @@ class HHAdapter(SiteAdapter):
 
         except Exception as e:
             err = str(e)
+            # Playwright packs its whole call log into the message — every
+            # "waiting for element", every "scrolling into view", fifty-odd
+            # lines of it. That string went into applied_log's `reason` AND
+            # onto the app's screen verbatim, so one timeout on 2026-08-19
+            # spilled the retry loop's guts into the user's terminal.
+            #
+            # The humanised half already exists everywhere else in this file
+            # (_say's gui_message); the error path simply never used it. The
+            # full text still goes to the log, where it belongs and where it
+            # was read from to diagnose that very failure.
+            _first = err.split("\nCall log:")[0].strip().splitlines()
+            short = _first[0][:200] if _first else err[:200]
+            if short != err:
+                print(f"   Full error detail: {err}")
             if debug and session_dir:
                 try:
                     self._debug_snapshot(self.browser.get_current_page(), session_dir, "error")
@@ -616,7 +656,7 @@ class HHAdapter(SiteAdapter):
                     pass
             return {
                 'status': 'skipped_error',
-                'reason': f'Processing error: {err}',
+                'reason': f'Processing error: {short}',
                 'scenario': 'error'
             }
 
@@ -640,6 +680,27 @@ class HHAdapter(SiteAdapter):
         cover_sent_in_modal = False
 
         for layer in range(MAX_LAYERS):
+            # The chooser first, and its answer is acted on rather than logged.
+            # This call used to live inside _dismiss_blocking_modal, whose return
+            # value this loop discards — so "stop, we cannot tell which CV this
+            # would send" fell straight through to the detector and became a
+            # `fill_form` call against a modal that holds no question at all.
+            choice = self._handle_resume_chooser(page, str(index))
+            if choice == "blocked":
+                return ProcessResult(
+                    success=False,
+                    status='skipped_resume_unresolved',
+                    reason="Resume chooser could not be resolved — "
+                           "not applying with a CV this profile did not choose",
+                    scenario='skip',
+                    is_terminal=True,
+                    goal_reached=False
+                ), first_form_type
+            if choice == "submitted":
+                # The modal was the chooser and nothing else. Detection over it
+                # would find a form that is not there.
+                continue
+
             self._dismiss_blocking_modal(page, index=index)
 
             # Every modal step as it was PRESENTED, before anything is filled or
@@ -706,7 +767,20 @@ class HHAdapter(SiteAdapter):
                 # Plain print — a retry attempt, not worth its own GUI line.
                 print("   ⏳ UNKNOWN mid-loop — waiting 1.5s and retrying detector...")
                 page.wait_for_timeout(1500)
-                self._dismiss_blocking_modal(page, index=index)
+                # A chooser can arrive here too — same guard, same reason.
+                retry_choice = self._handle_resume_chooser(page, str(index))
+                if retry_choice == "blocked":
+                    return ProcessResult(
+                        success=False,
+                        status='skipped_resume_unresolved',
+                        reason="Resume chooser could not be resolved — "
+                               "not applying with a CV this profile did not choose",
+                        scenario='skip',
+                        is_terminal=True,
+                        goal_reached=False
+                    ), first_form_type
+                if retry_choice != "submitted":
+                    self._dismiss_blocking_modal(page, index=index)
                 form_info = self.detector.detect(page)
                 form_type = form_info.form_type
                 if form_type == FormType.UNKNOWN:
@@ -875,6 +949,107 @@ class HHAdapter(SiteAdapter):
                   vacancy_id=vid)
         return False
 
+    def _handle_resume_chooser(self, page, vid) -> Optional[str]:
+        """The resume chooser as its own step of the apply loop.
+
+        It is in every loop hh has: alone in a modal on the classic path, beside
+        the cover field on the hh-modal path, and as a plain page section on
+        hr-questions. So it is a canonical element, and the loop has to know it
+        by name rather than meeting it as "some pop-up".
+
+        Returns, and the caller must act on every one of these:
+          None        no chooser on this page — the loop proceeds untouched
+          "submitted" the modal was the chooser and nothing else; resolved and
+                      sent, so the loop must NOT run detection over it
+          "fixed"     the resume was settled but this modal holds more (a cover
+                      field, questions) — the loop proceeds, letter and all
+          "blocked"   a chooser is here and could not be resolved safely; the
+                      vacancy stops. It must not fall through: handing a
+                      chooser-only modal to the form detector is what sent
+                      `fill_form` after a question that does not exist.
+        """
+        from adapters.hh.resume_roster import (
+            ensure_selected, intended_hash, modal_is_chooser_only, read_page_state,
+            resume_roster, selected_option_hash, selected_resume_title,
+        )
+        # On the PAGE, not inside a dialog: the chooser has been captured as a
+        # plain page section, and its expanded list is a portal outside the modal.
+        if selected_resume_title(page) is None:
+            return None
+
+        state = read_page_state(page)
+        roster = resume_roster(state or {}, getattr(self.browser, "vacancy_id", None))
+        want = intended_hash(self._data_dir,
+                             Path(CONFIG.cookies_path).parent / "hh_resumes.json")
+
+        # One decision per modal, not one per call site.
+        #
+        # The three call sites are all still guarded — dropping any of them is
+        # how an application once went out with a resume this profile did not
+        # choose. What was missing is that a repeat visit has to be CHEAP. It
+        # was not: ensure_selected clicks unconditionally, so meeting the same
+        # modal at [B] after settling it at [A] expanded a chooser that was
+        # already answered, on a card hh had just re-rendered. The click landed
+        # on nothing, Playwright spent its actionability budget dragging the row
+        # into view — the sideways smear seen live 2026-08-19 — and the timeout
+        # came back as "cannot", which the loop turned into a stopped vacancy.
+        #
+        # So a settled modal is confirmed by READING, never by clicking again.
+        # This does not weaken the rule the click exists for: the selection
+        # event was made, once, at the site that first met the chooser.
+        settled = getattr(self, "_resume_settled", None)
+        if settled and settled.get("vid") == vid and settled.get("hash") == want:
+            still = selected_option_hash(page)
+            if still == want or (still is None and
+                                 (selected_resume_title(page) or "").strip() == settled.get("title")):
+                return "fixed"
+            # It reads as something else now, so it is not settled after all.
+            # Fall through and make the selection again, once.
+
+        outcome = ensure_selected(page, roster, want, page=page)
+
+        if outcome["status"] not in ("already", "changed"):
+            # The reason is the whole diagnostic value of this refusal, and it
+            # reached the app's terminal and nowhere else — the run that stopped
+            # on 2026-08-18 left no trace of WHY, so reconstructing it took a page
+            # snapshot and an afternoon. Printed too, so it lands in the file log.
+            print(f"   Resume chooser refused: {outcome.get('reason')}")
+            self._say(f"   Resume chooser: {outcome.get('reason')} — not applying with a CV "
+                      f"this profile did not choose", level="warn",
+                      gui_message="Couldn't tell which CV this would be sent with — stopped",
+                      vacancy_id=vid)
+            return "blocked"
+
+        self._resume_settled = {"vid": vid, "hash": want, "title": outcome.get("title")}
+
+        verb = "was already on" if outcome["status"] == "already" else "switched to"
+        self._say(f"   Resume: {verb} the one this profile applies with",
+                  gui_message="Picked the right CV for this application",
+                  vacancy_id=vid)
+
+        dialog = find_topmost_dialog(page)
+        if dialog is None or not modal_is_chooser_only(dialog):
+            return "fixed"
+
+        submit = find_visible(dialog, SELECTORS['send_button'])
+        if submit is None:
+            return "blocked"
+        # Never press into an open portal. ensure_selected shuts the chooser
+        # before returning, so this is the case where shutting failed — and
+        # clicking anyway is what cost a vacancy thirty seconds and a timeout
+        # on 2026-08-19. A refusal that names the cause is worth more.
+        from adapters.hh.resume_roster import _list_is_open
+        if _list_is_open(page):
+            self._say("   Resume chooser: the expanded list would not close — "
+                      "not clicking through it", level="warn",
+                      gui_message="The CV list stayed open — stopped rather than "
+                                  "clicking blind",
+                      vacancy_id=vid)
+            return "blocked"
+        submit.click()
+        page.wait_for_timeout(1500)
+        return "submitted"
+
     def _dismiss_blocking_modal(self, page, index: int = None) -> bool:
         """LLM-guided dismissal of unexpected blocking modals before form detection.
 
@@ -902,12 +1077,31 @@ class HHAdapter(SiteAdapter):
             if is_data_collector(dialog):
                 return self._close_data_collector(page, dialog, vid)
 
+            # The resume chooser is a known component, not an unrecognised
+            # pop-up, and on the classic apply path it is the ONLY thing in the
+            # modal. Handled here, before the model is asked anything: hh ships
+            # the whole roster in the page's own state, the profile's search URL
+            # already names which resume it applies with, and the two are joined
+            # by a hash. Nothing about that needs a language model, and paying
+            # for one per vacancy bought a button press we could address.
+            #
+            # It is checked on EVERY such modal rather than once, because hh's
+            # preselection is not stable — the same profile has been seen
+            # getting a different resume between openings.
             # Modal with a fillable textarea is a form layer — let the loop handle it
             if find_visible(dialog, 'textarea') is not None:
                 return False
 
+            # The chooser is a component we already resolved. Its title and card
+            # must not reach the model: a resume's own title reads like a claim
+            # about the candidate, sitting in a prompt that asks which button to
+            # press, and the card is `role="button"` so it arrives as a choice.
+            from adapters.hh.resume_roster import (
+                chooser_texts, is_chooser_button, without_chooser,
+            )
+            chooser_lines = chooser_texts(dialog)
             try:
-                modal_text = dialog.inner_text().strip()[:600]
+                modal_text = without_chooser(dialog.inner_text().strip(), chooser_lines)[:600]
             except Exception:
                 return False
 
@@ -918,6 +1112,8 @@ class HHAdapter(SiteAdapter):
             btn_els = []
             try:
                 for btn in iter_visible(dialog, 'button'):
+                    if is_chooser_button(btn):
+                        continue
                     label = btn.inner_text().strip()
                     if not label:
                         # Icon-only buttons (the close X) carry no text. They used

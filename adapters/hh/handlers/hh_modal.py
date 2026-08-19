@@ -53,6 +53,19 @@ class HHModalHandler(BaseHandler):
                           gui_message="Writing your cover letter into the form…", vacancy_id=vid)
             try:
                 cover_letter = llm_cover.cover(vacancy_text, vacancy_id)
+                # hh keeps this field's draft on its own side: text typed here
+                # survives a hard reload, verified live 2026-08-19. So a run
+                # that filled the field and then failed leaves its letter
+                # sitting in it, and typing again would send ours appended to
+                # the remains of the last attempt — under this person's name.
+                # Cleared first, and said out loud, because silently discarding
+                # something a person may have typed themselves is not ours to
+                # do quietly.
+                existing = (textarea.input_value() or "")
+                if existing.strip():
+                    print(f"   Clearing {len(existing)} characters hh had kept "
+                          f"in the cover field from an earlier attempt")
+                    textarea.fill("")
                 # type() fires React input/change events per-keystroke;
                 # textarea stays disabled while empty — events are needed to enable the submit button
                 textarea.type(cover_letter, delay=5, timeout=60000)

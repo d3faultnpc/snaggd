@@ -44,8 +44,20 @@ check("an absent domain applies no modifier",
       "states no domain or industry background at all — apply NO modifier" in _SCORING)
 check("and the prompt says silence is not a mismatch",
       "not evidence of\ndistance" in _SCORING or "is not evidence of" in _SCORING)
-check("the top band no longer requires a domain the profile may not have",
-      "can still score here" in _SCORING)
+# Until 2026-08-18 the top band said a profile stating no domain "can still score
+# here" — an exception carved into a rule that should not have needed one. The
+# bands no longer mention domain AT ALL: it is applied once, as the modifier
+# below. So the property is now structural rather than promised, and this checks
+# the structure. Domain in both places is what drove three real matches to 0 —
+# the band demoted them for the domain, then the modifier charged for it again.
+# The BAND LINES themselves, not the paragraph explaining them — that paragraph
+# says "domain" several times on purpose, to say where it does NOT belong.
+_BAND_LINES = [ln for ln in _SCORING.splitlines()
+               if ln.startswith("- ") and "–" in ln.split(":")[0]]
+check("the score bands say nothing about domain — it is counted once, below",
+      _BAND_LINES and not any("domain" in ln.lower() for ln in _BAND_LINES))
+check("and a match with real skill overlap may not be scored zero",
+      "If any core skill\ngenuinely matches, the score is not 0" in _SCORING)
 check("role_type keeps its own absence rule",
       "role_type is absent or empty — apply NO modifier" in _SCORING)
 

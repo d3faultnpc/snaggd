@@ -56,12 +56,17 @@ in the vacancy missing from the profile. signals = 3–5 short tags characterizi
 domain, context, and product type. vacancy_role_type = this vacancy's contribution style, using
 the candidate's role_type vocabulary where possible.
 
-Scoring guide:
-- 80–100: strong match — most key requirements met, and the domain aligns with the candidate's
-  background where the profile states one (a profile that states no domain can still score here)
-- 60–79: good match — solid skills overlap, minor gaps or adjacent domain
-- 40–59: partial match — transferable skills but notable domain or experience gaps
-- 0–39: poor fit — major mismatch in skills or domain
+Scoring guide — SKILLS AND REQUIREMENTS ONLY. Do not account for domain here; it is applied
+once, as the modifier below. Counting it in both places is what drove real matches to zero:
+a candidate with four matched core skills and three domain-shaped gaps was landing in the
+bottom band FOR THE DOMAIN, and then losing the same points again to the domain modifier.
+- 80–100: strong match — most key requirements met
+- 60–79: good match — solid skills overlap, minor gaps
+- 40–59: partial match — transferable skills, notable experience gaps
+- 0–39: poor fit — major mismatch in the skills and experience the vacancy asks for
+
+A score of 0 means the candidate brings nothing this vacancy asks for. If any core skill
+genuinely matches, the score is not 0 — say what it is worth.
 
 Domain alignment (apply BEFORE finalising the score):
 If CANDIDATE PROFILE states no domain or industry background at all — apply NO modifier, and do
@@ -72,10 +77,15 @@ are actually stated.
 Otherwise, compare the vacancy's primary domain and product type against the candidate's domain
 and background as described in CANDIDATE PROFILE.
 - Same or closely related domain / product type → no modifier
-- Adjacent: transferable skills, overlapping patterns → –5 to –10 points
-- Clear mismatch: substantial domain gap, different industry patterns → –20 to –30 points
+- Adjacent: transferable skills, overlapping patterns → –3 to –5 points
+- Clear mismatch: substantial domain gap, different industry patterns → –10 to –15 points
 Do not apply penalties mechanically by industry label — consider product type overlap
 and how transferable the candidate's actual experience is to this specific context.
+These penalties were halved on 2026-08-18. Stacked with the role-type modifier below they
+were driving real matches to the floor: two vacancies scored 0 while reporting five matched
+core skills and coherent gaps, which is not a "poor fit" — it is a partial fit that the
+arithmetic ate. A domain gap is a reason to rank lower, not a reason to disappear. This is a
+stopgap until an ATS integration gives real signal about what domain distance actually costs.
 A low-confidence note under "Additional" (hints) does not by itself establish domain
 alignment — treat it as real domain evidence only if a case or highlight in Work
 Experience/Projects independently supports it. Same principle as aspiration alignment

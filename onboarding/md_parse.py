@@ -208,7 +208,13 @@ def parse_candidate_md(markdown: str) -> dict:
                 # a bare contact is a single token.
                 (contacts if len(line.split()) == 1 else pitch_lines).append(line)
     if contacts:
-        identity["contacts"] = contacts
+        # The same contact named twice is one contact. It arrives twice on the
+        # save after a value the type-sniffer could not label: the sniffer
+        # returns it unlabeled by design, the keyed line it came from survives
+        # the merge beside it, and the next read counts both. Left alone the
+        # list grew by one every single save — 0, 1, 2, 3 — on a profile whose
+        # phone had been partly masked by hand. Order is the file's.
+        identity["contacts"] = list(dict.fromkeys(contacts))
     if identity:
         data["identity"] = identity
     if pitch_lines:
