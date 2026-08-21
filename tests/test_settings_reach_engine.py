@@ -174,9 +174,9 @@ def run():
 
         (cat_dir / "job_preferences.md").write_text(
             "stop_categories:\n  - third_category\n", encoding="utf-8")
-        check("a CLI-era profile's own categories are still read, not replaced",
-              load_stop_filters(cat_dir).categories ==
-              ["example_category", "second_category", "third_category"])
+        check("a second file no longer widens the block vocabulary — it was merged "
+              "by union, so a category removed from candidate.md was not removed",
+              load_stop_filters(cat_dir).categories == ["example_category", "second_category"])
 
         bare = root / "declares-nothing"
         bare.mkdir(parents=True, exist_ok=True)

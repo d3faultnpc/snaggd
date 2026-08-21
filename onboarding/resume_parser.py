@@ -75,7 +75,7 @@ class ResumeData:
     interests: list = field(default_factory=list)
 
     # Parser-only convenience field (HH search query suggestions) — NOT part of the
-    # candidate.json schema, excluded when serializing. Feeds the existing job_preferences.md
+    # candidate.json schema, excluded when serializing. Feeds the `stop_categories:` line
     # search-direction flow (wizard.py Block B), unrelated to search{} above.
     suggested_queries: list = field(default_factory=list)
 

@@ -4,15 +4,15 @@ Adapter-agnostic stop filter loader.
 Storage split:
   data/filters.json      — machine-only rules (exact matching, numeric thresholds).
                            Updated by wizard/settings UI. Never sent to LLM.
-  data/job_preferences.md — LLM context (stop_categories for semantic detection live here).
-                           Loaded into the LLM system prompt wholesale by llm_agent.py.
+  data/candidate.md      — the person's own profile, including the `stop_categories:`
+                           line. One home, read by the model and by the block validator.
 
 Three-tier filter model (applied by the adapter per vacancy):
   Level 0 — title_keywords    : exact substring in vacancy title. No LLM, no page open.
   Level 1 — companies         : exact substring in company name from DOM. No LLM, after page open.
   Level 1b — min_employer_rating : numeric rating from DOM. No LLM, after page open.
   Level 2 — categories        : LLM semantic detection via score_vacancy → stop_match field.
-                                 Categories come from job_preferences.md (already in system prompt).
+                                 Categories come from candidate.md (already in system prompt).
 
 Adding support for a new adapter (Greenhouse, Lever):
   - Call load_stop_filters() the same way — config is site-agnostic.
@@ -38,8 +38,7 @@ class StopFilters:
     categories: list = field(default_factory=list)
     """Semantic categories the candidate declared — the entire vocabulary a semantic
     block may use (see core.llm_agent._validated_block). Read from candidate.md's
-    `stop_categories:` line, and from job_preferences.md for profiles built by the
-    CLI before that line existed."""
+    `stop_categories:` line."""
 
     min_employer_rating: Optional[float] = None
     """Minimum employer review rating (e.g. 3.6 on a 1–5 scale). None = no filter."""
@@ -113,23 +112,22 @@ def patch_filters_json(data_dir: Path, *, stop_companies=_UNSET, stop_title_keyw
 
 def load_stop_filters(data_dir: Path) -> StopFilters:
     """
-    Load stop filter config from three sources:
-      1. data_dir/filters.json       → machine rules (title_kw, companies, min_rating)
-      2. data_dir/candidate.md       → stop_categories (LLM-semantic), the writable home
-      3. data_dir/job_preferences.md → stop_categories, for CLI-era profiles only
+    Load stop filter config from two sources:
+      1. data_dir/filters.json → machine rules (title_kw, companies, min_rating)
+      2. data_dir/candidate.md → stop_categories, the semantic list
 
-    candidate.md is where a semantic category is declared now, for one reason worth
-    stating: it is the file the model already receives verbatim. The list the model
-    reads and the list the validator checks its answer against are then the same
-    line, rather than two copies that can disagree. job_preferences.md is still read
-    and no longer written — a profile built before this keeps working untouched.
+    One home for a semantic category, and it is the file the model already receives
+    verbatim: the list the model reads and the list the validator checks its answer
+    against are the same line. job_preferences.md used to be a second source, merged
+    into this one by union — which meant removing a category from candidate.md did
+    not remove it, because the old file still listed it and a person's edit silently
+    did not take effect. Dropped 2026-08-21.
 
     Any file may be absent — returns what's available, empty StopFilters if all missing.
     """
     filters = StopFilters()
     _load_from_json(data_dir / "filters.json", filters)
     _load_categories_from_profile(data_dir / "candidate.md", filters)
-    _load_categories_from_prefs(data_dir / "job_preferences.md", filters)
     return filters
 
 
@@ -180,21 +178,3 @@ def _load_from_json(path: Path, filters: StopFilters) -> None:
             pass
 
 
-def _load_categories_from_prefs(path: Path, filters: StopFilters) -> None:
-    """
-    Read stop_categories section from job_preferences.md.
-    This file is primarily for LLM consumption; we parse categories so the
-    adapter can also log them in blocked entries for dashboard display.
-    """
-    if not path.exists():
-        return
-    current = None
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("stop_categories:"):
-            current = "categories"
-        elif line.startswith("  - ") and current == "categories":
-            val = line[4:].strip().lower()
-            if val and val not in filters.categories:
-                filters.categories.append(val)
-        elif line.strip() and not line.startswith(" ") and not line.startswith("#"):
-            current = None

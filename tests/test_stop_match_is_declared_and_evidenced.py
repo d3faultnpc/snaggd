@@ -48,8 +48,13 @@ def _agent_declaring(*categories):
     """An agent whose profile declares exactly these stop categories."""
     tmp = Path(tempfile.mkdtemp())
     if categories:
-        (tmp / "job_preferences.md").write_text(
-            "stop_categories:\n" + "".join(f"  - {c}\n" for c in categories), encoding="utf-8")
+        # candidate.md, because that is where a semantic category lives now. It used
+        # to be declarable in job_preferences.md as well, and the two were merged by
+        # union — so removing one from candidate.md did not remove it. Dropped
+        # 2026-08-21; the fixture follows the one home.
+        (tmp / "candidate.md").write_text(
+            "# t\n\n## Career Profile\nstop_categories: " + ", ".join(categories) + "\n",
+            encoding="utf-8")
     return LLMAgent(data_dir=tmp)
 
 

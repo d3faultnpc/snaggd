@@ -100,13 +100,6 @@ _expected_llm_agent_class_members = {
     "model", "cover_model", "api_key", "client",
     "generate_cover", "score_vacancy", "fill_form", "ask_modal_action", "answer_question",
     "_chat_completion", "_system", "_build_system_prompt", "_build_match_hint",
-    # Added 2026-08-21. Says out loud when a profile carries a second file
-    # restating what the frame assigns to candidate.md — one live profile held a
-    # salary range in one and "Not specified" in the other, both in the same
-    # system prompt, for three months. Reads two local files and prints; decides
-    # nothing, sends nothing, and a standalone CLI-built profile has exactly the
-    # same problem, which is why it belongs here rather than in the fork.
-    "_warn_on_second_profile",
     # Added 2026-08-21 with the per-call projection. A map from call type to the
     # kind of reader it speaks as — local, and about this repo's own prompts;
     # no transport, tier or billing notion travels with it.

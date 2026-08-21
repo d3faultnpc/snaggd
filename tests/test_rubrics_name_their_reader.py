@@ -11,12 +11,9 @@ presence with no rule attached.
 Nothing here projects anything yet. This checks the vocabulary is complete and
 honest, which is what makes the projection reviewable rather than a rewrite.
 
-The second half is about a different kind of silence. A profile built by the CLI
-wizard carries job_preferences.md as well, and on a live profile the two files
-disagreed: a salary range in one and "Not specified — open to market rate" in the
-other, both in the same system prompt. The frame's own comment on stop_categories
-already says why that is wrong — one line the model and the validator both read,
-"instead of two copies in two files drifting apart". This makes the drift audible.
+The second profile file that used to sit beside candidate.md is gone as of
+2026-08-21, so the checks that made its drift audible are gone with it: there is
+one document now, and nothing to disagree with.
 
 Run:  venv/bin/python3 tests/test_rubrics_name_their_reader.py
 """
@@ -79,49 +76,6 @@ check("evidence is read by everyone, because it is the person's own record",
       all(set(readers_of(h)) == {"score", "cover", "answer"} for h in HEADING_KINDS))
 check("and that holds for every kind of evidence, not just employment",
       len(HEADING_KINDS) >= 8)
-
-
-# ── A second profile file is announced, not absorbed ─────────────────────────
-print("\nA second file describing the same person is said out loud:")
-
-
-def _agent_over(files: dict) -> tuple:
-    import tempfile
-    d = Path(tempfile.mkdtemp())
-    for name, body in files.items():
-        (d / name).write_text(body, encoding="utf-8")
-    agent = LLMAgent(data_dir=d)
-    buf = StringIO()
-    with redirect_stdout(buf):
-        agent._system()
-    return agent, buf.getvalue()
-
-_only_one = {"candidate.md": "# person\n\n## Desired Salary\n100\n"}
-_agent, _out = _agent_over(_only_one)
-check("one profile file, nothing to warn about", "restates" not in _out)
-
-_two = dict(_only_one)
-_two["job_preferences.md"] = "# prefs\n\n## Salary\nNot specified.\n"
-_agent, _out = _agent_over(_two)
-check("a heading the frame already owns under a shorter name is caught",
-      "restates" in _out and "desired salary" in _out)
-
-_two["job_preferences.md"] = "# prefs\n\nstop_categories:\n  - example\n"
-_agent, _out = _agent_over(_two)
-check("so is a key the frame assigns to candidate.md",
-      "restates" in _out and "stop_categories" in _out)
-
-_two["job_preferences.md"] = "# prefs\n\n## Target roles\n- Product Manager\n"
-_agent, _out = _agent_over(_two)
-check("but content the frame does not own is not flagged — this is about drift, "
-      "not about the file existing", "restates" not in _out)
-
-# The point of the warning is that both halves still reach the model: which of
-# two contradicting documents wins is not a decision to make on someone's behalf.
-_two["job_preferences.md"] = "# prefs\n\n## Salary\nNot specified.\n"
-_agent, _ = _agent_over(_two)
-check("and both files still go to the model — nothing was silently dropped",
-      "Not specified" in _agent._system() and "## Desired Salary" in _agent._system())
 
 
 print(f"\n{sum(results)}/{len(results)} passed")

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Onboarding wizard — run once per profile before first main.py session.
-Produces: data/profiles/<name>/{candidate.md, candidate.json, job_preferences.md, search_urls.txt, filters.json}
+Produces: data/profiles/<name>/{candidate.md, candidate.json, search_urls.txt, filters.json}
 
 Usage:
     python onboarding/wizard.py                            # prompts for a profile name, runs steps 1-7
@@ -119,6 +119,45 @@ def _llm_client():
 
 
 # ── Helpers: file patchers ────────────────────────────────────────────────────
+
+def _write_stop_categories_to_candidate(data_dir: Path, categories: list) -> None:
+    """Put the semantic categories on candidate.md's own `stop_categories:` line.
+
+    This used to go to job_preferences.md, which the model read and the validator
+    also read — two copies, merged by union, so removing a category from one did
+    not remove it. candidate.md is the declared home: one line, read by both.
+
+    The CLI wizard also folds these into candidate.json's `rules["stop"]` together
+    with companies and keywords, and the parser reads a separate `stop_categories`
+    key that the merge does not produce — so without this the categories a person
+    typed reached neither file. Writing the line directly is the narrow fix; the
+    rules[] shape is a bigger question and is left alone.
+    """
+    md_path = data_dir / "candidate.md"
+    if not categories or not md_path.exists():
+        return
+    line = "stop_categories: " + ", ".join(str(c).strip() for c in categories if str(c).strip())
+    content = md_path.read_text(encoding="utf-8")
+    out = []
+    replaced = False
+    for row in content.splitlines():
+        if row.lower().startswith("stop_categories:"):
+            out.append(line)
+            replaced = True
+        else:
+            out.append(row)
+    if not replaced:
+        if "## Career Profile" in content:
+            out = []
+            for row in content.splitlines():
+                out.append(row)
+                if row.strip() == "## Career Profile":
+                    out.append(line)
+        else:
+            out += ["", "## Career Profile", line]
+    md_path.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    print(f"\u2713  Stop categories saved \u2192 {md_path}")
+
 
 def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
     """Set search.salary and re-render via to_md() (schema-aware path), or fall back to
@@ -439,7 +478,7 @@ def step_5_skills() -> bool:
     return True
 
 
-# ── Block B: Job preferences → job_preferences.md + .env ─────────────────────
+# ── Block B: Job preferences → candidate.md + filters.json + .env ────────────
 # Internal helper for step_6_search_rules() now — no longer independently CLI-exposed
 # (used to be --block b; using it directly would write the legacy files without syncing
 # candidate.json, reintroducing the drift this whole schema exists to prevent).
@@ -579,26 +618,13 @@ def block_b(append: bool = False) -> dict:
     print("   Examples: 'от 150 000 руб.' · 'default 150 000, tech 200 000' · '120 000–250 000'")
     salary_hint = ask("Salary expectations (free form, Enter to skip)")
 
-    # Save preferences (used by LLM for vacancy scoring)
-    roles = ", ".join(s["role"] for s in searches)
-    salary_min = next((s["salary"] for s in searches if s["salary"]), "not set")
-    work_format = searches[0]["remote"]
-    lines = [
-        "# job_preferences.md",
-        f"roles: {roles}",
-        f"salary_min: {salary_min}",
-        f"work_format: {work_format}",
-    ]
-    if stop_co:
-        lines += ["stop_companies:"] + [f"  - {c}" for c in stop_co]
-    if stop_kw:
-        lines += ["stop_keywords:"] + [f"  - {k}" for k in stop_kw]
-    if stop_cats:
-        lines += ["stop_categories:"] + [f"  - {c}" for c in stop_cats]
-
-    prefs_out = CONFIG.data_dir / "job_preferences.md"
-    prefs_out.write_text("\n".join(lines), encoding="utf-8")
-    print(f"✓  Preferences saved → {prefs_out}")
+    # job_preferences.md is no longer written (2026-08-21). It was a second copy of
+    # what candidate.md already holds, and the copies drifted: one live profile had
+    # a salary range in candidate.md and "Not specified — open to market rate" here,
+    # both reaching the model in the same system prompt. Its stop_categories were
+    # merged into the block vocabulary by union, so removing a category from
+    # candidate.md did not remove it. Semantic categories go to candidate.md, machine
+    # rules to filters.json, and roles/salary/format are already collected above.
 
     # Write hard filter rules to filters.json (stop_companies + min_rating)
     min_rating: float | None = None
@@ -614,6 +640,8 @@ def block_b(append: bool = False) -> dict:
         min_employer_rating=min_rating,
     )
     print(f"✓  Filters saved → {CONFIG.data_dir / 'filters.json'}")
+
+    _write_stop_categories_to_candidate(CONFIG.data_dir, stop_cats)
 
     # Append desired salary to candidate.md
     if salary_hint:

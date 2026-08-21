@@ -188,10 +188,9 @@ def project_for(markdown: str, reader: str) -> str:
 
     A heading the frame does not know is kept for everyone. Removing something
     requires knowing it is addressed elsewhere; not recognising it is not knowing
-    that. This is what makes the projection safe to run over job_preferences.md
-    as well, where `## Target roles` and `## Notes for AI` belong to no section
-    the frame owns — while `## Salary` does, and stops reaching the scorer
-    through the back door.
+    that. It also means a document the frame has never seen — a future second
+    profile file, or a person's own section — passes through rather than being
+    silently dropped.
 
     The preamble above the first `## ` — the person's own headline — always
     stays: it is who they are, not a rubric.

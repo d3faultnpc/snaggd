@@ -84,7 +84,7 @@ class HHAdapter(SiteAdapter):
             target_url: Optional[str] = None) -> list:
         """Full session loop. Returns new applied_log entries from this run.
 
-        Three-tier stop filter (all adapter-agnostic config from job_preferences.md):
+        Three-tier stop filter (adapter-agnostic config from candidate.md + filters.json):
           Level 0 — title_keywords : exact match in title, before page open, 0 LLM.
           Level 1 — companies      : exact match in company name DOM, after page open, 0 LLM.
           Level 2 — categories     : LLM semantic detection inside score_vacancy call.
