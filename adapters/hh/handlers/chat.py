@@ -268,7 +268,15 @@ class ChatHandler(BaseHandler):
                     status="applied_via_chat",
                     reason="Auto-read employer: cover letter sent via chatik",
                     scenario="chat_cover_sent",
-                    details={'cover_length': len(cover_letter)},
+                    # The letter itself, not only its length. It is what was
+                    # actually sent on the person's behalf, and until now it lived
+                    # only in cover_cache.json — keyed by vacancy and profile hash,
+                    # invisible from the record and dropped whenever the profile
+                    # changed. Vacancy TEXT is deliberately NOT stored (there is a
+                    # link, and hh keeps its own archive); the letter has no such
+                    # second home.
+                    details={'cover_length': len(cover_letter),
+                             'cover_text': cover_letter},
                     is_terminal=True,
                     goal_reached=True
                 ))

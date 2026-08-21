@@ -475,6 +475,20 @@ class HHAdapter(SiteAdapter):
                       gui_message=f"Match: {match_score}% · {', '.join(signals) if signals else 'no notable signals'}",
                       vacancy_id=str(index), company=company, position=title)
 
+            # Resolved here rather than at the comparison below, because the
+            # record has to be able to say which number decided and where it came
+            # from. `default` means nobody chose it: the wizard never writes
+            # min_match, so a profile built through it falls to CONFIG.min_score
+            # and is filtered by a value its owner has never been shown. Naming
+            # the source in the record is what makes that visible instead of
+            # silent — see the threshold discussion in the app repo's notes.
+            min_score = (stop_filters.min_match
+                         if (stop_filters and stop_filters.min_match is not None)
+                         else CONFIG.min_score)
+            threshold_source = ('profile'
+                                if (stop_filters and stop_filters.min_match is not None)
+                                else 'default')
+
             score_details = {
                 'match_score': match_score,
                 'matched_skills': llm_cover.last_matched_skills,
@@ -495,6 +509,21 @@ class HHAdapter(SiteAdapter):
                 'stop_evidence': llm_cover.last_stop_evidence,
                 'company': company or '',
                 'employer_rating': employer_rating,
+                # The threshold this vacancy was actually judged against, and
+                # whether anyone chose it. Both were knowable and neither was
+                # written down, so "why was this skipped" ended at a bare score.
+                'threshold': min_score,
+                'threshold_source': threshold_source,
+                # The scorer produces both of these on every call and nothing
+                # carried them. role_type_match is the interesting one: it is
+                # allowed to be null only when the candidate states no role_type,
+                # so a null on a profile that states one is a fact about the
+                # answer, not about the person.
+                'vacancy_role_type': llm_cover.last_vacancy_role_type,
+                'role_type_match': llm_cover.last_role_type_match,
+                # What the call cost and how to find it again. None on a cache
+                # hit, because there was no call.
+                'call_meta': llm_cover.last_call_meta,
             }
             if duplicate_of:
                 score_details['duplicate_of'] = duplicate_of
@@ -531,13 +560,10 @@ class HHAdapter(SiteAdapter):
                     'details': score_details
                 }
 
-            # Per-profile override takes precedence — set via ProfileTab's Min Match
-            # control (data/profiles/<name>/filters.json), never LLM-derived (this
-            # threshold only exists at resume-vs-vacancy comparison time, not at
-            # parse time). Falls back to the global CONFIG.min_score default.
-            min_score = (stop_filters.min_match
-                         if (stop_filters and stop_filters.min_match is not None)
-                         else CONFIG.min_score)
+            # min_score / threshold_source are resolved above, before the record
+            # is built — the per-profile override still takes precedence exactly
+            # as it did, this is the same expression read one place earlier so
+            # the record and the comparison can never disagree about it.
             if match_score is not None and match_score < min_score:
                 self._say(f"   ⏭ Score {match_score} < min {min_score} — skipping",
                           gui_message=f"[SKIP] match {match_score}% below your threshold",

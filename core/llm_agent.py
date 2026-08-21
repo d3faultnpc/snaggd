@@ -138,10 +138,48 @@ _TRUNCATED = "length"
 LAST_CALL: dict = {}
 
 
+def call_meta_of(resp) -> dict:
+    """The provider's own identifiers and token counts, pulled off a response.
+
+    Defensive on every field: this runs against whatever the gateway handed back,
+    and a provider that omits `usage` (or an SDK version that shapes it
+    differently) must cost an observation, never a run. Everything absent is
+    None, which is the honest value for "the provider did not say".
+
+    `id` is OpenRouter's generation id. Nothing stored it before, so no past call
+    can be looked up for its real token counts or cost — the reason this exists.
+    """
+    meta = {"generation_id": None, "tokens_prompt": None, "tokens_completion": None}
+    if resp is None:
+        return meta
+    meta["generation_id"] = getattr(resp, "id", None)
+    usage = getattr(resp, "usage", None)
+    if usage is not None:
+        meta["tokens_prompt"] = getattr(usage, "prompt_tokens", None)
+        meta["tokens_completion"] = getattr(usage, "completion_tokens", None)
+    return meta
+
+
+def last_call_snapshot() -> dict:
+    """A copy of LAST_CALL, taken by the caller in the frame that made the call.
+
+    LAST_CALL is module-global and sessions run in background threads, so it is
+    only truthful about "the call that just returned" — reading it later, or from
+    another frame, is reading whatever ran most recently anywhere in the process.
+    Callers take this snapshot immediately and carry the value; the global never
+    becomes the transport. See the ambient-state lesson in the app repo's memory.
+    """
+    return dict(LAST_CALL)
+
+
 def _note_call(*, model: str, max_tokens: int, finish_reason: str | None,
-               call_type: str | None = None, temperature: float | None = None) -> None:
+               call_type: str | None = None, temperature: float | None = None,
+               generation_id: str | None = None, tokens_prompt: int | None = None,
+               tokens_completion: int | None = None) -> None:
     LAST_CALL.update(model=model, max_tokens=max_tokens, finish_reason=finish_reason,
-                     call_type=call_type, temperature=temperature, json_repaired=False)
+                     call_type=call_type, temperature=temperature, json_repaired=False,
+                     generation_id=generation_id, tokens_prompt=tokens_prompt,
+                     tokens_completion=tokens_completion)
     if finish_reason == _TRUNCATED:
         print(f"   ⚠️  reply cut off at max_tokens={max_tokens} "
               f"(model={model}, call={call_type or '?'}) — the tail is lost, not malformed")
@@ -295,7 +333,8 @@ class LLMAgent:
         )
         _note_call(model=model, max_tokens=max_tokens, call_type=call_type,
                    temperature=temperature,
-                   finish_reason=getattr(resp.choices[0], "finish_reason", None))
+                   finish_reason=getattr(resp.choices[0], "finish_reason", None),
+                   **call_meta_of(resp))
         return resp.choices[0].message.content or ""
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -347,6 +386,11 @@ class LLMAgent:
                 {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
+        # Taken here, one frame after the call and in the same thread — see
+        # last_call_snapshot(). A cache hit never reaches this line, so a
+        # restored score carries no call meta at all, which is the truth about
+        # it: there was no call.
+        call_meta = last_call_snapshot()
         raw = (content or "{}").strip()
         result = self._parse_json(raw, fallback={
             "score": 50,
@@ -364,7 +408,13 @@ class LLMAgent:
         if raw_score is not None and not isinstance(raw_score, int):
             m = re.search(r"\d+", str(raw_score))
             result["score"] = int(m.group()) if m else 50
-        return self._sanitize_score_result(result)
+        scored = self._sanitize_score_result(result)
+        # Rides alongside the answer rather than in it: sanitising guards the
+        # analysis fields, and this is not one of them — it describes the call,
+        # not the vacancy. Never cached (see llm_cover): a restored entry has
+        # no call behind it.
+        scored["call_meta"] = call_meta
+        return scored
 
     def fill_form(self, vacancy_text: str, fields: list[dict]) -> dict[str, str]:
         """

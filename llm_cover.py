@@ -77,6 +77,15 @@ class LLMCover:
         self.last_stop_basis: Optional[str] = None
         self.last_stop_evidence: Optional[str] = None
         self.last_vacancy_role_type: Optional[str] = None
+        # Whether the vacancy's contribution style matched the candidate's own
+        # role_type. The scorer has always answered this; nothing carried it, so
+        # a run could not show that the model reported "nothing to compare" on a
+        # profile that plainly states a role_type.
+        self.last_role_type_match: Optional[bool] = None
+        # What the call itself did: provider generation id and token counts.
+        # None on a cache hit, and that is the truth about a cache hit — there
+        # was no call. Never written into self.cache for the same reason.
+        self.last_call_meta: Optional[dict] = None
         self.last_signals: list = []
         self.last_cover_template_name: Optional[str] = None
         # The real exception text behind a `score() -> False` result — was
@@ -106,6 +115,12 @@ class LLMCover:
         if text_hash in self.cache:
             print("   📋 Using cached score")
             self.last_signals = self._restore_score_from_cache(self.cache[text_hash])
+            # Cleared, not left over: without this the record for a cached score
+            # would carry the id and token counts of whatever vacancy was scored
+            # before it — an observation attributed to the wrong call, which is
+            # worse than no observation at all.
+            self.last_call_meta = None
+            self.last_role_type_match = None
             return True
 
         if self._agent is None:
@@ -129,6 +144,8 @@ class LLMCover:
         self.last_stop_basis = score_data.get("stop_basis", None)
         self.last_stop_evidence = score_data.get("stop_evidence", None)
         self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
+        self.last_role_type_match = score_data.get("role_type_match", None)
+        self.last_call_meta = score_data.get("call_meta", None)
         self.last_signals = score_data.get("signals", [])
 
         # Cover/template slots (indices 0/1) kept as placeholders — never read
@@ -204,6 +221,8 @@ class LLMCover:
         self.last_stop_basis = None
         self.last_stop_evidence = None
         self.last_vacancy_role_type = None
+        self.last_role_type_match = None
+        self.last_call_meta = None
         self.last_signals = []
 
     def _hash_text(self, text: str) -> str:

@@ -74,6 +74,14 @@ _expected_llm_agent_module_names = {
     # rescue it. Local facts about a local call; no transport, tier or billing
     # concept enters through them, which is what this guard is for.
     "_TRUNCATED", "LAST_CALL", "_note_call", "_note_json_repair",
+    # Same class, extended 2026-08-21: the provider's own response id and its
+    # token counts. Both are local facts about a local call — every
+    # OpenAI-compatible response carries `id` and `usage`, so no transport,
+    # tier or billing concept enters with them. They were being dropped with
+    # the response object, which is why no past call can be looked up for what
+    # it actually cost. last_call_snapshot() exists so callers stop reading the
+    # module global across frames; it returns a copy and decides nothing.
+    "call_meta_of", "last_call_snapshot",
     # Sampling temperature stated per call type (2026-08-16) — a local property
     # of a local call, same as max_tokens beside it.
     "_STRUCTURED_TEMPERATURE", "_PROSE_TEMPERATURE", "_CALL_TEMPERATURE",
