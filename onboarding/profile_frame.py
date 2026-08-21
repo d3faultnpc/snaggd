@@ -135,7 +135,13 @@ SECTION_READERS = {
     # opens from; `aspiration` moves the score; `stop_categories` is read by the
     # block validator, in code, off this same line.
     "Career Profile": ("score", "cover"),
-    "Skills": ("score", "cover"),
+    # The answerer needs these too: "list your key skills" is one of the most
+    # ordinary things an employer's form asks, and a projection that withheld
+    # them would leave it with nothing to answer from. Career Profile is
+    # deliberately NOT extended the same way — it carries not_looking_for and
+    # stop_categories, and a refusal is not something to volunteer into a form
+    # answer addressed to an employer.
+    "Skills": ("score", "cover", "answer"),
     # A hint, and the scoring prompt says outright that a hint alone does not
     # establish anything — it needs a case to support it.
     "Additional": ("score",),
@@ -170,6 +176,42 @@ def readers_of(section: str) -> tuple:
     if section in HEADING_KINDS:
         return EVIDENCE_READERS
     return SECTION_READERS.get(section, ())
+
+
+def project_for(markdown: str, reader: str) -> str:
+    """The parts of a profile addressed to one kind of call, verbatim.
+
+    Splits on `## ` only. A case is a `### ` under its section and a person's own
+    `#### ` sits inside that, so cutting at level two keeps every case whole —
+    and the text of each kept section is passed through untouched, because this
+    is the person's own file and a projection has no business reformatting it.
+
+    A heading the frame does not know is kept for everyone. Removing something
+    requires knowing it is addressed elsewhere; not recognising it is not knowing
+    that. This is what makes the projection safe to run over job_preferences.md
+    as well, where `## Target roles` and `## Notes for AI` belong to no section
+    the frame owns — while `## Salary` does, and stops reaching the scorer
+    through the back door.
+
+    The preamble above the first `## ` — the person's own headline — always
+    stays: it is who they are, not a rubric.
+    """
+    if not markdown:
+        return markdown
+    kept, current, keep_current = [], [], True
+    for line in markdown.splitlines():
+        if line.startswith("## "):
+            if keep_current:
+                kept.extend(current)
+            heading = line[3:].strip()
+            known = readers_of(heading)
+            keep_current = (reader in known) if known else True
+            current = [line]
+        else:
+            current.append(line)
+    if keep_current:
+        kept.extend(current)
+    return "\n".join(kept).strip()
 
 
 # An evidence item whose kind is missing or outside the vocabulary is employment.

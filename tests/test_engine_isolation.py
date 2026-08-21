@@ -107,6 +107,10 @@ _expected_llm_agent_class_members = {
     # nothing, sends nothing, and a standalone CLI-built profile has exactly the
     # same problem, which is why it belongs here rather than in the fork.
     "_warn_on_second_profile",
+    # Added 2026-08-21 with the per-call projection. A map from call type to the
+    # kind of reader it speaks as — local, and about this repo's own prompts;
+    # no transport, tier or billing notion travels with it.
+    "_CALL_READERS",
     "_load_profile", "_load_prompt", "_sanitize_score_result", "_is_template_echo", "_parse_json",
     # A block is only as good as its vocabulary and its evidence (2026-08-16):
     # the categories come from the candidate's own profile, and an answer that

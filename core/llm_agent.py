@@ -214,7 +214,7 @@ class LLMAgent:
         self._env_api_key = env_api_key
         self._env_model = os.getenv("LLM_MODEL", "deepseek/deepseek-v3.2")
         self._env_cover_model = os.getenv("COVER_MODEL", self._env_model)
-        self._system_prompt: str | None = None
+        self._system_prompts: dict[str, str] = {}
         # Read lazily from the profile on first use — see _declared_stop_categories.
         self._stop_categories: set | None = None
         # Client is built lazily (see `client` property below) and cached
@@ -353,7 +353,7 @@ class LLMAgent:
             max_tokens=800,
             call_type="cover",
             messages=[
-                {"role": "system", "content": self._system()},
+                {"role": "system", "content": self._system("cover")},
                 {"role": "user", "content": f"{prompt}{hint}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
@@ -382,7 +382,7 @@ class LLMAgent:
             max_tokens=400,
             call_type="score",
             messages=[
-                {"role": "system", "content": self._system()},
+                {"role": "system", "content": self._system("score")},
                 {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
@@ -434,7 +434,7 @@ class LLMAgent:
             max_tokens=800,
             call_type="fill_form",
             messages=[
-                {"role": "system", "content": self._system()},
+                {"role": "system", "content": self._system("fill_form")},
                 {"role": "user", "content": prompt},
             ],
         )
@@ -477,7 +477,7 @@ class LLMAgent:
             max_tokens=200,
             call_type="answer_question",
             messages=[
-                {"role": "system", "content": self._system()},
+                {"role": "system", "content": self._system("answer_question")},
                 {"role": "user", "content": (
                     "Answer this HR screening question briefly (2–4 sentences, in Russian). "
                     "Use only facts from the candidate profile above. Do not invent.\n\n"
@@ -489,12 +489,35 @@ class LLMAgent:
 
     # ── System prompt (built once, cached) ───────────────────────────────────
 
-    def _system(self) -> str:
-        if self._system_prompt is None:
-            self._system_prompt = self._build_system_prompt()
-        return self._system_prompt
+    # Which reader each call type speaks as. modal_action is absent on purpose:
+    # it never asks for the profile at all. So is the CV parse, which builds its
+    # own messages through GatewayClient — reading an existing person while
+    # parsing a new resume would be a leak, not a convenience.
+    _CALL_READERS = {"score": "score", "cover": "cover",
+                     "fill_form": "answer", "answer_question": "answer"}
 
-    def _build_system_prompt(self) -> str:
+    def _system(self, call_type: str | None = None) -> str:
+        """The profile this particular call is entitled to read.
+
+        Every call used to receive the whole file. That is how the scorer ended
+        up holding a salary range and a relocation preference while deciding
+        whether someone can do a job — present in the context, influencing by
+        presence, with no rule attached to either.
+
+        Off by default. This is the first change that alters what the model
+        sees, so switching it on is a decision with a measurement behind it, not
+        a side effect of installing a version. SNAGGD_PROJECT_PROFILE=1 enables.
+        """
+        reader = self._CALL_READERS.get(call_type or "")
+        if not reader or os.getenv("SNAGGD_PROJECT_PROFILE", "").strip() not in ("1", "true", "yes"):
+            reader = ""
+        # Keyed by reader, not one string: a single cache would freeze whichever
+        # slice happened to be built first and hand it to every other call.
+        if reader not in self._system_prompts:
+            self._system_prompts[reader] = self._build_system_prompt(reader)
+        return self._system_prompts[reader]
+
+    def _build_system_prompt(self, reader: str = "") -> str:
         parts = [
             "You are a job application assistant. "
             "Help craft personalized applications based on the candidate profile below.\n"
@@ -512,7 +535,14 @@ class LLMAgent:
             content = self._load_profile(filename)
             if content:
                 loaded[filename] = content
-                parts.append(f"## {label}\n{content}")
+                if reader:
+                    # Both documents, one rule. Projecting only candidate.md would
+                    # let a second file's own "## Salary" reach the scorer anyway,
+                    # and the layer would look like it had worked.
+                    from onboarding.profile_frame import project_for
+                    content = project_for(content, reader)
+                if content:
+                    parts.append(f"## {label}\n{content}")
         self._warn_on_second_profile(loaded)
         return "\n\n".join(parts)
 
