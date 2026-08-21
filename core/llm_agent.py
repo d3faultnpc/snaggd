@@ -617,7 +617,8 @@ class LLMAgent:
         block costs an opportunity the person never learns they had, while a
         missed block costs one application they can see and stop.
         """
-        none = {"stop_match": None, "stop_basis": None, "stop_evidence": None}
+        none = {"stop_match": None, "stop_basis": None, "stop_evidence": None,
+                "stop_suppressed": None}
         raw = result.get("stop_match")
         if not isinstance(raw, str) or not raw.strip():
             return none
@@ -636,8 +637,55 @@ class LLMAgent:
             print(f"   ℹ️ not blocking on {category!r} — no basis or evidence given")
             return none
 
+        def _refused(why: str) -> dict:
+            """Refused, and said so in the record rather than silently.
+
+            A suppressed block is the one thing this method does that nobody can
+            see afterwards: the vacancy simply proceeds. Writing down what was
+            proposed is how we find out later whether the suppression is right —
+            without it, over-suppressing looks exactly like nothing happening."""
+            print(f"   ℹ️ not blocking on {category!r} — {why}")
+            out = dict(none)
+            out["stop_suppressed"] = {"category": category, "basis": basis,
+                                      "evidence": evidence.strip(), "why": why}
+            return out
+
+        # Both checks below are scoped to company knowledge on purpose. A quote
+        # from the posting supports itself: refusing it for a formatting
+        # deficiency would mean applying to an employer the person explicitly
+        # excluded, in the one case where the evidence is unambiguous. All three
+        # text-based blocks in the 2026-08-18..20 measurement were correct, and
+        # the degenerate answer below arrived on company knowledge, not on text.
+        if basis == "company_knowledge":
+            # An answer with no analysis in it is not an answer about this
+            # vacancy. The prompt asks for 3-5 signals on every call, so all
+            # three lists empty means the model declined to do the work — and one
+            # real block arrived exactly like that, with nothing in it but the
+            # category and a story about the employer.
+            if not any(result.get(k) for k in ("matched_skills", "gaps", "signals")):
+                return _refused("the answer carries no analysis at all")
+
+        # Company knowledge has to be corroborated by the model's own signals.
+        # The prompt already says "if the signals you are producing contradict the
+        # category you are about to block on, do not block" — a rule with nobody
+        # to enforce it. Every false block measured on 2026-08-18..20 named a
+        # category that appears nowhere in its own signals: an employer blocked
+        # for its parent group, a bank blocked through a chain of ownership, an
+        # ML vendor blocked for what its CUSTOMERS do. A "<category>_adjacent"
+        # signal is the prompt's own marker for NOT blocking, so it corroborates
+        # nothing.
+        #
+        # Text stays exempt: a quote from the posting is self-supporting, and all
+        # three text-based blocks in the same measurement were correct.
+        if basis == "company_knowledge":
+            signals = [str(x).lower() for x in (result.get("signals") or [])]
+            corroborating = [x for x in signals
+                             if category in x and "adjacent" not in x]
+            if not corroborating:
+                return _refused("company knowledge is not corroborated by its own signals")
+
         return {"stop_match": category, "stop_basis": basis,
-                "stop_evidence": evidence.strip()}
+                "stop_evidence": evidence.strip(), "stop_suppressed": None}
 
     def _is_template_echo(self, result: dict) -> bool:
         """True if any field is match_scoring.md's own JSON-example placeholder — either the

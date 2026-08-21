@@ -507,6 +507,11 @@ class HHAdapter(SiteAdapter):
                 # write the basis down at the moment it is known.
                 'stop_basis': llm_cover.last_stop_basis,
                 'stop_evidence': llm_cover.last_stop_evidence,
+                # A block the model proposed and the validator refused. Recorded
+                # because the refusal is otherwise invisible: the vacancy simply
+                # proceeds, and over-suppressing would look exactly like nothing
+                # happening.
+                'stop_suppressed': llm_cover.last_stop_suppressed,
                 'company': company or '',
                 'employer_rating': employer_rating,
                 # The threshold this vacancy was actually judged against, and

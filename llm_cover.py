@@ -76,6 +76,10 @@ class LLMCover:
         # cannot be re-checked from the record later unless the record says so.
         self.last_stop_basis: Optional[str] = None
         self.last_stop_evidence: Optional[str] = None
+        # What the model wanted to block on and we refused, with the reason.
+        # A suppressed block is invisible from outside — the vacancy just carries
+        # on — so without this the suppression could never be reviewed.
+        self.last_stop_suppressed: Optional[dict] = None
         self.last_vacancy_role_type: Optional[str] = None
         # Whether the vacancy's contribution style matched the candidate's own
         # role_type. The scorer has always answered this; nothing carried it, so
@@ -121,6 +125,7 @@ class LLMCover:
             # worse than no observation at all.
             self.last_call_meta = None
             self.last_role_type_match = None
+            self.last_stop_suppressed = None
             return True
 
         if self._agent is None:
@@ -143,6 +148,7 @@ class LLMCover:
         self.last_stop_match = score_data.get("stop_match", None)
         self.last_stop_basis = score_data.get("stop_basis", None)
         self.last_stop_evidence = score_data.get("stop_evidence", None)
+        self.last_stop_suppressed = score_data.get("stop_suppressed", None)
         self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
         self.last_role_type_match = score_data.get("role_type_match", None)
         self.last_call_meta = score_data.get("call_meta", None)
@@ -220,6 +226,7 @@ class LLMCover:
         self.last_stop_match = None
         self.last_stop_basis = None
         self.last_stop_evidence = None
+        self.last_stop_suppressed = None
         self.last_vacancy_role_type = None
         self.last_role_type_match = None
         self.last_call_meta = None

@@ -95,12 +95,63 @@ check("empty evidence → not a block", _r["stop_match"] is None)
 _r = _verdict(_agent, stop_match="example_category", stop_basis="vibes", stop_evidence="feels like it")
 check("a basis outside the two allowed kinds → not a block", _r["stop_match"] is None)
 
+# Company knowledge stays allowed — three real correct ones were — but from
+# 2026-08-21 it has to be corroborated by the model's OWN signals. The prompt has
+# always said "if the signals you are producing contradict the category you are
+# about to block on, do not block", and nothing enforced it. Every false block
+# measured over 2026-08-18..20 named a category appearing nowhere in its own
+# signals: an employer blocked for its parent group, a bank blocked through a
+# chain of ownership, a vendor blocked for what its CUSTOMERS do.
 _r = _verdict(_agent, stop_match="example_category", stop_basis="company_knowledge",
-              stop_evidence="the employer's business is that category")
-check("a block on company knowledge is allowed — three real correct ones were",
+              stop_evidence="the employer's business is that category",
+              signals=["example_category_primary", "b2c"])
+check("company knowledge corroborated by its own signals is still a block",
       _r["stop_match"] == "example_category" and _r["stop_basis"] == "company_knowledge")
 check("and the fact behind it is kept, since the posting cannot confirm it later",
       _r["stop_evidence"] == "the employer's business is that category")
+
+_r = _verdict(_agent, stop_match="example_category", stop_basis="company_knowledge",
+              stop_evidence="the parent group is known for it",
+              signals=["ai_platform", "enterprise_b2b", "top_employer"])
+check("company knowledge its own signals do not support → not a block",
+      _r["stop_match"] is None)
+check("and the refusal is written down, or nobody could ever review it",
+      (_r.get("stop_suppressed") or {}).get("category") == "example_category")
+
+# "<category>_adjacent" is the prompt's own marker for NOT blocking, so it cannot
+# be what corroborates a block. This is the vendor-selling-into-the-category case.
+_r = _verdict(_agent, stop_match="example_category", stop_basis="company_knowledge",
+              stop_evidence="its customers are in that category",
+              signals=["b2b_saas", "example_category_adjacent"])
+check("an _adjacent signal corroborates nothing — it means the opposite",
+      _r["stop_match"] is None)
+
+# Text is exempt on purpose: a quote from the posting supports itself, and all
+# three text-based blocks in the same measurement were correct.
+_r = _verdict(_agent, stop_match="example_category", stop_basis="text",
+              stop_evidence="the posting says so in these words",
+              signals=["unrelated_tag"])
+check("a quoted posting still blocks without help from the signals",
+      _r["stop_match"] == "example_category")
+
+# One real false block arrived with nothing in it at all: no skills, no gaps, no
+# signals, just a category and a story about the employer. Scoped to company
+# knowledge — a text block with a quote supports itself, and refusing that for a
+# formatting deficiency would send an application to an employer the person
+# explicitly excluded.
+_r = _verdict(_agent, stop_match="example_category", stop_basis="company_knowledge",
+              stop_evidence="the employer is known for it", signals=[],
+              matched_skills=[], gaps=[])
+check("company knowledge with no analysis behind it does not get to block",
+      _r["stop_match"] is None)
+check("and the reason is recorded, not just the refusal",
+      (_r.get("stop_suppressed") or {}).get("why") == "the answer carries no analysis at all")
+
+_r = _verdict(_agent, stop_match="example_category", stop_basis="text",
+              stop_evidence="the posting says so in these words", signals=[],
+              matched_skills=[], gaps=[])
+check("but a quoted posting still blocks even when the rest of the answer is thin",
+      _r["stop_match"] == "example_category")
 
 
 # ── The prompt no longer teaches the mistake ─────────────────────────────────
