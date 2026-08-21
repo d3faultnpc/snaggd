@@ -127,8 +127,14 @@ print("\nA blocked vacancy's record says what blocked it:")
 _adapter_src = (_REPO_ROOT / "adapters" / "hh" / "adapter.py").read_text(encoding="utf-8")
 _details_block = _adapter_src.split("score_details = {", 1)[-1].split("}", 1)[0]
 check("stop_match is part of score_details", "'stop_match': stop_match" in _details_block)
+# The status itself moved to core/selector.py on 2026-08-21, when the decision
+# came out of the loop. The claim is unchanged and so is the behaviour: whatever
+# names the block still hands the loop the same record. Read across both files
+# rather than pinning to the one the string happened to live in, so the next move
+# does not read as a regression.
+_selector_src = (_REPO_ROOT / "core" / "selector.py").read_text(encoding="utf-8")
 check("and score_details is what a semantic block reports",
-      "'status': 'semantic_blocked'" in _adapter_src and "'details': score_details" in _adapter_src)
+      '"semantic_blocked"' in _selector_src and "'details': score_details" in _adapter_src)
 
 # ── Temperature is stated per call type, never inherited from the provider ───
 # Nothing set it until 2026-08-16, so everything ran at the provider's default

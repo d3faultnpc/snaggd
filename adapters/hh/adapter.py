@@ -17,6 +17,7 @@ from adapters.hh.handlers.base import FormType, ProcessResult
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
 from utils.helpers import random_delay
+from core.selector import threshold_selector
 from utils.filters import StopFilters, load_stop_filters
 
 _DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent.parent.parent / "debug_screenshots"))
@@ -533,51 +534,33 @@ class HHAdapter(SiteAdapter):
             if duplicate_of:
                 score_details['duplicate_of'] = duplicate_of
 
-            # ── Level 2: semantic stop_match from LLM ───────────────────────────
-            if stop_match:
-                # A block made on company knowledge is marked as such everywhere it
-                # is shown. The posting does not support it, so it is the one kind
-                # of block a person can only check by looking the company up — and
-                # three of one profile's correct blocks were exactly this kind, so
-                # the answer is to flag them, not to stop making them.
-                _by_knowledge = llm_cover.last_stop_basis == "company_knowledge"
-                _mark = " · unconfirmed by the posting" if _by_knowledge else ""
-                self._say(f"   🚫 semantic_blocked: LLM detected '{stop_match}'"
-                          f"{' (company knowledge)' if _by_knowledge else ''}", actor="llm",
-                          gui_message=f"[BLCK] not a fit ({stop_match}){_mark}",
-                          vacancy_id=str(index), company=company, position=title)
-                return {
-                    'status': 'semantic_blocked',
-                    'reason': f"LLM detected blocked category: '{stop_match}'{_mark}",
-                    'scenario': 'skip',
-                    'details': score_details,
-                }
-
-            if dry_run:
-                self._say(f"   🔍 Dry-run: score={match_score}, skills={llm_cover.last_matched_skills}",
-                          actor="llm",
-                          gui_message=f"Dry run — would score {match_score}%, not applying",
-                          vacancy_id=str(index), company=company, position=title)
-                return {
-                    'status': 'dry_run',
-                    'reason': f'Dry-run — score: {match_score}',
-                    'scenario': 'dry_run',
-                    'details': score_details
-                }
-
+            # ── Levels 2-4: block, dry run, threshold ───────────────────────────
+            # One named step rather than three ifs woven through the loop. The
+            # gates, their order and their wording are unchanged — see
+            # core/selector.py for why the order carries meaning. It sits apart
+            # so a different policy (best of a window, rather than an absolute
+            # threshold) can be tried by swapping it, which was impossible while
+            # the decision was spread across three early returns in here.
+            #
             # min_score / threshold_source are resolved above, before the record
-            # is built — the per-profile override still takes precedence exactly
-            # as it did, this is the same expression read one place earlier so
-            # the record and the comparison can never disagree about it.
-            if match_score is not None and match_score < min_score:
-                self._say(f"   ⏭ Score {match_score} < min {min_score} — skipping",
-                          gui_message=f"[SKIP] match {match_score}% below your threshold",
+            # is built, so the record and the decision can never disagree about
+            # which number applied.
+            verdict = threshold_selector(
+                match_score=match_score, min_score=min_score,
+                stop_match=stop_match, stop_basis=llm_cover.last_stop_basis,
+                dry_run=dry_run, matched_skills=llm_cover.last_matched_skills,
+            )
+            if not verdict.apply:
+                # The loop says it, because the loop is what knows which vacancy
+                # is on screen. The verdict carries whose line it is.
+                self._say(verdict.log_line, gui_message=verdict.gui_line,
+                          actor=verdict.actor,
                           vacancy_id=str(index), company=company, position=title)
                 return {
-                    'status': 'skipped_score',
-                    'reason': f'Score {match_score} below threshold {min_score}',
-                    'scenario': 'skip',
-                    'details': score_details
+                    'status': verdict.status,
+                    'reason': verdict.reason,
+                    'scenario': verdict.scenario,
+                    'details': score_details,
                 }
 
             # Auto-read vacancies already have the chat link embedded — clicking any

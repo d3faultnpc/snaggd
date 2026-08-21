@@ -180,8 +180,14 @@ _adapter = (_REPO_ROOT / "adapters" / "hh" / "adapter.py").read_text(encoding="u
 _details = _adapter.split("score_details = {", 1)[-1].split("}", 1)[0]
 check("stop_basis and stop_evidence are part of the logged record",
       "'stop_basis'" in _details and "'stop_evidence'" in _details)
+# The mark is written where the decision is made, which since 2026-08-21 is
+# core/selector.py rather than inside the loop. Same words, same place in the
+# record a person reads; only the file that composes them changed.
+_selector = (_REPO_ROOT / "core" / "selector.py").read_text(encoding="utf-8")
 check("a block resting only on company knowledge is marked where a person sees it",
-      "company_knowledge" in _adapter and "unconfirmed by the posting" in _adapter)
+      "company_knowledge" in _selector and "unconfirmed by the posting" in _selector)
+check("and the loop says the verdict's own words rather than composing its own",
+      "verdict.gui_line" in _adapter and "verdict.reason" in _adapter)
 
 print()
 _total, _passed = len(results), sum(results)
