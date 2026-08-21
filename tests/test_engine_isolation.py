@@ -100,6 +100,13 @@ _expected_llm_agent_class_members = {
     "model", "cover_model", "api_key", "client",
     "generate_cover", "score_vacancy", "fill_form", "ask_modal_action", "answer_question",
     "_chat_completion", "_system", "_build_system_prompt", "_build_match_hint",
+    # Added 2026-08-21. Says out loud when a profile carries a second file
+    # restating what the frame assigns to candidate.md — one live profile held a
+    # salary range in one and "Not specified" in the other, both in the same
+    # system prompt, for three months. Reads two local files and prints; decides
+    # nothing, sends nothing, and a standalone CLI-built profile has exactly the
+    # same problem, which is why it belongs here rather than in the fork.
+    "_warn_on_second_profile",
     "_load_profile", "_load_prompt", "_sanitize_score_result", "_is_template_echo", "_parse_json",
     # A block is only as good as its vocabulary and its evidence (2026-08-16):
     # the categories come from the candidate's own profile, and an answer that

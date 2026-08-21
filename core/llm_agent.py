@@ -504,14 +504,71 @@ class LLMAgent:
         # JOB PREFERENCES block and no warning, which is how GUI-built profiles ended up
         # without stop categories. Only the CLI wizard writes that file; its sections belong
         # in candidate.md, and the loop drops to one entry once they move.
+        loaded = {}
         for filename, label in [
             ("candidate.md",       "CANDIDATE PROFILE"),
             ("job_preferences.md", "JOB PREFERENCES"),
         ]:
             content = self._load_profile(filename)
             if content:
+                loaded[filename] = content
                 parts.append(f"## {label}\n{content}")
+        self._warn_on_second_profile(loaded)
         return "\n\n".join(parts)
+
+    def _warn_on_second_profile(self, loaded: dict) -> None:
+        """Say out loud when a second profile file restates what the frame owns.
+
+        The frame already states the rule, in its own comment on stop_categories:
+        the model reads a preference here and the validator reads the same line,
+        "instead of two copies in two files drifting apart". job_preferences.md is
+        that second copy on any profile built before the sections moved, and it
+        does drift — one live profile carried a salary range in candidate.md and
+        "Not specified — open to market rate" in the other, both in the same
+        system prompt, and a rule about product marketing stated softly in one
+        file and as an imperative in the other.
+
+        Nothing is changed here. Both halves still go to the model exactly as
+        before: which of two contradicting documents wins is not a decision to
+        make silently on a person's behalf, and moving their file is theirs to
+        approve. This only ends the silence — it sat unnoticed for three months
+        because nothing ever mentioned that a second profile existed at all.
+
+        Runs once per agent: _build_system_prompt is cached by _system().
+        """
+        second = loaded.get("job_preferences.md")
+        if not second:
+            return
+        try:
+            from onboarding.profile_frame import DECLARED_SECTIONS, KEY_OWNERS
+        except Exception:
+            return
+
+        restated = set()
+        declared_lower = {s.lower() for s in DECLARED_SECTIONS}
+        for line in second.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                heading = stripped.lstrip("#").strip().lower()
+                # "Salary" against "Desired Salary": a heading that is part of a
+                # section the frame owns is the same subject under a shorter name,
+                # which is exactly how the two drifted apart unnoticed.
+                for declared in declared_lower:
+                    if heading and (heading == declared or heading in declared.split()):
+                        restated.add(declared)
+            elif ":" in stripped:
+                key = stripped.split(":", 1)[0].strip().lower()
+                if key in KEY_OWNERS:
+                    restated.add(key)
+
+        if restated:
+            print(f"   ⚠️  job_preferences.md restates what candidate.md owns "
+                  f"({', '.join(sorted(restated))}) — both are in the system prompt, "
+                  f"so the model is reading two answers to the same question")
+            if _SESSION_REPORTER is not None:
+                _SESSION_REPORTER.emit(
+                    "This profile has two files describing the same preferences — "
+                    "they can disagree with each other.", actor="llm", level="warn")
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 

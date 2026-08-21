@@ -116,6 +116,62 @@ def section_for_key(key: str) -> str:
     return KEY_OWNERS.get(key, OPEN_VOCABULARY_SECTION)
 
 
+# Who each section is FOR. The frame has always said which sections exist; it has
+# never said which of them any particular call has business reading, and the whole
+# profile went into the system prompt of every call as one undivided block.
+#
+# That is not tidiness. Scoring is "this position against this person": a salary
+# range and a relocation preference say nothing about whether they can do the job,
+# and they were sitting in the scorer's context anyway, influencing by presence
+# with no rule attached. The answerer has the opposite need — an employer's
+# question arrives unannounced ("desired salary?", "willing to relocate?"), and
+# anything missing is a question it cannot answer.
+#
+# Declared here and not yet enforced: this map is the vocabulary, and projecting
+# each call onto its own slice is a separate change with its own measurements.
+# Declaring it first is what makes that change reviewable instead of a rewrite.
+SECTION_READERS = {
+    # Who they are, in the vacancy's terms. `edge` is the line a cover letter
+    # opens from; `aspiration` moves the score; `stop_categories` is read by the
+    # block validator, in code, off this same line.
+    "Career Profile": ("score", "cover"),
+    "Skills": ("score", "cover"),
+    # A hint, and the scoring prompt says outright that a hint alone does not
+    # establish anything — it needs a case to support it.
+    "Additional": ("score",),
+    # The stack, when a posting asks for one by name. Undeclared until now, which
+    # is the likeliest reason it behaved unpredictably: present in every prompt,
+    # named by none of them.
+    "Tools": ("score", "answer"),
+    # Answerer only, all four. None of them is evidence about capability, and
+    # each is exactly what an employer's form asks for.
+    "Desired Salary": ("answer",),
+    "Relocation & Work Format": ("answer",),
+    "Languages": ("answer",),
+    "Identity": ("answer",),
+}
+
+# The call types a reader may name. "answer" covers both form filling and the
+# live HR chat: they differ in where the answer is typed, not in what they are
+# allowed to know about the person.
+READER_KINDS = frozenset({"score", "cover", "answer"})
+
+
+# Evidence is one list with a discriminant, so its readers are declared once
+# rather than eight times. Every kind of case — a job, a degree, a certificate, a
+# side project — is the person's own record of what they have done, and all three
+# kinds of call have business reading it: the scorer to match it, the letter to
+# quote it, the answerer because an employer can ask about any of it.
+EVIDENCE_READERS = ("score", "cover", "answer")
+
+
+def readers_of(section: str) -> tuple:
+    """Which kinds of call this section is addressed to. Empty tuple = nobody's."""
+    if section in HEADING_KINDS:
+        return EVIDENCE_READERS
+    return SECTION_READERS.get(section, ())
+
+
 # An evidence item whose kind is missing or outside the vocabulary is employment.
 # Not `other`: the catch-all has always meant "an ordinary job we could not label",
 # and profiles on disk carry values like "work" that mean exactly that.
