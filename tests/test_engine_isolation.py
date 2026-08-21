@@ -111,6 +111,14 @@ _expected_llm_agent_class_members = {
     # kind of reader it speaks as — local, and about this repo's own prompts;
     # no transport, tier or billing notion travels with it.
     "_CALL_READERS",
+    # Split scoring, added 2026-08-21 behind SNAGGD_SPLIT_SCORING. Two calls
+    # instead of one — read the posting for what it asks, then read the profile
+    # against that list — and the score computed here rather than asked for. All
+    # of it is about this repo's own prompts and its own arithmetic: no
+    # transport, tier or billing concept arrives with any of it, and a standalone
+    # engine benefits from the same split.
+    "_REQUIREMENT_WEIGHTS", "_VERDICT_CREDIT", "_score_from_verdicts",
+    "_requirements_of", "_match_requirements", "score_vacancy_split",
     "_load_profile", "_load_prompt", "_sanitize_score_result", "_is_template_echo", "_parse_json",
     # A block is only as good as its vocabulary and its evidence (2026-08-16):
     # the categories come from the candidate's own profile, and an answer that

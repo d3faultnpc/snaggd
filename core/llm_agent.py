@@ -51,6 +51,7 @@ except ImportError:
 # (the diagnostic "🧮 LLM call #N..." print in _chat_completion) is
 # unaffected either way — this dict only shapes what the reporter receives.
 _CALL_TYPE_NARRATION = {
+    "requirements": "Reading what this vacancy actually asks for…",
     "cover": "Writing your cover letter…",
     "fill_form": "Reading an unfamiliar question, working out the answer…",
     "modal_action": "Reading an unfamiliar pop-up…",
@@ -101,6 +102,10 @@ _STRUCTURED_TEMPERATURE = 0.0
 _PROSE_TEMPERATURE = 0.7
 _CALL_TEMPERATURE = {
     "score": _STRUCTURED_TEMPERATURE,
+    # Stage one of split scoring: reading a posting for what it asks. Structured
+    # for the same reason as the rest of them — the answer is a list of facts
+    # about a document, and there is nothing to be creative about.
+    "requirements": _STRUCTURED_TEMPERATURE,
     "fill_form": _STRUCTURED_TEMPERATURE,
     "modal_action": _STRUCTURED_TEMPERATURE,
     "resume_parse": _STRUCTURED_TEMPERATURE,
@@ -369,6 +374,150 @@ class LLMAgent:
             _SESSION_REPORTER.emit(f'Cover letter drafted: "{_preview}{_ellipsis}"', actor="llm")
         return stripped
 
+    # A requirement the posting calls mandatory counts double. "unspecified" sits
+    # with "nice" rather than with "must": when a posting does not say how much
+    # something matters, treating it as mandatory is our invention, not its.
+    _REQUIREMENT_WEIGHTS = {"must": 2.0, "nice": 1.0, "unspecified": 1.0}
+    # "silent" is deliberately absent. A verdict of silent leaves the denominator
+    # entirely — see _score_from_verdicts.
+    _VERDICT_CREDIT = {"met": 1.0, "partial": 0.5, "absent": 0.0}
+
+    def _score_from_verdicts(self, requirements: list, verdicts: list):
+        """Coverage as a ratio: what the profile closes over what was asked.
+
+        A ratio rather than a sum, because the demand belongs in the denominator.
+        A junior posting with three requirements where two are met is a better
+        match than a senior one with twelve where four are — and the absolute
+        bands the single-call prompt uses cannot express that at all: they measure
+        the candidate, not the relation.
+
+        A `silent` requirement leaves the denominator rather than scoring zero.
+        Counting silence as failure is the same defect fixed in the domain
+        modifier on 2026-08-16 — a profile that never discusses punctuality has
+        not failed at it. Most of what a short profile does not cover is silence.
+
+        Returns None when nothing was judgeable at all. There is no honest number
+        for that, and inventing one is what this whole layer exists to stop.
+        """
+        by_index = {v.get("i"): v for v in verdicts if isinstance(v, dict)}
+        earned = asked = 0.0
+        for i, req in enumerate(requirements):
+            verdict = (by_index.get(i) or {}).get("verdict")
+            if verdict not in self._VERDICT_CREDIT:
+                continue  # silent, missing, or a word we did not ask for
+            weight = self._REQUIREMENT_WEIGHTS.get(req.get("importance"), 1.0)
+            asked += weight
+            earned += weight * self._VERDICT_CREDIT[verdict]
+        if asked <= 0:
+            return None
+        return max(0, min(100, round(100 * earned / asked)))
+
+    def _requirements_of(self, vacancy_text: str) -> dict:
+        """Stage one: what the posting asks for. No candidate in this call.
+
+        Deliberately given no profile at all, the way ask_modal_action is: the
+        question is about the posting, and a profile in the context is something
+        to read the posting against — which is the entanglement this layer exists
+        to take apart.
+
+        A requirement whose quote cannot be found in the posting is dropped. The
+        quote is the whole basis for calling something a requirement, and unlike
+        every other rule in these prompts this one can be enforced rather than
+        asked for.
+        """
+        content = self._chat_completion(
+            model=self.model, max_tokens=900, call_type="requirements",
+            messages=[
+                {"role": "system", "content": "You read job postings and list what they ask for."},
+                {"role": "user", "content": f"{self._load_prompt('vacancy_requirements.md')}"
+                                            f"\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
+            ],
+        )
+        parsed = self._parse_json((content or "{}").strip(), fallback={})
+        haystack = " ".join(vacancy_text.split()).lower()
+        kept = []
+        for req in parsed.get("requirements") or []:
+            if not isinstance(req, dict) or not str(req.get("text", "")).strip():
+                continue
+            quote = " ".join(str(req.get("quote", "")).split()).lower()
+            if not quote or quote not in haystack:
+                continue
+            kept.append({"text": str(req["text"]).strip(),
+                         "importance": req.get("importance", "unspecified"),
+                         "quote": req.get("quote", "")})
+        parsed["requirements"] = kept
+        return parsed
+
+    def _match_requirements(self, requirements: list) -> dict:
+        """Stage two: the candidate against that list, with no numbers in it.
+
+        The posting's own text is not sent again — the requirements are what is
+        left of it, and they are what the candidate is being read against. So
+        neither call carries both large documents, which is where the input cost
+        of the single call actually goes.
+        """
+        import json as _json
+        listing = "\n".join(
+            f"{i}. [{r.get('importance', 'unspecified')}] {r['text']}"
+            for i, r in enumerate(requirements))
+        prompt = self._load_prompt("requirement_match.md").replace("{{REQUIREMENTS}}", listing)
+        content = self._chat_completion(
+            model=self.model, max_tokens=900, call_type="score",
+            messages=[
+                {"role": "system", "content": self._system("score")},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return self._parse_json((content or "{}").strip(), fallback={})
+
+    def score_vacancy_split(self, vacancy_text: str) -> dict | None:
+        """Both stages plus our own arithmetic. None means "this did not work".
+
+        Returning None rather than a guess is the point: the caller falls back to
+        the single call, one extra request in a rare case, instead of a number
+        with nothing behind it.
+        """
+        stage1 = self._requirements_of(vacancy_text)
+        meta1 = last_call_snapshot()
+        requirements = stage1.get("requirements") or []
+        if not requirements:
+            return None
+
+        stage2 = self._match_requirements(requirements)
+        meta2 = last_call_snapshot()
+        verdicts = stage2.get("verdicts") or []
+        score = self._score_from_verdicts(requirements, verdicts)
+        if score is None:
+            return None
+
+        judged = {v.get("i"): v.get("verdict") for v in verdicts if isinstance(v, dict)}
+        gaps = [r["text"] for i, r in enumerate(requirements)
+                if judged.get(i) in ("absent", "partial")]
+
+        result = {
+            "score": score,
+            "matched_skills": stage2.get("matched_skills") or [],
+            "gaps": gaps,
+            "signals": stage1.get("signals") or [],
+            "stop_match": stage2.get("stop_match"),
+            "stop_basis": stage2.get("stop_basis"),
+            "stop_evidence": stage2.get("stop_evidence"),
+            "vacancy_role_type": stage1.get("vacancy_role_type"),
+            "role_type_match": stage2.get("role_type_match"),
+        }
+        scored = self._sanitize_score_result(result)
+        # Both calls, or the token figures understate the split by half and the
+        # comparison it exists to enable would be wrong in its own favour.
+        scored["call_meta"] = {
+            "generation_id": meta2.get("generation_id"),
+            "generation_id_stage1": meta1.get("generation_id"),
+            "tokens_prompt": (meta1.get("tokens_prompt") or 0) + (meta2.get("tokens_prompt") or 0),
+            "tokens_completion": (meta1.get("tokens_completion") or 0) + (meta2.get("tokens_completion") or 0),
+            "stages": 2,
+        }
+        scored["requirements"] = requirements
+        return scored
+
     def score_vacancy(self, vacancy_text: str) -> dict:
         """Returns {score, matched_skills, gaps, signals, stop_match}.
 
@@ -376,6 +525,12 @@ class LLMAgent:
         The list of blocked categories comes from stop_categories in the system prompt
         (loaded from job_preferences.md) — no extra parameters needed.
         """
+        if os.getenv("SNAGGD_SPLIT_SCORING", "").strip() in ("1", "true", "yes"):
+            split = self.score_vacancy_split(vacancy_text)
+            if split is not None:
+                return split
+            print("   ℹ️ split scoring produced nothing to judge — falling back to one call")
+
         prompt = self._load_prompt("match_scoring.md")
         content = self._chat_completion(
             model=self.model,
