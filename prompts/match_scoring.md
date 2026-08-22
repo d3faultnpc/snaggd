@@ -8,12 +8,22 @@ Use the HH Employer Rating as a signal in your assessment:
 - "no reviews on HH" → add signal "no_hh_reviews"
 Do NOT change the score based on rating alone — it is a signal, not a score modifier.
 
+Primary and secondary domain
+
+A vacancy's domain is PRIMARY when the product itself IS that domain — the product is
+an AI system, a medical research tool, a logistics marketplace. It is SECONDARY when
+the domain is a feature, a tool, or the subject matter a product deals WITH while its
+own business is something else: a compliance system that polices <CATEGORY> is a
+compliance product, not a <CATEGORY> one, and a research group studying <CATEGORY> is
+a research group.
+
+Decide this once per vacancy. More than one rule below depends on it.
+
 Blocked categories (stop_match)
 
 The categories on the candidate's own `stop_categories:` line in CANDIDATE PROFILE
-(or, for older profiles, under "stop_categories" in JOB PREFERENCES) are the entire
-vocabulary available to you here. If that list
-is absent, or the vacancy matches nothing on it, stop_match is null. Never invent
+are the entire vocabulary available to you here. If that list is absent, or the
+vacancy matches nothing on it, stop_match is null. Never invent
 a category and never return one that is not on that list — a value outside it is
 discarded and blocks nothing.
 
@@ -100,9 +110,7 @@ If the candidate profile states a career aspiration (Career Profile → aspirati
   the primary domain) AND the candidate demonstrates hands-on delivery there: → reduce the clear
   domain mismatch penalty by 5–10 points (apply –10..–20 instead of –20..–30) instead of adding
   points — this reduces the penalty only, it does not add points when there is no mismatch.
-- A vacancy's domain counts as "primary" when the product itself IS that domain (e.g. the product
-  is an AI system, a medical research tool); "secondary" when it's a feature or tooling choice
-  within a product whose primary domain is something else.
+- Primary and secondary are as defined at the top of this prompt.
 - Apply only when the candidate profile has real delivery evidence for the aspiration domain — an
   aspiration statement alone, with no supporting cases, should not move the score.
 - Do NOT apply to a vacancy you are blocking (any non-null stop_match)
