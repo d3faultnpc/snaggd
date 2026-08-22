@@ -62,9 +62,19 @@ def run():
     print("\nCredential is non-compensable, and reports rather than enforces")
     strong_but_unlicensed = {a: "ideal" for a in AXES}
     strong_but_unlicensed["credential"] = "miss"
-    v = score_from_axes(strong_but_unlicensed)
-    check("a missing licence is reported as non-compensable",
+    v = score_from_axes(strong_but_unlicensed, grounded={"credential"})
+    check("a missing licence is reported as non-compensable — when the document "
+          "actually carries a certificates section, so the absence is the person's "
+          "answer rather than a question nobody asked",
           v.non_compensable == ("credential",))
+    check("but an UNGROUNDED miss is not a hard gate: 11 of 13 live profiles carry "
+          "no certificates section, and refusing to apply forever on that decides "
+          "from data our own onboarding never collected",
+          score_from_axes(strong_but_unlicensed, grounded=set()).non_compensable == ())
+    check("and neither is one where we could not tell at all",
+          score_from_axes(strong_but_unlicensed).non_compensable == ())
+    check("the score falls either way — only the hard gate waits",
+          score_from_axes(strong_but_unlicensed, grounded=set()).score == 80)
     check("but the score is still computed, not zeroed — zeroing is the disease, "
           f"not the cure (got {v.score})", v.score is not None and v.score > 0)
     check("the decision layer gets a number it can still rank by", v.score == 80)
@@ -72,7 +82,7 @@ def run():
     weak_tools = {a: "ideal" for a in AXES}
     weak_tools["tools"] = "miss"
     check("a missing TOOL is compensable and is not reported as blocking",
-          score_from_axes(weak_tools).non_compensable == ())
+          score_from_axes(weak_tools, grounded=set(AXES)).non_compensable == ())
     check("credential is the only non-compensable axis",
           NON_COMPENSABLE == frozenset({"credential"}))
 
@@ -136,12 +146,11 @@ def run():
     check("a heading with nothing under it is not content",
           "tools" not in axes_present(thin + "\n## Tools\n"))
 
-    # The hand-written case, and the reason coercion is conditional. One live profile
-    # is written with its own headings — `## Навыки`, `## Side Projects` — and the
-    # frame recognises none of them. Coercing on that would silence every axis and
-    # score nothing at all: absence is only meaningful once presence is legible.
+    # A hand-written profile whose headings the frame does not know yields nothing
+    # here, and that is not a case to accommodate — the document is canonicalised, not
+    # worked around. All it costs is the hard credential gate, which stays shut.
     handwritten = "# Support Lead\n\n## Навыки\nsql, excel\n\n## ACME · 2020\n- did things\n"
-    check("a document written in its own vocabulary yields nothing, not five absences",
+    check("a document written in its own vocabulary yields nothing",
           axes_present(handwritten) == set())
 
     check("an empty document speaks to nothing", axes_present("") == set())

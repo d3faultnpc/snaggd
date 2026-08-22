@@ -59,8 +59,9 @@ print("\nThe record can be argued with")
 r = sanitize(axes={"skills": IDEAL, "tools": MISS, "credential": MISS})
 check("it carries the grades the number was built from",
       r["axes"]["tools"] == {"grade": "miss", "anchor": "absent from record"})
-check("and names the axis whose miss cannot be bought back",
-      r["non_compensable"] == ["credential"])
+check("and does NOT hard-gate on a credential the document never claimed to list — "
+      "this bare instance carries no profile, so the gate has nothing to stand on",
+      r["non_compensable"] == [])
 check("and stamps which shape it is in, so aggregates can tell eras apart",
       r["scoring_format"] == "axes-v1")
 

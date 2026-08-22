@@ -47,17 +47,16 @@ check("and that grade is spelled out as not-a-middling-verdict — `neutral` is 
       "one most likely to be used as a polite average",
       "not a polite way to avoid deciding" in _SCORING
       and "removes the axis" in _SCORING)
-check("silence in the profile is still not a mismatch",
-      "evidence of nothing, not evidence of" in _SCORING)
-# The sharpest form of the same rule, and the one a live answer got wrong: a profile
-# with no education section, against a posting that asks for a degree. `miss` there
-# asserts the person has no degree — which they never said. 6 of 13 live profiles
-# state no education at all, and 11 of 13 carry no certificates, so grading an absent
-# section as a shortfall would penalise most people for a question nobody asked them.
-check("an axis the profile does not speak to is neutral, not missed",
-      "or the profile says nothing\n  about this axis at all" in _SCORING)
-check("and `miss` is scoped to a profile that DOES speak to the axis",
-      "the profile speaks to this axis, and what was asked is not there" in _SCORING)
+check("silence in the profile is not evidence of DISTANCE — the rule that survives",
+      "not thereby far from this vacancy" in _SCORING)
+# What does NOT survive: an earlier version of this prompt said an axis the profile
+# carries no section for is `neutral`. It read as fair and was wrong twice — it
+# inflated the score by removing a real gap, and the profile is the document an
+# employer reads, so what it does not state, nobody knows. Absent is missed.
+check("an axis the posting asked about and the profile does not evidence is missed",
+      "asked for, and not evidenced anywhere in the profile" in _SCORING)
+check("and `neutral` is about the POSTING, never about the profile",
+      "`neutral` is about the POSTING, never about the profile" in _SCORING)
 check("the anchor has a side — it names what drove the grade, not what softened it",
       "The anchor names what DROVE the grade" in _SCORING)
 

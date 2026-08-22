@@ -140,7 +140,7 @@ def normalise_label(raw) -> str | None:
     return label if label in LABELS else None
 
 
-def score_from_axes(labels: dict) -> Verdict:
+def score_from_axes(labels: dict, grounded: set | None = None) -> Verdict:
     """Axis labels -> a score, with the working kept.
 
     `neutral` is excluded from the denominator rather than counted as half. This is
@@ -178,7 +178,12 @@ def score_from_axes(labels: dict) -> Verdict:
         total += LABEL_VALUES[label] * weight
         weight_sum += weight
         in_play.append(axis)
-        if label == "miss" and axis in NON_COMPENSABLE:
+        # A non-compensable miss has to be grounded in a section the document
+        # actually carries — see axes_present. Without that, "never apply" would be
+        # decided by what our own onboarding failed to ask. `grounded=None` means we
+        # could not tell, and an ungrounded hard gate is not one we will impose.
+        if label == "miss" and axis in NON_COMPENSABLE \
+                and grounded is not None and axis in grounded:
             non_comp.append(axis)
 
     # No axis in play is not a score of zero. It is the absence of a judgement, and
@@ -231,23 +236,21 @@ def validate_matched_skills(returned, declared) -> tuple[list, int]:
 
 
 def axes_present(profile_markdown: str) -> set:
-    """Which axes this profile actually speaks to.
+    """Which axes this profile's document actually carries a section for.
 
-    An axis whose sections the document does not carry cannot be graded, and the
-    difference matters more than it looks. A profile with no education section says
-    nothing about education — grading that `miss` asserts the person holds no degree,
-    which they never said. What it actually records is that nobody asked them.
+    NOT used to soften a grade. An absent section is a real gap in the document an
+    employer reads, and a degree that is not on the CV is not a degree the posting can
+    count — grading it `miss` is correct, and an earlier version of this module that
+    coerced such axes to `neutral` was wrong twice over: it inflated scores, and its
+    escape hatch for a hand-written profile was accommodating a broken document
+    instead of fixing it.
 
-    Measured on the live profiles: 6 of 13 state no education at all and 11 of 13
-    carry no certificates. Letting an absent section read as a shortfall would
-    penalise most people for a gap in our own onboarding, on an axis where a miss is
-    non-compensable.
-
-    The prompt says this too. The prompt saying it is not enough — it was asked
-    politely on 2026-08-22 and the model still graded education `weak` on a profile
-    that has no education section, twice out of twelve, and `miss` once on another
-    model. This is the mechanism behind the rule: we know what the document contains,
-    so we do not have to ask.
+    What it IS for: the non-compensable gate. `credential: miss` is meant to say "no
+    licence, so the job is impossible" — but only 2 of 13 live profiles carry a
+    certificates section at all, so for the other eleven a miss there records that we
+    never collected credentials, not that the person holds none. Refusing to apply
+    forever on that is a decision made from our own missing data. The score still
+    falls; the hard gate waits until the document can support it.
     """
     if not profile_markdown:
         return set()

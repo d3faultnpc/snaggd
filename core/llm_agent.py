@@ -809,27 +809,11 @@ class LLMAgent:
             grades[axis] = grade
             axes[axis] = {"grade": grade, "anchor": anchor}
 
-        # An axis the document does not speak to cannot be graded, and the prompt
-        # saying so was not enough — asked politely, the model still graded education
-        # `weak` on a profile with no education section, twice out of twelve. So the
-        # code decides it: we know what the document contains.
-        #
-        # Only when the profile speaks our vocabulary at all. A hand-written one whose
-        # headings the frame does not recognise yields an empty set, and coercing on
-        # that would silence every axis and score nothing — absence is only meaningful
-        # once presence is legible.
-        present = self._profile_axes()
-        ungrounded = []
-        if present:
-            for axis in list(grades):
-                if axis not in present and grades.get(axis) != "neutral":
-                    ungrounded.append(axis)
-                    grades[axis] = "neutral"
-                    axes.pop(axis, None)
-        if ungrounded:
-            result["axes_ungrounded"] = ungrounded
-
-        verdict = score_from_axes(grades)
+        # An absent section is a real gap in the document an employer reads, so it is
+        # graded as one. Grounding is passed only to the non-compensable gate: 11 of
+        # 13 live profiles carry no certificates section, and refusing to apply
+        # forever on a miss there would be deciding from data we never collected.
+        verdict = score_from_axes(grades, grounded=self._profile_axes())
         result["axes"] = axes
         result["score"] = verdict.score
         result["axes_in_play"] = list(verdict.in_play)

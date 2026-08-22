@@ -65,9 +65,8 @@ Grades, and they are the only five:
 - ideal — asked for, and the candidate already does exactly this, at this level
 - strong — asked for, and clearly covered; the distance is minor
 - weak — asked for, and only partly there
-- miss — asked for, the profile speaks to this axis, and what was asked is not there
-- neutral — THIS POSTING DOES NOT ASK ABOUT THIS AXIS, or the profile says nothing
-  about this axis at all.
+- miss — asked for, and not evidenced anywhere in the profile
+- neutral — THIS POSTING DOES NOT ASK ABOUT THIS AXIS.
 
 Read `neutral` again, because it is the grade most likely to be used wrongly. It is
 not "average", not "so-so", not a polite way to avoid deciding. It removes the axis
@@ -75,19 +74,15 @@ from the judgement completely. A posting that never mentions tooling gets `neutr
 on tools — not `weak`, because nothing was asked and therefore nothing is missing.
 Most vacancies will be `neutral` on at least one axis, and that is the normal case.
 
-The mirror of that rule: silence in the PROFILE is not a mismatch either, and this is
-the difference between `miss` and `neutral` on an axis the posting DID ask about.
+`neutral` is about the POSTING, never about the profile. If the posting asked and the
+profile does not evidence it, that is `miss` — the profile is the document an
+employer reads, and what it does not state, nobody knows. A degree that is not on
+the CV is not a degree the posting can count.
 
-A profile with no education section states nothing about education. Grading that
-`miss` would assert the person has no degree, which they never said — what it
-actually records is that nobody asked them. Same for tools, for certificates, for any
-axis the document simply does not carry: `neutral`.
-
-`miss` is for a profile that DOES speak to the axis and does not contain what was
-asked — a tools line that names five systems, none of them the one required.
-
-A profile naming no industry is likewise evidence of nothing, not evidence of
-distance: plenty of real professions are written without one.
+One thing silence in the profile is NOT: evidence of distance. A profile naming no
+industry is not thereby far from this vacancy — plenty of real professions are
+written without one, and the absence says nothing about fit either way. Grade the
+axes the posting raised, against what the document actually evidences.
 
 Do not grade a whole person. `weak` on an axis is a fact about the distance between
 one posting and one part of a record. It is not a verdict about the candidate, and
