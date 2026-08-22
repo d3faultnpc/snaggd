@@ -153,6 +153,29 @@ with tempfile.TemporaryDirectory() as tmp:
     check("score_vacancy not called — legacy cache entry satisfied the lookup",
           agent.score_vacancy.call_count == 0)
 
+# ── The loop reads these by name, and a rename would surface only in a live run ──
+# adapters/hh/adapter.py builds its log record straight off llm_cover attributes.
+# Nothing type-checks that, so a field renamed on one side raises AttributeError in
+# the middle of a session — after the model has been paid for and the page is open.
+# And the quieter failure is worse: a field that stops arriving leaves the evidence
+# layer, 913 entries deep on one live profile, silently missing a column.
+import re as _re  # noqa: E402
+
+_ADAPTER = (Path(__file__).parent.parent / "adapters" / "hh" / "adapter.py").read_text(encoding="utf-8")
+_read_by_adapter = set(_re.findall(r"llm_cover\.(last_[a-z_]+)", _ADAPTER))
+with patch.dict("os.environ", {"LLM_API_KEY": "test"}), patch("core.llm_agent.OpenAI"):
+    _cover_attrs = {a for a in dir(LLMCover(data_dir=Path(tempfile.mkdtemp()))) if a.startswith("last_")}
+_missing = sorted(_read_by_adapter - _cover_attrs)
+check(f"every field the loop reads off LLMCover exists on it (missing: {_missing or 'none'})",
+      not _missing)
+
+for _field in ("last_axes", "last_non_compensable", "last_matched_skills_dropped",
+               "last_scoring_format"):
+    check(f"{_field} reaches the record — the evidence layer is built on these",
+          _field in _read_by_adapter)
+check("and nothing still reads the fields that went with role_type",
+      not {"last_vacancy_role_type", "last_role_type_match", "last_gaps"} & _read_by_adapter)
+
 print()
 total = len(results)
 passed = sum(results)
