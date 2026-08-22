@@ -78,8 +78,15 @@ _score = project_for(_PROFILE, "score")
 check("the scorer does not read a salary — it is not evidence of capability",
       "Desired Salary" not in _headings(_score))
 check("nor a relocation preference", "Relocation & Work Format" not in _headings(_score))
-check("nor languages", "Languages" not in _headings(_score))
 check("nor personal contact details", "Identity" not in _headings(_score))
+check("but it DOES read languages — a language is a requirement a posting states "
+      "by name, and for a translator or a receptionist it is the requirement. "
+      "Withholding it was this map's sharpest defect: 11 of 13 live profiles "
+      "carry languages and the scoring prompt named them zero times",
+      "Languages" in _headings(_score))
+check("and it no longer reads what the person wants — role_type, edge and "
+      "aspiration are out of scope while the scorer is rebuilt on evidence",
+      "Career Profile" not in _headings(_score))
 
 _answer = project_for(_PROFILE, "answer")
 for _needed in ("Desired Salary", "Relocation & Work Format", "Languages", "Identity"):
@@ -126,8 +133,11 @@ os.environ.pop("SNAGGD_PROJECT_PROFILE", None)
 with redirect_stdout(StringIO()):
     _agent = LLMAgent(data_dir=_d)
     _a, _b = _agent._system("score"), _agent._system("answer_question")
-check("with the switch off every call reads the same whole file, exactly as before",
-      _a == _b and "Desired Salary" in _a)
+check("with the switch off the answerer still reads the whole file",
+      "Desired Salary" in _b and "Career Profile" in _b)
+check("but the scorer projects either way — it is not an option there, and a "
+      "scorer measured with the whole profile is not the scorer that ships",
+      _a != _b and "Desired Salary" not in _a)
 
 os.environ["SNAGGD_PROJECT_PROFILE"] = "1"
 with redirect_stdout(StringIO()):

@@ -538,13 +538,23 @@ class LLMAgent:
             print("   ℹ️ split scoring produced nothing to judge — falling back to one call")
 
         prompt = self._load_prompt("match_scoring.md")
+        # Passed in, not left to survive the projection. The block vocabulary used
+        # to reach the model only because it sat in a section the scorer happened
+        # to receive whole — together with four keys about what the person WANTS,
+        # which is what the projection is there to withhold. A list the answer is
+        # validated against is data this call needs; it says so.
+        declared = sorted(self._declared_stop_categories())
+        blocks = ("BLOCKED CATEGORIES (this candidate's own list — the entire "
+                  f"vocabulary available to you): {', '.join(declared)}"
+                  if declared else
+                  "BLOCKED CATEGORIES: this candidate declared none. stop_match is null.")
         content = self._chat_completion(
             model=self.model,
             max_tokens=400,
             call_type="score",
             messages=[
                 {"role": "system", "content": self._system("score")},
-                {"role": "user", "content": f"{prompt}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
+                {"role": "user", "content": f"{prompt}\n\n{blocks}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
             ],
         )
         # Taken here, one frame after the call and in the same thread — see
@@ -665,7 +675,15 @@ class LLMAgent:
         a side effect of installing a version. SNAGGD_PROJECT_PROFILE=1 enables.
         """
         reader = self._CALL_READERS.get(call_type or "")
-        if not reader or os.getenv("SNAGGD_PROJECT_PROFILE", "").strip() not in ("1", "true", "yes"):
+        # Scoring always projects. It is not an option there: judging whether a
+        # person can do a job while holding their salary range and relocation
+        # preference is the coupling this rebuild exists to remove, and a scorer
+        # measured with the whole profile in context is not the scorer that ships.
+        # Every other reader still waits behind the flag — the writer and the
+        # answerer legitimately want the whole document, and narrowing them is a
+        # separate change with its own measurements.
+        if reader and reader != "score" and \
+                os.getenv("SNAGGD_PROJECT_PROFILE", "").strip() not in ("1", "true", "yes"):
             reader = ""
         # Keyed by reader, not one string: a single cache would freeze whichever
         # slice happened to be built first and hand it to every other call.

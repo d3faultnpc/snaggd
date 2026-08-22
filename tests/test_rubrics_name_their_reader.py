@@ -44,12 +44,21 @@ def check(label, condition):
 print("\nNo section is left without a reader:")
 
 # Both vocabularies the frame keeps: the prose/key-value sections, and the
-# evidence headings. A section in either one with no reader is a rubric that
-# reaches the model with nothing said about what to do with it.
+# evidence headings. The sin is OMISSION, not emptiness. A section missing from
+# the map reaches every call with nothing said about what to do with it, because
+# project_for keeps what it does not recognise. A section mapped to an empty tuple
+# is the opposite: an explicit "addressed to nobody", and it reaches no one.
 _every_section = set(DECLARED_SECTIONS) | set(HEADING_KINDS)
-_unaddressed = sorted(s for s in _every_section if not readers_of(s))
-check(f"every declared section names who reads it (unaddressed: {_unaddressed or 'none'})",
+_unaddressed = sorted(s for s in _every_section
+                      if s not in SECTION_READERS and s not in HEADING_KINDS)
+check(f"every declared section is named in the map (missing: {_unaddressed or 'none'})",
       not _unaddressed)
+
+# Career Profile is the one addressed to nobody today, and it has to be visibly
+# deliberate rather than an oversight — the two look identical from a distance and
+# behave oppositely.
+check("a section addressed to nobody says so explicitly",
+      SECTION_READERS.get("Career Profile") == ())
 
 _unknown = sorted(s for s in SECTION_READERS if s not in _every_section)
 check(f"and no reader is declared for a section the frame does not have "
@@ -67,10 +76,16 @@ print("\nThe map says something, rather than listing everyone everywhere:")
 # If every section were readable by every call, the map would be decoration. The
 # four below are the ones an employer's form asks about and capability does not
 # depend on — they are the reason the split exists at all.
-_answerer_only = ("Desired Salary", "Relocation & Work Format", "Languages", "Identity")
+_answerer_only = ("Desired Salary", "Relocation & Work Format", "Identity")
 for _section in _answerer_only:
     check(f"{_section} is for answering questions, not for scoring capability",
           readers_of(_section) == ("answer",))
+
+# Languages left that list on 2026-08-22. It was there because the frame calls it
+# the open-vocabulary section, not because a language is unrelated to capability —
+# and for a translator, a salesperson or a hotel receptionist it IS the requirement.
+check("languages reach the scorer, because a posting names them as a requirement",
+      "score" in readers_of("Languages"))
 
 check("evidence is read by everyone, because it is the person's own record",
       all(set(readers_of(h)) == {"score", "cover", "answer"} for h in HEADING_KINDS))

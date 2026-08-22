@@ -93,11 +93,10 @@ An empty list is a correct answer when the vacancy asks for nothing the person l
 
 Blocked categories (stop_match)
 
-The categories on the candidate's own `stop_categories:` line in CANDIDATE PROFILE
-are the entire vocabulary available to you here. If that list is absent, or the
-vacancy matches nothing on it, stop_match is null. Never invent a category and never
-return one that is not on that list — a value outside it is discarded and blocks
-nothing.
+A BLOCKED CATEGORIES line below this prompt carries the candidate's own list, and it
+is the entire vocabulary available to you here. If it declares none, or the vacancy
+matches nothing on it, stop_match is null. Never invent a category and never return
+one that is not on that list — a value outside it is discarded and blocks nothing.
 
 A block means the application is never sent, so it has to rest on evidence, and your
 answer must say which kind:

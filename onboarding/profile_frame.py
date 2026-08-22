@@ -131,10 +131,22 @@ def section_for_key(key: str) -> str:
 # each call onto its own slice is a separate change with its own measurements.
 # Declaring it first is what makes that change reviewable instead of a rewrite.
 SECTION_READERS = {
-    # Who they are, in the vacancy's terms. `edge` is the line a cover letter
-    # opens from; `aspiration` moves the score; `stop_categories` is read by the
-    # block validator, in code, off this same line.
-    "Career Profile": ("score", "cover"),
+    # Addressed to nobody, for now, and that is a deliberate empty tuple rather
+    # than an omission (see project_for: undeclared is kept, declared-empty is
+    # not). The section holds five keys of four different natures — role_type and
+    # edge and aspiration are what the person wants, not_looking_for is a soft
+    # refusal, stop_categories is a hard one — and the first four are out of scope
+    # while the scorer is rebuilt on evidence alone. Measured reason: across 13
+    # live profiles role_type appears in 4 and aspiration in 2, and neither
+    # appears in ANY of the 8 built by the CV parser, while the scoring prompt
+    # named them 12 and 8 times. It was a rubric for one hand-written profile.
+    #
+    # stop_categories used to reach the model by riding along in here. It no
+    # longer depends on a section surviving projection: llm_agent passes the
+    # declared categories into the scoring call explicitly, because a vocabulary
+    # the answer is checked against is data the call needs, not a side effect of
+    # what the projection happened to keep.
+    "Career Profile": (),
     # The answerer needs these too: "list your key skills" is one of the most
     # ordinary things an employer's form asks, and a projection that withheld
     # them would leave it with nothing to answer from. Career Profile is
@@ -142,9 +154,12 @@ SECTION_READERS = {
     # stop_categories, and a refusal is not something to volunteer into a form
     # answer addressed to an employer.
     "Skills": ("score", "cover", "answer"),
-    # A hint, and the scoring prompt says outright that a hint alone does not
-    # establish anything — it needs a case to support it.
-    "Additional": ("score",),
+    # `interests` — a letter can use one, a score cannot. The scoring prompt used
+    # to carry a clause about low-confidence notes here needing a case to support
+    # them; that clause is gone with the domain modifier it qualified, and text
+    # reaching the model with no rule attached is the thing this map exists to
+    # stop, not something it should keep doing quietly.
+    "Additional": ("cover",),
     # The stack, when a posting asks for one by name. Undeclared until now, which
     # is the likeliest reason it behaved unpredictably: present in every prompt,
     # named by none of them.
@@ -153,7 +168,12 @@ SECTION_READERS = {
     # each is exactly what an employer's form asks for.
     "Desired Salary": ("answer",),
     "Relocation & Work Format": ("answer",),
-    "Languages": ("answer",),
+    # The scorer reads these because a language IS a requirement a posting states
+    # by name — for a translator, a salesperson or a hotel receptionist it is THE
+    # requirement — and it sits on the same axis as any other skill. Withholding
+    # it was the sharpest single defect in this map: 11 of 13 live profiles carry
+    # languages, and the scoring prompt named them zero times.
+    "Languages": ("score", "answer"),
     "Identity": ("answer",),
 }
 
@@ -203,8 +223,17 @@ def project_for(markdown: str, reader: str) -> str:
             if keep_current:
                 kept.extend(current)
             heading = line[3:].strip()
-            known = readers_of(heading)
-            keep_current = (reader in known) if known else True
+            known = SECTION_READERS.get(heading)
+            if heading in HEADING_KINDS:
+                known = EVIDENCE_READERS
+            # Three states, not two. Undeclared (None) is kept for everyone —
+            # removing something requires knowing it is addressed elsewhere, and not
+            # recognising a heading is not knowing that. Declared with no readers is
+            # addressed to NOBODY and goes. readers_of's own docstring has said
+            # "empty tuple = nobody's" since it was written, while this line read an
+            # empty tuple as ignorance and kept the section for every caller — a rule
+            # with nobody to enforce it.
+            keep_current = True if known is None else (reader in known)
             current = [line]
         else:
             current.append(line)
