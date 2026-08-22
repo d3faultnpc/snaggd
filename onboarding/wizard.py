@@ -36,44 +36,55 @@ except ImportError:
 # ── Pre-parse --profile before CONFIG import (same pattern as main.py) ────────
 from profiles import PROFILES_DIR, list_profiles, resolve_profile
 
-_pre = argparse.ArgumentParser(add_help=False)
-_pre.add_argument("--profile", type=str, default=None)
-_pre.add_argument("--list-profiles", action="store_true")
-_pre.add_argument("--setup-keys", action="store_true")
-_pre.add_argument("--step", type=int, choices=range(1, 8), default=None)
-_pre_args, _ = _pre.parse_known_args()
+# Only when this file IS the program. It has to run before `from config import
+# CONFIG` below, because CONFIG reads DATA_DIR at import time — that ordering is
+# real and is why the block sits at module level rather than in main().
+#
+# What was not intended is that importing this module ran argparse and could sit on
+# input(). api.py says so in two places and works around it by duplicating profile
+# handling rather than reusing this file; a probe script that only wanted
+# _llm_client() got the profile-name prompt instead. An import now gets whatever
+# DATA_DIR the importer set, which is the correct answer for an importer, and running
+# the wizard is unchanged.
+_active_profile = None
+if __name__ == "__main__":
+    _pre = argparse.ArgumentParser(add_help=False)
+    _pre.add_argument("--profile", type=str, default=None)
+    _pre.add_argument("--list-profiles", action="store_true")
+    _pre.add_argument("--setup-keys", action="store_true")
+    _pre.add_argument("--step", type=int, choices=range(1, 8), default=None)
+    _pre_args, _ = _pre.parse_known_args()
 
-if _pre_args.list_profiles:
-    profiles = list_profiles()
-    print("Available profiles:" if profiles else "No profiles yet.")
-    for p in profiles:
-        print(f"  {p:<20} configured")
-    sys.exit(0)
+    if _pre_args.list_profiles:
+        profiles = list_profiles()
+        print("Available profiles:" if profiles else "No profiles yet.")
+        for p in profiles:
+            print(f"  {p:<20} configured")
+        sys.exit(0)
 
-# Same profile law as main.py — no writes to a flat/legacy data dir, ever.
-# The three branches below cover every entry point into this file:
-if _pre_args.setup_keys:
-    # .env is global — not profile-scoped, nothing to resolve.
-    _active_profile = None
-elif _pre_args.step:
-    # Editing a single step of an EXISTING profile: same selection rule as main.py
-    # (auto-select if there's only one, otherwise --profile <name> is required).
-    _active_profile = resolve_profile(_pre_args.profile)
-    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
-elif _pre_args.profile:
-    # Full onboarding with an explicit name — create it (or reuse if it exists).
-    _active_profile = _pre_args.profile
-    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
-else:
-    # Full onboarding, no name given — ask once, up front. This is a create
-    # operation, so there's nothing to auto-select among; better to ask now
-    # than to silently write into a legacy flat data/ directory.
-    _name = input("Profile name for this resume (used as data/profiles/<name>/, e.g. 'pm'): ").strip()
-    while not _name:
-        _name = input("Profile name (required): ").strip()
-    _active_profile = _name
-    os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
-
+    # Same profile law as main.py — no writes to a flat/legacy data dir, ever.
+    # The three branches below cover every entry point into this file:
+    if _pre_args.setup_keys:
+        # .env is global — not profile-scoped, nothing to resolve.
+        _active_profile = None
+    elif _pre_args.step:
+        # Editing a single step of an EXISTING profile: same selection rule as main.py
+        # (auto-select if there's only one, otherwise --profile <name> is required).
+        _active_profile = resolve_profile(_pre_args.profile)
+        os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
+    elif _pre_args.profile:
+        # Full onboarding with an explicit name — create it (or reuse if it exists).
+        _active_profile = _pre_args.profile
+        os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
+    else:
+        # Full onboarding, no name given — ask once, up front. This is a create
+        # operation, so there's nothing to auto-select among; better to ask now
+        # than to silently write into a legacy flat data/ directory.
+        _name = input("Profile name for this resume (used as data/profiles/<name>/, e.g. 'pm'): ").strip()
+        while not _name:
+            _name = input("Profile name (required): ").strip()
+        _active_profile = _name
+        os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
 from config import CONFIG
 from onboarding.profile_frame import KIND_HEADINGS, normalise_kind
 from onboarding.resume_parser import ResumeParser, ResumeData

@@ -207,6 +207,23 @@ with patch.dict("os.environ", {"LLM_API_KEY": "test", "API_KEY": "test-api-key"}
 print()
 total = len(results)
 passed = sum(results)
+# ── Importing a module must not run a program ────────────────────────────────
+# onboarding/wizard.py parsed argv and could sit on input() at import time. The
+# ordering that put it there is real — DATA_DIR has to be in the environment before
+# config imports — but the cost was not intended: api.py says in two places that it
+# cannot import this file and duplicates profile handling to avoid it, and a probe
+# that wanted one helper function got the profile-name prompt instead.
+import subprocess as _sp  # noqa: E402
+
+_probe = _sp.run(
+    [sys.executable, "-c",
+     "import sys; sys.path.insert(0, %r); import onboarding.wizard; print('ok')" % str(_REPO_ROOT)],
+    capture_output=True, text=True, stdin=_sp.DEVNULL, timeout=60, cwd=str(_REPO_ROOT))
+check(f"onboarding/wizard.py imports without prompting or parsing argv "
+      f"(exit {_probe.returncode})", _probe.returncode == 0 and "ok" in _probe.stdout)
+check("and it asked nothing on the way",
+      "Profile name" not in _probe.stdout and "Profile name" not in _probe.stderr)
+
 print(f"{passed}/{total} passed")
 if passed != total:
     sys.exit(1)
