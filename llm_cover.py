@@ -66,7 +66,10 @@ class LLMCover:
         self._profile_hash = self._compute_profile_hash()
         self.cache = self._load_cache()
         self.cover_cache = self._load_cover_cache()
-        self.last_score: int = 0
+        # None, not 0. The reset path was changed to None and this declaration was
+        # not, so a fresh object carried a real-looking score before anything had been
+        # scored — the exact shape of every zero this project spent weeks chasing.
+        self.last_score: int | None = None
         self.last_matched_skills: list = []
         self.last_stop_match: Optional[str] = None
         # Why the block was made: "text" (the posting says so) or
