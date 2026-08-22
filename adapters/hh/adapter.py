@@ -493,7 +493,21 @@ class HHAdapter(SiteAdapter):
             score_details = {
                 'match_score': match_score,
                 'matched_skills': llm_cover.last_matched_skills,
-                'gaps': llm_cover.last_gaps,
+                # How many returned skills were not verbatim members of the
+                # person's own lists. Kept in the record because it is the health
+                # metric for the selection, not diagnostics: when it climbs, the
+                # model has gone back to paraphrasing and every aggregate built on
+                # matched_skills has quietly stopped meaning what it says.
+                'matched_skills_dropped': llm_cover.last_matched_skills_dropped,
+                # The grades the score was built from, so a number in this log can
+                # be taken apart. gaps used to sit here and produced 2190 distinct
+                # strings over 913 applications — an aggregate that had to guess,
+                # with a regex, when two of them meant the same thing.
+                'axes': llm_cover.last_axes,
+                'non_compensable': llm_cover.last_non_compensable,
+                # Which shape this record is in. Without it an aggregate cannot
+                # tell a verbatim selection from the paraphrases that preceded it.
+                'scoring_format': llm_cover.last_scoring_format,
                 'signals': signals,
                 # The blocking category belongs in the record itself, not only in
                 # the human-readable `reason` line below. Without it a log entry
@@ -520,13 +534,6 @@ class HHAdapter(SiteAdapter):
                 # written down, so "why was this skipped" ended at a bare score.
                 'threshold': min_score,
                 'threshold_source': threshold_source,
-                # The scorer produces both of these on every call and nothing
-                # carried them. role_type_match is the interesting one: it is
-                # allowed to be null only when the candidate states no role_type,
-                # so a null on a profile that states one is a fact about the
-                # answer, not about the person.
-                'vacancy_role_type': llm_cover.last_vacancy_role_type,
-                'role_type_match': llm_cover.last_role_type_match,
                 # What the call cost and how to find it again. None on a cache
                 # hit, because there was no call.
                 'call_meta': llm_cover.last_call_meta,

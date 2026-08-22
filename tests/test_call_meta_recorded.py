@@ -171,8 +171,11 @@ served = cover.score("a vacancy body")
 check("the second look is served from cache", served and cover.last_score == 50)
 check("and it carries no call meta — there was no call",
       cover.last_call_meta is None)
-check("nor the previous vacancy's role-type verdict",
-      cover.last_role_type_match is None)
+check("but the grades DO come back, because they are this vacancy's own answer "
+      "rather than a fact about the call that produced it",
+      sorted(cover.last_axes) == ["skills", "tools"]
+      and cover.last_axes["tools"]["grade"] == "miss"
+      and cover.last_scoring_format == "axes-v1")
 
 
 print(f"\n{sum(results)}/{len(results)} passed")

@@ -46,8 +46,8 @@ class LLMCover:
       cover field, followed later by chatik) — the second call reuses the
       same cached text instead of generating a different one.
 
-    Exposes last_score, last_matched_skills, last_gaps, last_stop_match,
-    last_vacancy_role_type, last_signals after score(), and
+    Exposes last_score, last_matched_skills, last_axes, last_stop_match,
+    last_signals after score(), and
     last_cover_template_name after cover() — so the adapter can read results
     without an extra LLM round-trip.
     """
@@ -68,7 +68,6 @@ class LLMCover:
         self.cover_cache = self._load_cover_cache()
         self.last_score: int = 0
         self.last_matched_skills: list = []
-        self.last_gaps: list = []
         self.last_stop_match: Optional[str] = None
         # Why the block was made: "text" (the posting says so) or
         # "company_knowledge" (it does not, but the employer is known to operate
@@ -80,12 +79,20 @@ class LLMCover:
         # A suppressed block is invisible from outside — the vacancy just carries
         # on — so without this the suppression could never be reviewed.
         self.last_stop_suppressed: Optional[dict] = None
-        self.last_vacancy_role_type: Optional[str] = None
-        # Whether the vacancy's contribution style matched the candidate's own
-        # role_type. The scorer has always answered this; nothing carried it, so
-        # a run could not show that the model reported "nothing to compare" on a
-        # profile that plainly states a role_type.
-        self.last_role_type_match: Optional[bool] = None
+        # The grades the score was built from, so the number can be argued with.
+        # vacancy_role_type and role_type_match used to sit here; both were fields
+        # the scorer computed only for the letter to read, and they went with the
+        # role_type rubric that no profile built by the CV parser ever filled in.
+        self.last_axes: dict = {}
+        # Axes graded `miss` whose absence cannot be bought back by strength
+        # elsewhere. Advisory — the selector decides, this only carries it.
+        self.last_non_compensable: list = []
+        # How many returned skills were not verbatim members of the person's own
+        # lists. The health metric for the selection: when it climbs, the model
+        # has gone back to paraphrasing and the aggregate has stopped meaning
+        # what it says.
+        self.last_matched_skills_dropped: int = 0
+        self.last_scoring_format: Optional[str] = None
         # What the call itself did: provider generation id and token counts.
         # None on a cache hit, and that is the truth about a cache hit — there
         # was no call. Never written into self.cache for the same reason.
@@ -102,8 +109,8 @@ class LLMCover:
     def score(self, vacancy_text: str) -> bool:
         """Scores the vacancy — the only LLM call needed before adapter.py's
         stop_match/min_score/dry_run gates decide whether a cover is even
-        worth generating. Sets last_score/last_matched_skills/last_gaps/
-        last_stop_match/last_vacancy_role_type/last_signals. Returns False
+        worth generating. Sets last_score/last_matched_skills/last_axes/
+        last_stop_match/last_signals. Returns False
         only when the LLM is genuinely unavailable (all last_* reset to
         empty/zero) — caller treats that as skipped_llm_unavailable, same
         contract the old template_name == "static_fallback" check used to
@@ -124,7 +131,6 @@ class LLMCover:
             # before it — an observation attributed to the wrong call, which is
             # worse than no observation at all.
             self.last_call_meta = None
-            self.last_role_type_match = None
             self.last_stop_suppressed = None
             return True
 
@@ -142,28 +148,42 @@ class LLMCover:
             self.last_score_error = f"{type(e).__name__}: {e}"
             return False
 
-        self.last_score = score_data.get("score", 0)
+        # No `or 0` on the score. None means no axis was in play — the model
+        # answered and said nothing this posting asks about could be judged — and
+        # a 0 there is a real number standing in for a missing answer, which is
+        # exactly what made every zero this project chased unreadable.
+        self.last_score = score_data.get("score")
         self.last_matched_skills = score_data.get("matched_skills", [])
-        self.last_gaps = score_data.get("gaps", [])
         self.last_stop_match = score_data.get("stop_match", None)
         self.last_stop_basis = score_data.get("stop_basis", None)
         self.last_stop_evidence = score_data.get("stop_evidence", None)
         self.last_stop_suppressed = score_data.get("stop_suppressed", None)
-        self.last_vacancy_role_type = score_data.get("vacancy_role_type", None)
-        self.last_role_type_match = score_data.get("role_type_match", None)
+        self.last_axes = score_data.get("axes") or {}
+        self.last_non_compensable = score_data.get("non_compensable") or []
+        self.last_matched_skills_dropped = score_data.get("matched_skills_dropped", 0)
+        self.last_scoring_format = score_data.get("scoring_format")
         self.last_call_meta = score_data.get("call_meta", None)
         self.last_signals = score_data.get("signals", [])
 
-        # Cover/template slots (indices 0/1) kept as placeholders — never read
-        # back by _restore_score_from_cache, which only touches indices 2-7 —
-        # so the array shape stays identical to the old generate()-written
-        # entries and old cached entries keep working unchanged, no format
-        # version bump needed.
-        self.cache[text_hash] = [
-            None, "pending", self.last_signals, self.last_score,
-            self.last_matched_skills, self.last_gaps, self.last_stop_match,
-            self.last_vacancy_role_type, self.last_stop_basis, self.last_stop_evidence,
-        ]
+        # A dict, not a positional array. The array had reached ten slots across
+        # four numbered formats, each one appending to the end because inserting
+        # anywhere else would have silently reassigned every field after it — and
+        # the fields being added now are not at the end of anything. Named keys
+        # end that class of bug rather than surviving one more instance of it;
+        # _restore_score_from_cache still reads every old list shape.
+        self.cache[text_hash] = {
+            "signals": self.last_signals,
+            "score": self.last_score,
+            "matched_skills": self.last_matched_skills,
+            "matched_skills_dropped": self.last_matched_skills_dropped,
+            "axes": self.last_axes,
+            "non_compensable": self.last_non_compensable,
+            "stop_match": self.last_stop_match,
+            "stop_basis": self.last_stop_basis,
+            "stop_evidence": self.last_stop_evidence,
+            "stop_suppressed": self.last_stop_suppressed,
+            "scoring_format": self.last_scoring_format,
+        }
         self._save_cache()
         print("   🤖 Scored via LLM")
         return True
@@ -197,10 +217,8 @@ class LLMCover:
         match_context = {
             "score": self.last_score,
             "matched_skills": self.last_matched_skills,
-            "gaps": self.last_gaps,
             "stop_match": self.last_stop_match,
             "signals": self.last_signals,
-            "vacancy_role_type": self.last_vacancy_role_type,
         }
 
         try:
@@ -220,15 +238,16 @@ class LLMCover:
     # ── Private helpers ───────────────────────────────────────────────────────
 
     def _reset_score_defaults(self) -> None:
-        self.last_score = 0
+        self.last_score = None
         self.last_matched_skills = []
-        self.last_gaps = []
         self.last_stop_match = None
         self.last_stop_basis = None
         self.last_stop_evidence = None
         self.last_stop_suppressed = None
-        self.last_vacancy_role_type = None
-        self.last_role_type_match = None
+        self.last_axes = {}
+        self.last_non_compensable = []
+        self.last_matched_skills_dropped = 0
+        self.last_scoring_format = None
         self.last_call_meta = None
         self.last_signals = []
 
@@ -259,33 +278,54 @@ class LLMCover:
             return "noprofile"
 
     def _restore_score_from_cache(self, entry: list) -> list:
-        """Restores last_score / skills / gaps / stop_match / vacancy_role_type from cache.
+        """Restores the scored fields from a cache entry. Returns the signals list.
 
-        Cache format v4: v3 + [stop_basis, stop_evidence] — appended, so a v3 entry
-        still restores; it simply has no basis to restore, which is the truth about
-        an entry written before a block had to state one.
-        Cache format v3: [cover, template, signals, score, skills, gaps, stop_match, role_type]
-        Cache format v2: [cover, template, signals, score, skills, gaps, stop_match]
-        Cache format v1: [cover, template, signals, score, skills, gaps]
-        Returns: signals list.
+        Two shapes, and both are on disk right now. Entries written from 2026-08-22
+        are dicts with named keys. Everything before that is a positional array that
+        grew through four numbered formats — v1 six slots, then stop_match, then
+        role_type, then stop_basis and stop_evidence — each appended at the end
+        because inserting anywhere else would have silently reassigned every field
+        after it.
+
+        The old shape is read, not migrated. A cache entry is a saved answer, and
+        rewriting saved answers into a shape their model never produced would make
+        them look like something they are not — an axis-graded record with no axes
+        in it. What an old entry cannot restore, it leaves empty: `axes` empty and
+        `scoring_format` None is the truth about a record scored before either
+        existed, and it is exactly what an aggregate needs to tell the eras apart.
         """
+        if isinstance(entry, dict):
+            self.last_score = entry.get("score")
+            self.last_matched_skills = entry.get("matched_skills") or []
+            self.last_matched_skills_dropped = entry.get("matched_skills_dropped", 0)
+            self.last_axes = entry.get("axes") or {}
+            self.last_non_compensable = entry.get("non_compensable") or []
+            self.last_stop_match = entry.get("stop_match")
+            self.last_stop_basis = entry.get("stop_basis")
+            self.last_stop_evidence = entry.get("stop_evidence")
+            self.last_stop_suppressed = entry.get("stop_suppressed")
+            self.last_scoring_format = entry.get("scoring_format")
+            return entry.get("signals") or []
+
+        # Legacy positional array. gaps sat at index 5 and role_type at 7; neither
+        # has anywhere to go now, so both are read past rather than restored.
+        self.last_axes = {}
+        self.last_non_compensable = []
+        self.last_matched_skills_dropped = 0
+        self.last_scoring_format = None
         if len(entry) >= 7:
             self.last_score = entry[3]
             self.last_matched_skills = entry[4]
-            self.last_gaps = entry[5]
             self.last_stop_match = entry[6]
-            self.last_vacancy_role_type = entry[7] if len(entry) >= 8 else None
             self.last_stop_basis = entry[8] if len(entry) >= 9 else None
             self.last_stop_evidence = entry[9] if len(entry) >= 10 else None
         elif len(entry) >= 6:
             self.last_score = entry[3]
             self.last_matched_skills = entry[4]
-            self.last_gaps = entry[5]
             self.last_stop_match = None
         else:
-            self.last_score = 0
+            self.last_score = None
             self.last_matched_skills = []
-            self.last_gaps = []
             self.last_stop_match = None
         return entry[2] if len(entry) >= 3 else []
 

@@ -43,7 +43,8 @@ def _make_cover(tmp_dir, score_return=None, cover_return=None,
         agent.score_vacancy.side_effect = score_side_effect
     else:
         agent.score_vacancy.return_value = score_return or {
-            "score": 70, "matched_skills": ["a"], "gaps": ["b"],
+            "score": 70, "matched_skills": ["a"],
+            "axes": {"skills": {"grade": "ideal", "anchor": "a"}},
             "stop_match": None, "vacancy_role_type": "pm", "signals": ["sig1"],
         }
     if cover_side_effect:
@@ -72,7 +73,8 @@ with tempfile.TemporaryDirectory() as tmp:
     check("score() does NOT call generate_cover", agent.generate_cover.call_count == 0)
     check("last_score set", cover.last_score == 70)
     check("last_signals set (new attribute)", cover.last_signals == ["sig1"])
-    check("last_gaps set", cover.last_gaps == ["b"])
+    check("last_axes set — the grades the number came from ride with it",
+          cover.last_axes == {"skills": {"grade": "ideal", "anchor": "a"}})
 
 # ── score() cache hit skips the LLM entirely ──
 with tempfile.TemporaryDirectory() as tmp:
@@ -123,7 +125,9 @@ with tempfile.TemporaryDirectory() as tmp:
     cover.last_score = 999  # poison to prove reset happens
     ok = cover.score("vacancy text")
     check("score() returns False on LLM error", ok is False)
-    check("score() resets last_score to 0 on error", cover.last_score == 0)
+    # Not 0. A zero is a real score and reads in the log exactly like an honest
+    # one; None says no judgement was made, which is what actually happened.
+    check("score() resets last_score to None on error", cover.last_score is None)
 
 # ── cover() LLM-unavailable falls back to static cover, doesn't cache it ──
 with tempfile.TemporaryDirectory() as tmp:
