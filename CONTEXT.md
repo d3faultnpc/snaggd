@@ -164,7 +164,7 @@ onboarding/
 **Two independent agents:**
 - **Playwright agent** — all browser interaction, zero LLM tokens
 - **LLM agent** (core/llm_agent.py) — cover / score / form fill / HR answers
-  - System prompt (cached per session): candidate.md + job_preferences.md ≈ 1200 tok
+  - System prompt (cached per session): candidate.md, projected per call type ≈ 900 tok
   - Per vacancy user message: vacancy_text ≈ 600 tok
 
 ---
@@ -177,14 +177,14 @@ onboarding/
 python onboarding/wizard.py --profile <name>
 
   Block A → onboarding/resume_parser.py → data/profiles/<name>/candidate.md
-  Block B → data/profiles/<name>/job_preferences.md + data/profiles/<name>/search_urls.txt
+  Block B → data/profiles/<name>/search_urls.txt + data/profiles/<name>/filters.json
   Block D → .env  (API keys, HEADLESS, MAX_VACANCIES, MIN_SCORE, ...)
 
 python login.py → browser login → data/hh_cookies.json  (shared across profiles)
 ```
 
 **Profile isolation:** each profile has its own
-`candidate.md`, `applied_log.json`, `job_preferences.md`, `search_urls.txt`, `llm_cache.json`.
+`candidate.md`, `applied_log.json`, `filters.json`, `search_urls.txt`, `llm_cache.json`.
 Cookies (`hh_cookies.json`) are shared — one HH account = one cookie file.
 
 **Profile resolution law (2026-07-12, `profiles.py`) — same rule everywhere (CLI, wizard, API):**
@@ -211,7 +211,7 @@ python main.py --profile pm        # selects data/profiles/pm/ as DATA_DIR
 python main.py --list-profiles     # lists all available profiles
 
 LLMAgent._build_system_prompt()
-  ← candidate.md + job_preferences.md  (both from the profile directory)
+  ← candidate.md  (from the profile directory, projected for this call type)
   → cached system prompt for session
 
 HHAdapter.verify()
@@ -360,7 +360,7 @@ of session 55's close — see `.claude/working-notes/session-55-close.md` Bugs #
 Built by `LLMAgent._build_system_prompt()` from three files in `DATA_DIR`:
 ```
 candidate.md          → "CANDIDATE PROFILE" section
-job_preferences.md    → "JOB PREFERENCES" section
+candidate.md          → "CANDIDATE PROFILE" section (one document; see profile_frame)
 Total: ≈ 1200 tokens
 ```
 `DATA_DIR` = `data/profiles/<name>/`, always — see the profile resolution law in §3.
@@ -454,7 +454,7 @@ steps 6 and `--setup-keys` call; neither is independently reachable from the CLI
 | 3. History | Review/edit employment + education cases — edit existing by number or `new` to add | `candidate.json` |
 | 4. Projects | Same case-review UI as Step 3, filtered to `project`/`certification`/`publication`/`volunteering`/`research` types — the split mirrors `resume_parser.py`'s own render-time bucketing exactly (`_PROJECT_TYPES`), so wizard-side and render-side classification can't drift apart | `candidate.json` |
 | 5. Skills | `skills[]`/`tools[]`/`languages[]` + `career_profile` (`role_type`/`edge`/`aspiration`) | `candidate.json` |
-| 6. Search & Rules | Wraps the pre-existing job-prefs flow unchanged (stop lists, wise-link auto-detect, search directions, salary) — writes the same real files it always did, then additionally dual-writes `search`/`rules`/`logistics` into `candidate.json` | `job_preferences.md` + `search_urls.txt` + `filters.json` + `candidate.md` (salary patch) + `candidate.json` |
+| 6. Search & Rules | Stop lists, wise-link auto-detect, search directions, salary. Machine rules to `filters.json`, semantic categories to `candidate.md`'s `stop_categories:` line, and dual-writes `search`/`rules`/`logistics` into `candidate.json` | `search_urls.txt` + `filters.json` + `candidate.md` + `candidate.json` |
 | 7. HH Connect | Subprocess wrapper around `login.py` (unmodified) — asks for confirmation first, verifies `hh_resumes.json` actually has entries afterward rather than trusting `login.py`'s exit code alone (that code only reflects the cookie-save phase) | `data/hh_cookies.json` + `data/hh_resumes.json` (shared across profiles, not written to the profile dir) |
 
 **Design principles:**
@@ -470,7 +470,7 @@ steps 6 and `--setup-keys` call; neither is independently reachable from the CLI
 
 **Known open items (not bugs, deliberate follow-ups):**
 - Step 6's `rules.stop` / `rules.min_employer_rating` / `logistics.*` are additive-only —
-  `adapter.py` still reads `filters.json` / `job_preferences.md` directly (§9), not
+  `adapter.py` still reads `filters.json` directly (§9), not
   `candidate.json.rules.*`. Wiring that up is unscheduled.
 - `rules.min_match` (per-profile `MIN_SCORE` override) is collected but not read by anything —
   `MIN_SCORE` is still a global env var at runtime.
@@ -592,7 +592,7 @@ Each profile lives in `data/profiles/<name>/`. Created by `wizard.py --profile <
 |------|-----------|-------|
 | `data/profiles/<name>/candidate.md` | wizard Step 1 | candidate profile for LLM system prompt |
 | `data/profiles/<name>/candidate.json` | wizard Step 1 (+ steps 2-6 edit it) | the wizard's saved answers, so a re-run prefills instead of opening blank. Deliberately not a runtime input: the apply loop reads `candidate.md`, `filters.json` and `search_urls.txt` and nothing else. `tests/test_settings_reach_engine.py` pins that |
-| `data/profiles/<name>/job_preferences.md` | wizard Step 6 | role, city, salary, stop filters |
+| `data/profiles/<name>/filters.json` | wizard Step 6 | stop companies, stop title keywords, min rating |
 | `data/profiles/<name>/search_urls.txt` | wizard Step 6 | HH search URLs for this profile |
 | `data/profiles/<name>/applied_log.json` | runtime (logger.py) | per-profile application log |
 | `data/profiles/<name>/llm_cache.json` | runtime (llm_cover.py) | MD5 cache per profile |

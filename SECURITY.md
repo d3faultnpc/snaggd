@@ -30,6 +30,6 @@ This tool handles the following sensitive data — all stored **locally only** a
 | `data/hh_cookies.json` | HH.ru session cookies | `.gitignore` |
 | `.env` | OpenRouter API key | `.gitignore` |
 | `data/resume_facts.md` | Parsed resume data | `.gitignore` |
-| `data/job_preferences.md` | Job search preferences | `.gitignore` |
+| `data/profiles/<name>/filters.json` | Machine stop rules (companies, title keywords) | `.gitignore` |
 
 **All credentials and personal data remain local to the user's machine.** No data is sent to any third-party service except via the configured OpenRouter API key for LLM inference.

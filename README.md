@@ -61,7 +61,7 @@ The wizard runs 7 steps in order (or jump to one directly with `--step N`):
 | 3 — History | Review/edit work history + education |
 | 4 — Projects | Review/edit side projects, certifications, publications |
 | 5 — Skills | Skills/tools/languages, career profile, optional cover-letter tone |
-| 6 — Search & rules | `job_preferences.md` + `search_urls.txt` + `filters.json` (stop rules, salary) |
+| 6 — Search & rules | `search_urls.txt` + `filters.json` (machine stop rules) + `candidate.md` (`stop_categories:`, salary) |
 | 7 — HH Connect | Logs in to HH.ru and links your resume for auto-detected search |
 
 `--setup-keys` (LLM API key, model, headless mode) runs first automatically, or standalone

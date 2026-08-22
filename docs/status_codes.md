@@ -34,8 +34,8 @@ Used by: API `/log` endpoint, session summary, funnel analytics.
 |--------|----------|---------|-------------|
 | `dry_run` | soft_skip | `--dry-run` flag — scored, not submitted | None |
 | `skipped_score` | soft_skip | LLM score < `MIN_SCORE` | Lower `MIN_SCORE` or improve resume match |
-| `title_blocked` | soft_skip | Title matched a `stop_keywords` entry (Level 0 filter) | Review `job_preferences.md` stop_keywords |
-| `semantic_blocked` | soft_skip | LLM detected `stop_category` match (Level 2 filter) | Review `job_preferences.md` stop_categories |
+| `title_blocked` | soft_skip | Title matched a `stop_title_keywords` entry (Level 0 filter) | Review `stop_title_keywords` in `filters.json` |
+| `semantic_blocked` | soft_skip | LLM detected `stop_category` match (Level 2 filter) | Review the `stop_categories:` line in `candidate.md` |
 | `skipped_salary_form` | soft_skip | Form requires salary input — always skipped | None (by design) |
 | `skipped_test_form` | soft_skip | Test/quiz mandatory, no skip link | None (by design) |
 | `chat_redirect` | soft_skip | Employer set auto-read — redirected to chat, no cover slot | Accepted HH behavior |

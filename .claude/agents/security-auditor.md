@@ -25,7 +25,7 @@ session cookies, OpenRouter API keys, and candidate personal data (CV, contacts,
 | HH session cookies | `data/hh_cookies.json` | Account takeover |
 | OpenRouter API key | `.env` → `OPENROUTER_API_KEY` | Cost fraud |
 | Candidate CV data | `data/resume_facts.md`, `data/candidate.md` | PII exposure |
-| Job preferences | `data/job_preferences.md` | PII exposure |
+| Machine stop rules | `data/profiles/<name>/filters.json` | PII exposure (company names) |
 | Applied log | `data/applied_log.json` | Application history PII |
 | API key | `.env` → `API_KEY` | Unauthorized agent access |
 
