@@ -45,7 +45,7 @@ from llm_cover import LLMCover  # noqa: E402
 
 # What a re-score is compared on. Deliberately not the whole answer: prose fields
 # move on wording alone, and a diff that lights up every run gets ignored.
-_COMPARED = ("score", "stop_match", "stop_basis", "role_type_match")
+_COMPARED = ("score", "stop_match", "stop_basis", "non_compensable")
 
 
 def _load_fixtures(d: Path) -> list:
@@ -65,9 +65,11 @@ def _score_one(cover: LLMCover, text: str) -> dict:
         "stop_match": cover.last_stop_match,
         "stop_basis": cover.last_stop_basis,
         "stop_evidence": cover.last_stop_evidence,
-        "role_type_match": cover.last_role_type_match,
+        "axes": dict(cover.last_axes or {}),
+        "non_compensable": list(cover.last_non_compensable or []),
         "matched_skills": list(cover.last_matched_skills or []),
-        "gaps": list(cover.last_gaps or []),
+        "matched_skills_dropped": cover.last_matched_skills_dropped,
+        "scoring_format": cover.last_scoring_format,
         "signals": list(cover.last_signals or []),
         "call_meta": cover.last_call_meta,
         "error": cover.last_score_error,
@@ -117,6 +119,20 @@ def spread(fixtures_dir: Path, profile_dir: Path, passes: int) -> dict:
 
 
 def _workspace(profile_dir: Path):
+    # A missing profile used to produce an empty workspace and a full run: every
+    # fixture scored against no candidate at all, every answer well-formed, every
+    # number meaningless. It happened on 2026-08-22 by pointing --profile at a path
+    # that does not exist inside a git worktree, where data/profiles is ignored and
+    # only the main checkout has it. Nothing in the output said so.
+    #
+    # This is the third time in this project that a measurement turned out to be
+    # about the harness. The run stops instead.
+    if not (profile_dir / "candidate.md").exists():
+        raise SystemExit(
+            f"no candidate.md in {profile_dir} — there is nothing to score against, "
+            f"and a run without it would answer every fixture and mean nothing. "
+            f"(data/profiles is gitignored: inside a worktree, pass the main "
+            f"checkout's absolute path.)")
     tmp = Path(tempfile.mkdtemp(prefix="replay-"))
     work = tmp / profile_dir.name
     work.mkdir(parents=True)
