@@ -66,7 +66,7 @@ check(f"core/llm_agent.py imports only stdlib/third-party/this-repo modules "
 
 # ── Structural: core/llm_agent.py defines nothing beyond its documented set ──
 _expected_llm_agent_module_names = {
-    "_PROMPTS_DIR", "_MAX_VACANCY_CHARS", "_SCORE_PLACEHOLDER_TEXT",
+    "_PROMPTS_DIR", "_MAX_VACANCY_CHARS", "_SCORING_FORMAT",
     "_PLACEHOLDER_TOKEN_RE", "_CALL_TYPE_NARRATION", "_CALL_SEQ",
     "_SESSION_REPORTER", "set_session_reporter", "LLMAgent",
     # Per-call observability (2026-08-16): records what a call actually did —
@@ -117,7 +117,7 @@ _expected_llm_agent_class_members = {
     # the categories come from the candidate's own profile, and an answer that
     # cannot say what its block rests on does not get to make one. Both read
     # local profile files; neither knows anything about transport or tiers.
-    "_declared_stop_categories", "_validated_block",
+    "_declared_stop_categories", "_declared_skills", "_validated_block",
 }
 from core import llm_agent  # noqa: E402
 

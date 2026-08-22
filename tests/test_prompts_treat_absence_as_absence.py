@@ -40,26 +40,31 @@ def check(label, condition):
 
 # ── Scoring: a profile that names no domain is not thereby a mismatch ────────
 print("\nScoring treats an unstated domain as unstated:")
-check("an absent domain applies no modifier",
-      "states no domain or industry background at all — apply NO modifier" in _SCORING)
-check("and the prompt says silence is not a mismatch",
-      "not evidence of\ndistance" in _SCORING or "is not evidence of" in _SCORING)
-# Until 2026-08-18 the top band said a profile stating no domain "can still score
-# here" — an exception carved into a rule that should not have needed one. The
-# bands no longer mention domain AT ALL: it is applied once, as the modifier
-# below. So the property is now structural rather than promised, and this checks
-# the structure. Domain in both places is what drove three real matches to 0 —
-# the band demoted them for the domain, then the modifier charged for it again.
-# The BAND LINES themselves, not the paragraph explaining them — that paragraph
-# says "domain" several times on purpose, to say where it does NOT belong.
-_BAND_LINES = [ln for ln in _SCORING.splitlines()
-               if ln.startswith("- ") and "–" in ln.split(":")[0]]
-check("the score bands say nothing about domain — it is counted once, below",
-      _BAND_LINES and not any("domain" in ln.lower() for ln in _BAND_LINES))
-check("and a match with real skill overlap may not be scored zero",
-      "If any core skill\ngenuinely matches, the score is not 0" in _SCORING)
-check("role_type keeps its own absence rule",
-      "role_type is absent or empty — apply NO modifier" in _SCORING)
+check("absence has a grade of its own, so it never has to be inferred",
+      "THIS POSTING DOES NOT ASK ABOUT THIS AXIS" in _SCORING)
+check("and that grade is spelled out as not-a-middling-verdict — `neutral` is the "
+      "one most likely to be used as a polite average",
+      "not a polite way to avoid deciding" in _SCORING
+      and "removes the axis" in _SCORING)
+check("silence in the profile is still not a mismatch",
+      "is not evidence of distance from this vacancy" in _SCORING
+      and "it is evidence of nothing" in _SCORING)
+
+# The 2026-08-18 fix carved an exception into the top band for a profile stating no
+# domain, and the band table was later cleaned so domain appeared once. Both are moot:
+# there are no bands and no modifiers left to keep apart. Domain is now one grade on
+# one axis, which is the structural version of "counted once" — three real matches
+# reached 0 because the band demoted them for the domain and the modifier then charged
+# for it again, and neither of those two places exists any more.
+check("no score bands survive — the model is not asked for a number at all",
+      not [ln for ln in _SCORING.splitlines()
+           if ln.startswith("- ") and ":" in ln and "–" in ln.split(":")[0]])
+check("and no modifier arithmetic survives either",
+      "points" not in _SCORING.lower())
+check("domain is counted exactly once, on one axis, and the prompt says so",
+      "there is no separate domain adjustment anywhere" in _SCORING)
+check("a graded axis is not a verdict about the person",
+      "Do not grade a whole person" in _SCORING)
 
 
 # ── The cover letter decides about metrics once, not per sentence ────────────

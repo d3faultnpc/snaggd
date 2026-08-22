@@ -116,16 +116,18 @@ def _agent_returning(payload, rid):
 
 
 scored = _agent_returning(
-    '{"score": 71, "matched_skills": ["a"], "gaps": [], "signals": ["s"],'
-    ' "stop_match": null, "role_type_match": true}', "gen-score"
+    '{"axes": {"skills": {"grade": "ideal", "anchor": "does exactly this"},'
+    '          "tools": {"grade": "neutral", "anchor": "not asked"}},'
+    ' "matched_skills": ["a"], "signals": ["s"], "stop_match": null}', "gen-score"
 ).score_vacancy("a vacancy")
 
 check("the meta rides beside the answer", scored["call_meta"]["generation_id"] == "gen-score")
 check("with the tokens the call actually used",
       scored["call_meta"]["tokens_prompt"] == 100)
-check("and the answer itself is untouched by carrying it", scored["score"] == 71)
-check("role_type_match survives to the caller — it used to be computed and dropped",
-      scored.get("role_type_match") is True)
+check("and the answer itself is untouched by carrying it", scored["score"] == 100)
+check("the score is ours: one ideal axis and one the posting never raised is a "
+      "full match, because neutral leaves the denominator",
+      scored["axes_in_play"] == ["skills"] and scored["axes_neutral"] == ["tools"])
 
 
 # ── A cache hit has no call behind it, and must say so ───────────────────────
@@ -140,7 +142,9 @@ _tmp = Path(tempfile.mkdtemp())
 
 cover = LLMCover(data_dir=_tmp)
 cover._agent = _agent_returning(
-    '{"score": 64, "matched_skills": ["a"], "gaps": [], "signals": ["s"], "stop_match": null}',
+    '{"axes": {"skills": {"grade": "ideal", "anchor": "does exactly this"},'
+    '          "tools": {"grade": "miss", "anchor": "stack not held"}},'
+    ' "matched_skills": ["a"], "signals": ["s"], "stop_match": null}',
     "gen-cached",
 )
 
@@ -164,7 +168,7 @@ class _Exploding:
 
 cover._agent = _Exploding(cover._agent)
 served = cover.score("a vacancy body")
-check("the second look is served from cache", served and cover.last_score == 64)
+check("the second look is served from cache", served and cover.last_score == 50)
 check("and it carries no call meta — there was no call",
       cover.last_call_meta is None)
 check("nor the previous vacancy's role-type verdict",

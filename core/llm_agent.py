@@ -20,23 +20,21 @@ _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
 _MAX_VACANCY_CHARS = CONFIG.llm_max_input_chars
 
-# match_scoring.md's own JSON-example placeholder text. Seen live 2026-07-12: on an
-# ambiguous/long vacancy description, the model returned this verbatim instead of real
-# analysis. Used by _sanitize_score_result() to detect and contain template-echo responses.
-_SCORE_PLACEHOLDER_TEXT = {
-    "matched_skills": "skill present in both profile and vacancy",
-    "gaps": "requirement in vacancy missing from profile",
-    "signals": "3–5 short tags characterizing this vacancy's domain, context, and product type",
-    "vacancy_role_type": "contribution style of this vacancy (use the same vocabulary as the candidate's role_type when possible)",
-}
-
-# match_scoring.md's CURRENT JSON example uses <REAL_SKILL_1>-style bracket tokens instead of
-# the sentence placeholders above. Shape-based, not tied to specific wording — catches an
-# unfilled placeholder regardless of how the prompt's example text is phrased. Unanchored
-# (search, not match on the whole string): the current example has 2 tokens per list field
-# (<REAL_SKILL_1>, <REAL_SKILL_2>), so a partial fill could leave one token embedded inside
-# an otherwise-real string rather than being the entire field value.
+# match_scoring.md's JSON example uses <GRADE>-style bracket tokens; an answer still
+# carrying one is the model echoing the shape instead of filling it (seen live
+# 2026-07-12 on a long, ambiguous posting). Shape-based rather than a table of the
+# prompt's exact sentences: the table that used to sit here listed placeholder text
+# from a version of the prompt that no longer exists, and three of its four keys named
+# fields that no longer exist either. Unanchored (search, not fullmatch) because a
+# partial fill can leave one token embedded in an otherwise-real string.
 _PLACEHOLDER_TOKEN_RE = re.compile(r"<[A-Z0-9_]+>")
+
+# Stamped on every scored record. The evidence layer — 913 entries on one live
+# profile, and the dashboard, History and CSV export built on them — spans both the
+# free-text era and the graded one. An aggregate that cannot tell which record is
+# which would average a verbatim selection together with the paraphrases that
+# preceded it and report a number describing neither.
+_SCORING_FORMAT = "axes-v1"
 
 try:
     from json_repair import repair_json as _repair_json
@@ -222,6 +220,9 @@ class LLMAgent:
         self._system_prompts: dict[str, str] = {}
         # Read lazily from the profile on first use — see _declared_stop_categories.
         self._stop_categories: set | None = None
+        # Likewise — see _declared_skills. Both are the person's own declarations,
+        # and both are read from the profile rather than configured anywhere else.
+        self._declared_skills_cache: list | None = None
         # Client is built lazily (see `client` property below) and cached
         # against the key it was built for.
         self._client_cache: OpenAI | None = None
@@ -519,7 +520,12 @@ class LLMAgent:
         return scored
 
     def score_vacancy(self, vacancy_text: str) -> dict:
-        """Returns {score, matched_skills, gaps, signals, stop_match}.
+        """Returns {score, axes, matched_skills, signals, stop_match, ...}.
+
+        The model grades five axes; `score` is computed here from those grades by
+        core.axes, not returned by the model. `axes` rides along beside it so the
+        number can be argued with: every score decomposes into the grades it came
+        from, which the single opaque integer never did.
 
         stop_match: str category name if LLM detected a blocked category, else None.
         The list of blocked categories comes from the `stop_categories:` line in
@@ -547,22 +553,17 @@ class LLMAgent:
         # it: there was no call.
         call_meta = last_call_snapshot()
         raw = (content or "{}").strip()
+        # No "score" here and no default of 50. The model is not asked for a number
+        # any more, and a fabricated 50 was a real number standing in for an answer
+        # nobody gave — indistinguishable, downstream, from a genuine middling match.
         result = self._parse_json(raw, fallback={
-            "score": 50,
+            "axes": {},
             "matched_skills": [],
-            "gaps": [],
             "signals": [],
             "stop_match": None,
             "stop_basis": None,
             "stop_evidence": None,
         })
-        # Sanitize score: some models embed emoji or extraneous text alongside the
-        # integer (e.g. DeepSeek occasionally returns "紙 67"). Extract the first
-        # integer found; fall back to 50 if none present.
-        raw_score = result.get("score")
-        if raw_score is not None and not isinstance(raw_score, int):
-            m = re.search(r"\d+", str(raw_score))
-            result["score"] = int(m.group()) if m else 50
         scored = self._sanitize_score_result(result)
         # Rides alongside the answer rather than in it: sanitising guards the
         # analysis fields, and this is not one of them — it describes the call,
@@ -733,35 +734,107 @@ class LLMAgent:
         return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
     def _sanitize_score_result(self, result: dict) -> dict:
-        """Type-guards scoring output — protects log and downstream code from LLM garbage.
+        """Type-guards scoring output, and turns graded axes into the score.
 
-        signals/matched_skills/gaps must be list[str]; stop_match must be str or None.
-        score is clamped to [0, 100] — LLM modifier arithmetic can exceed the stated range.
-        Template-echo (model returns match_scoring.md's own placeholder text instead of real
-        analysis) makes the whole response untrusted, not just the affected field — a model
-        confused enough to echo one field's schema isn't a reliable source for the rest either.
-        Passes through unchanged when LLM output is well-formed.
+        The score is computed here rather than read from the reply. No clamping is
+        needed as a result: arithmetic that cannot leave [0, 100] cannot overflow it,
+        and the clamp that used to live here was containing our own modifier stack.
+
+        Template-echo (an unfilled <TOKEN> anywhere in the answer) makes the whole
+        response untrusted, not just the field carrying it — a model confused enough
+        to echo the schema is not a reliable source for the rest either.
         """
-        if self._is_template_echo(result):
-            return {"score": 50, "matched_skills": [], "gaps": [], "signals": [],
-                    "stop_match": None, "stop_basis": None, "stop_evidence": None,
-                    "vacancy_role_type": None}
+        from core.axes import AXES, normalise_label, score_from_axes, validate_matched_skills
 
-        score = result.get("score", 50)
-        if not isinstance(score, int):
-            try:
-                score = int(score)
-            except (TypeError, ValueError):
-                score = 50
-        result["score"] = max(0, min(100, score))
-        for key in ("signals", "matched_skills", "gaps"):
+        if self._is_template_echo(result):
+            return {"score": None, "axes": {}, "matched_skills": [], "signals": [],
+                    "stop_match": None, "stop_basis": None, "stop_evidence": None,
+                    "stop_suppressed": None, "scoring_format": _SCORING_FORMAT}
+
+        # ── Axes ─────────────────────────────────────────────────────────────
+        raw_axes = result.get("axes")
+        raw_axes = raw_axes if isinstance(raw_axes, dict) else {}
+        axes: dict = {}
+        grades: dict = {}
+        for axis in AXES:
+            entry = raw_axes.get(axis)
+            if not isinstance(entry, dict):
+                continue
+            grade = normalise_label(entry.get("grade"))
+            anchor = entry.get("anchor")
+            anchor = str(anchor).strip() if isinstance(anchor, (str, int, float)) else ""
+            if grade is None:
+                # Kept out of the arithmetic but not out of the record: an invented
+                # grade has to be visible, and score_from_axes counts it.
+                grades[axis] = entry.get("grade")
+                continue
+            grades[axis] = grade
+            axes[axis] = {"grade": grade, "anchor": anchor}
+
+        verdict = score_from_axes(grades)
+        result["axes"] = axes
+        result["score"] = verdict.score
+        result["axes_in_play"] = list(verdict.in_play)
+        result["axes_neutral"] = list(verdict.neutral)
+        result["non_compensable"] = list(verdict.non_compensable)
+        if verdict.unknown_labels:
+            result["axes_unknown"] = {k: str(v) for k, v in verdict.unknown_labels.items()}
+            print(f"   ⚠️ grades outside the vocabulary: {result['axes_unknown']}")
+
+        # ── Lists ────────────────────────────────────────────────────────────
+        for key in ("signals", "matched_skills"):
             val = result.get(key, [])
             if not isinstance(val, list):
                 result[key] = []
             else:
                 result[key] = [str(x) for x in val if isinstance(x, (str, int, float)) and str(x).strip()]
+
+        kept, dropped = validate_matched_skills(result["matched_skills"], self._declared_skills())
+        result["matched_skills"] = kept
+        result["matched_skills_dropped"] = dropped
+
+        # gaps is gone on purpose. Over 913 live applications it produced 2190
+        # distinct strings — roughly three and a half new ones per vacancy — so the
+        # aggregate built on it was counting near-duplicates it had to normalise with
+        # a regular expression first. An axis graded `weak` says the same thing in a
+        # form that is comparable between two vacancies.
+        result.pop("gaps", None)
+
+        # Which shape this record is in. Without it, an aggregate cannot tell a
+        # verbatim selection from the paraphrases that preceded it, and would average
+        # the two into a number that describes neither.
+        result["scoring_format"] = _SCORING_FORMAT
+
         result.update(self._validated_block(result))
         return result
+
+    def _declared_skills(self) -> list:
+        """Everything on the candidate's own `skills:` and `tools:` lines.
+
+        The closed vocabulary matched_skills must select from. Read from the profile
+        for the same reason the stop categories are: what the person listed is theirs
+        to decide, and a skill nobody claimed is the model improvising.
+        """
+        # getattr rather than attribute access: this is reachable on an instance
+        # built through __new__ (the sanitiser is unit-tested that way, without a
+        # profile on disk), and a guard that raises there is a guard that stops the
+        # thing it guards from being testable.
+        if getattr(self, "_declared_skills_cache", None) is None:
+            out: list = []
+            try:
+                text = self._load_profile("candidate.md")
+                for line in text.splitlines():
+                    low = line.lower()
+                    if not (low.startswith("skills:") or low.startswith("tools:")):
+                        continue
+                    for raw in line.split(":", 1)[1].split(","):
+                        val = raw.strip()
+                        if val and val not in out:
+                            out.append(val)
+            except Exception:
+                out = []
+            self._declared_skills_cache = out
+        return self._declared_skills_cache
 
     def _declared_stop_categories(self) -> set:
         """The candidate's own stop_categories — the entire vocabulary a block may
@@ -841,7 +914,7 @@ class LLMAgent:
             # three lists empty means the model declined to do the work — and one
             # real block arrived exactly like that, with nothing in it but the
             # category and a story about the employer.
-            if not any(result.get(k) for k in ("matched_skills", "gaps", "signals")):
+            if not any(result.get(k) for k in ("matched_skills", "axes", "signals")):
                 return _refused("the answer carries no analysis at all")
 
         # Company knowledge has to be corroborated by the model's own signals.
@@ -867,22 +940,23 @@ class LLMAgent:
                 "stop_evidence": evidence.strip(), "stop_suppressed": None}
 
     def _is_template_echo(self, result: dict) -> bool:
-        """True if any field is match_scoring.md's own JSON-example placeholder — either the
-        old-style literal sentence or an unfilled <TOKEN> from the current bracket-style
-        example — instead of real content. The <TOKEN> check is shape-based (not tied to
-        today's exact wording) so it stays valid if the prompt's placeholder text changes
-        again later without this guard being updated in lockstep.
+        """True if anything anywhere in the answer is still an unfilled <TOKEN> from
+        match_scoring.md's own JSON example rather than real content. Shape-based and
+        recursive, so it stays valid when the prompt's example wording changes and it
+        reaches the grades and anchors nested inside `axes`.
         """
-        def _is_placeholder(val) -> bool:
-            return isinstance(val, str) and bool(_PLACEHOLDER_TOKEN_RE.search(val))
+        def _walk(val) -> bool:
+            if isinstance(val, str):
+                return bool(_PLACEHOLDER_TOKEN_RE.search(val))
+            if isinstance(val, dict):
+                return any(_walk(v) for v in val.values())
+            if isinstance(val, list):
+                return any(_walk(v) for v in val)
+            return False
 
-        for key, placeholder in _SCORE_PLACEHOLDER_TEXT.items():
-            val = result.get(key)
-            if val == placeholder or _is_placeholder(val):
-                return True
-            if isinstance(val, list) and (placeholder in val or any(_is_placeholder(v) for v in val)):
-                return True
-        return False
+        # Walks rather than checking a fixed key list: grades and anchors live one
+        # level down inside `axes`, and a per-key check would not have seen them.
+        return _walk(result)
 
     def _parse_json(self, raw: str, fallback: dict) -> dict:
         """Parse a model reply into a dict, or return the caller's fallback.

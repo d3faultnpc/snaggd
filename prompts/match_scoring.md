@@ -1,4 +1,16 @@
-Score how well the candidate matches the vacancy below.
+Judge how well the candidate matches the vacancy below.
+
+You do not calculate a score. You grade five axes and report what you observed; the
+arithmetic is done outside this call, in code. This is deliberate: when one call
+answered every question and returned one number, changing anything moved everything.
+
+What you are given
+
+CANDIDATE PROFILE opens with the person's own professional identity as its first
+heading — "barista", "dentist", "fintech PM". That line is the frame for reading
+everything under it. It is not a preference or a goal: it is what this person calls
+themselves on the document employers read. Everything below it is evidence belonging
+to that identity.
 
 The vacancy context may include employer metadata (company name, HH rating).
 Use the HH Employer Rating as a signal in your assessment:
@@ -6,7 +18,8 @@ Use the HH Employer Rating as a signal in your assessment:
 - Rating 3.5–4.4 → neutral, no extra signal
 - Rating < 3.5 → add signal "low_rated_employer"
 - "no reviews on HH" → add signal "no_hh_reviews"
-Do NOT change the score based on rating alone — it is a signal, not a score modifier.
+The rating is a signal, never a grade — it says nothing about whether this person
+can do this job.
 
 Primary and secondary domain
 
@@ -19,20 +32,85 @@ a research group.
 
 Decide this once per vacancy. More than one rule below depends on it.
 
+The five axes
+
+Grade the vacancy against the candidate on these five, and nothing else:
+
+- skills — what the person can do, from the `skills:` and `languages:` lines. A
+  language is a skill a posting asks for by name; treat it exactly like any other.
+- tools — named software, systems and stack, from the `tools:` line.
+- experience — what they have actually done: Work Experience, Projects, Volunteering.
+  Domain distance lives here. A person whose whole record is in one industry applying
+  to another is not "strong" on this axis, and that is the whole of how domain is
+  accounted for — there is no separate domain adjustment anywhere.
+- education — degrees and academic output.
+- credential — licences, certificates, courses, admissions, awards. The things a
+  person either holds or does not, where holding it can be a condition of doing the
+  job at all.
+
+For each axis, return a grade and an anchor of three to five words — not a sentence,
+not a quotation from the posting. The anchor is what makes the grade checkable: it
+names the specific thing you graded.
+
+Grades, and they are the only five:
+
+- ideal — asked for, and the candidate already does exactly this, at this level
+- strong — asked for, and clearly covered; the distance is minor
+- weak — asked for, and only partly there
+- miss — asked for, and absent from the profile
+- neutral — THIS POSTING DOES NOT ASK ABOUT THIS AXIS, or nothing about it can be
+  judged from what is here.
+
+Read `neutral` again, because it is the grade most likely to be used wrongly. It is
+not "average", not "so-so", not a polite way to avoid deciding. It removes the axis
+from the judgement completely. A posting that never mentions tooling gets `neutral`
+on tools — not `weak`, because nothing was asked and therefore nothing is missing.
+Most vacancies will be `neutral` on at least one axis, and that is the normal case.
+
+The mirror of that rule: silence in the PROFILE is not a mismatch. A profile naming
+no industry is not evidence of distance from this vacancy, it is evidence of nothing
+— plenty of real professions are written without one. Grade what is stated, and use
+`neutral` when the posting did not ask.
+
+Do not grade a whole person. `weak` on an axis is a fact about the distance between
+one posting and one part of a record. It is not a verdict about the candidate, and
+nothing in your answer should read like one.
+
+Baseline capability common to most postings in a field is not a differentiator — it
+is table stakes. Weigh the specific over the generic on every axis.
+
+matched_skills
+
+Return the entries from the candidate's own `skills:` and `tools:` lines that this
+vacancy actually asks for — copied VERBATIM, exactly as written there.
+
+This is a selection, not a description. Do not reword, do not expand an abbreviation,
+do not merge two entries into one, do not invent a skill the person did not list. Any
+value that is not a character-for-character member of those lines is discarded, so a
+paraphrase is not a smaller match — it is no match at all.
+
+An empty list is a correct answer when the vacancy asks for nothing the person listed.
+
 Blocked categories (stop_match)
 
 The categories on the candidate's own `stop_categories:` line in CANDIDATE PROFILE
 are the entire vocabulary available to you here. If that list is absent, or the
-vacancy matches nothing on it, stop_match is null. Never invent
-a category and never return one that is not on that list — a value outside it is
-discarded and blocks nothing.
+vacancy matches nothing on it, stop_match is null. Never invent a category and never
+return one that is not on that list — a value outside it is discarded and blocks
+nothing.
 
-A block means the application is never sent, so it has to rest on evidence, and
-your answer must say which kind:
+A block means the application is never sent, so it has to rest on evidence, and your
+answer must say which kind:
 - "text" — the vacancy's own wording establishes it. Quote the phrase in
   stop_evidence.
 - "company_knowledge" — the text does not say it, but you know this employer's
   business is in that category. State the fact in stop_evidence.
+
+Block only when the category is the employer's PRIMARY domain, as defined above.
+What the employer's business IS, not what its product deals with. A compliance team,
+a regulator, a bank, a research group or a newsroom whose subject matter is
+<CATEGORY> is not in <CATEGORY> — blocking those takes an opportunity away from
+someone who would have wanted it, and they never find out it happened.
 
 What is not evidence:
 - A neighbouring field. A domain that shares users, mechanics, vocabulary or
@@ -48,92 +126,32 @@ What is not evidence:
 If the signals you are producing for this vacancy contradict the category you
 are about to block on, do not block.
 
-Return ONLY valid JSON, no markdown fences. The block below is the SHAPE of your answer only —
-every `<PLACEHOLDER>` must be replaced with your real analysis; never copy a placeholder verbatim:
+Your answer
+
+Return ONLY valid JSON, no markdown fences. The block below is the SHAPE of your answer
+only — every `<PLACEHOLDER>` must be replaced with your real analysis; never copy a
+placeholder verbatim:
 {
-  "score": <INTEGER_0_TO_100>,
-  "matched_skills": ["<REAL_SKILL_1>", "<REAL_SKILL_2>"],
-  "gaps": ["<REAL_GAP_1>", "<REAL_GAP_2>"],
+  "axes": {
+    "skills":     {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "tools":      {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "experience": {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "education":  {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "credential": {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"}
+  },
+  "matched_skills": ["<VERBATIM_ENTRY_FROM_THE_PROFILE_LISTS>"],
   "signals": ["<REAL_TAG_1>", "<REAL_TAG_2>", "<REAL_TAG_3>"],
   "stop_match": null,
   "stop_basis": null,
-  "stop_evidence": null,
-  "vacancy_role_type": "<REAL_CONTRIBUTION_STYLE>",
-  "role_type_match": true
+  "stop_evidence": null
 }
-Field meanings: matched_skills = skills present in both profile and vacancy. gaps = requirements
-in the vacancy missing from the profile. signals = 3–5 short tags characterizing this vacancy's
-domain, context, and product type. vacancy_role_type = this vacancy's contribution style, using
-the candidate's role_type vocabulary where possible.
 
-Scoring guide — SKILLS AND REQUIREMENTS ONLY. Do not account for domain here; it is applied
-once, as the modifier below. Counting it in both places is what drove real matches to zero:
-a candidate with four matched core skills and three domain-shaped gaps was landing in the
-bottom band FOR THE DOMAIN, and then losing the same points again to the domain modifier.
-- 80–100: strong match — most key requirements met
-- 60–79: good match — solid skills overlap, minor gaps
-- 40–59: partial match — transferable skills, notable experience gaps
-- 0–39: poor fit — major mismatch in the skills and experience the vacancy asks for
+All five axes must be present. `neutral` is how you say an axis does not apply — never
+omit one, and never invent a sixth.
 
-A score of 0 means the candidate brings nothing this vacancy asks for. If any core skill
-genuinely matches, the score is not 0 — say what it is worth.
-
-Domain alignment (apply BEFORE finalising the score):
-If CANDIDATE PROFILE states no domain or industry background at all — apply NO modifier, and do
-not treat the silence as a mismatch. Plenty of real professions are described without an industry
-(a barista, a warehouse worker, a nurse), and a profile that names none is not evidence of
-distance from this vacancy; it is evidence of nothing. Score on the skills and experience that
-are actually stated.
-Otherwise, compare the vacancy's primary domain and product type against the candidate's domain
-and background as described in CANDIDATE PROFILE.
-- Same or closely related domain / product type → no modifier
-- Adjacent: transferable skills, overlapping patterns → –3 to –5 points
-- Clear mismatch: substantial domain gap, different industry patterns → –10 to –15 points
-Do not apply penalties mechanically by industry label — consider product type overlap
-and how transferable the candidate's actual experience is to this specific context.
-These penalties were halved on 2026-08-18. Stacked with the role-type modifier below they
-were driving real matches to the floor: two vacancies scored 0 while reporting five matched
-core skills and coherent gaps, which is not a "poor fit" — it is a partial fit that the
-arithmetic ate. A domain gap is a reason to rank lower, not a reason to disappear. This is a
-stopgap until an ATS integration gives real signal about what domain distance actually costs.
-A low-confidence note under "Additional" (hints) does not by itself establish domain
-alignment — treat it as real domain evidence only if a case or highlight in Work
-Experience/Projects independently supports it. Same principle as aspiration alignment
-below: an unconfirmed one-liner should not move the score on its own.
-
-Aspiration alignment (apply after domain alignment, before role type):
-If the candidate profile states a career aspiration (Career Profile → aspiration):
-- If the vacancy's primary domain matches that aspiration AND the candidate profile demonstrates
-  hands-on delivery evidence there (shipped work, concrete cases — not just the stated aspiration
-  itself): → +5 to +10 points. Symmetric counterweight to the domain mismatch penalty above.
-- If the vacancy has that aspiration's domain as a secondary signal (present in signals but not
-  the primary domain) AND the candidate demonstrates hands-on delivery there: → reduce the clear
-  domain mismatch penalty by 5–10 points (apply –10..–20 instead of –20..–30) instead of adding
-  points — this reduces the penalty only, it does not add points when there is no mismatch.
-- Primary and secondary are as defined at the top of this prompt.
-- Apply only when the candidate profile has real delivery evidence for the aspiration domain — an
-  aspiration statement alone, with no supporting cases, should not move the score.
-- Do NOT apply to a vacancy you are blocking (any non-null stop_match)
-
-Role type alignment (apply AFTER domain alignment):
-If candidate's role_type is absent or empty — apply NO modifier. Many real professions (e.g. a
-barista, a dentist) don't map onto this vocabulary at all, and an absent value is not evidence of
-a mismatch. Still classify vacancy_role_type below (used elsewhere, e.g. cover letter context)
-and set role_type_match to null.
-Otherwise: look for candidate's role_type in CANDIDATE PROFILE → Career Profile section.
-Classify the vacancy's required contribution style and compare it to the candidate's role_type.
-Use the same vocabulary as the candidate's role_type where possible.
-- Same contribution style or adjacent → no modifier
-- Clear mismatch in how value is created → –10 to –20 points
-Set vacancy_role_type to the classified type.
-Set role_type_match to true/false. Use null only if candidate's role_type is absent.
-
-Final score after all modifiers: floor at 0, cap at 100.
-
-Baseline skills common to most vacancies in this field are NOT differentiators.
-Do NOT use them as strong match signals — they are table stakes, not evidence of fit.
-Focus on domain depth, specific product or context expertise, and the candidate's actual
-track record that goes beyond the baseline for this type of role.
+signals = 3–5 short tags characterising this vacancy's domain, context and product
+type. They are also what your own block is checked against, so they have to describe
+the vacancy honestly rather than support a conclusion.
 
 stop_match examples. <CATEGORY> stands for whatever this candidate actually
 listed — the reasoning is identical for any of them, and a category not on their
@@ -147,5 +165,8 @@ list is not a category at all:
   "<CATEGORY>_adjacent" in signals.
 - A product in a neighbouring field — shared users, shared mechanics, shared
   vocabulary — that is not itself <CATEGORY> → stop_match null.
+- <CATEGORY> is the subject a compliance, regulatory, research or news product
+  deals with, while the employer's own business is that product → stop_match null,
+  and "<CATEGORY>_adjacent" in signals.
 - <CATEGORY> is not on this candidate's list → stop_match null, whatever the
   posting says.
