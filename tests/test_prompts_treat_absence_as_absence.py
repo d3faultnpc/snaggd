@@ -20,6 +20,7 @@ human or model — takes them as evidence it can.
 
 Run:  venv/bin/python3 tests/test_prompts_treat_absence_as_absence.py
 """
+import re
 import sys
 from pathlib import Path
 
@@ -47,8 +48,18 @@ check("and that grade is spelled out as not-a-middling-verdict — `neutral` is 
       "not a polite way to avoid deciding" in _SCORING
       and "removes the axis" in _SCORING)
 check("silence in the profile is still not a mismatch",
-      "is not evidence of distance from this vacancy" in _SCORING
-      and "it is evidence of nothing" in _SCORING)
+      "evidence of nothing, not evidence of" in _SCORING)
+# The sharpest form of the same rule, and the one a live answer got wrong: a profile
+# with no education section, against a posting that asks for a degree. `miss` there
+# asserts the person has no degree — which they never said. 6 of 13 live profiles
+# state no education at all, and 11 of 13 carry no certificates, so grading an absent
+# section as a shortfall would penalise most people for a question nobody asked them.
+check("an axis the profile does not speak to is neutral, not missed",
+      "or the profile says nothing\n  about this axis at all" in _SCORING)
+check("and `miss` is scoped to a profile that DOES speak to the axis",
+      "the profile speaks to this axis, and what was asked is not there" in _SCORING)
+check("the anchor has a side — it names what drove the grade, not what softened it",
+      "The anchor names what DROVE the grade" in _SCORING)
 
 # The 2026-08-18 fix carved an exception into the top band for a profile stating no
 # domain, and the band table was later cleaned so domain appeared once. Both are moot:
@@ -60,7 +71,7 @@ check("no score bands survive — the model is not asked for a number at all",
       not [ln for ln in _SCORING.splitlines()
            if ln.startswith("- ") and ":" in ln and "–" in ln.split(":")[0]])
 check("and no modifier arithmetic survives either",
-      "points" not in _SCORING.lower())
+      not re.search(r"[-+–]?\s*\d+\s*(to\s*[-+–]?\s*\d+\s*)?points", _SCORING))
 check("domain is counted exactly once, on one axis, and the prompt says so",
       "there is no separate domain adjustment anywhere" in _SCORING)
 check("a graded axis is not a verdict about the person",

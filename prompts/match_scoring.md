@@ -49,17 +49,25 @@ Grade the vacancy against the candidate on these five, and nothing else:
   job at all.
 
 For each axis, return a grade and an anchor of three to five words — not a sentence,
-not a quotation from the posting. The anchor is what makes the grade checkable: it
-names the specific thing you graded.
+not a quotation from the posting.
+
+The anchor names what DROVE the grade, not what softened it:
+- for `weak` and `miss` — the thing the posting asked for that the profile does not
+  cover. That is the reason for the grade, and it is what a person needs to read.
+- for `strong` and `ideal` — the thing in the profile that covers what was asked.
+- for `neutral` — what the posting did not ask about.
+
+An anchor naming a match beside a grade of `weak` explains nothing: it points at the
+part that worked while the grade is about the part that did not.
 
 Grades, and they are the only five:
 
 - ideal — asked for, and the candidate already does exactly this, at this level
 - strong — asked for, and clearly covered; the distance is minor
 - weak — asked for, and only partly there
-- miss — asked for, and absent from the profile
-- neutral — THIS POSTING DOES NOT ASK ABOUT THIS AXIS, or nothing about it can be
-  judged from what is here.
+- miss — asked for, the profile speaks to this axis, and what was asked is not there
+- neutral — THIS POSTING DOES NOT ASK ABOUT THIS AXIS, or the profile says nothing
+  about this axis at all.
 
 Read `neutral` again, because it is the grade most likely to be used wrongly. It is
 not "average", not "so-so", not a polite way to avoid deciding. It removes the axis
@@ -67,10 +75,19 @@ from the judgement completely. A posting that never mentions tooling gets `neutr
 on tools — not `weak`, because nothing was asked and therefore nothing is missing.
 Most vacancies will be `neutral` on at least one axis, and that is the normal case.
 
-The mirror of that rule: silence in the PROFILE is not a mismatch. A profile naming
-no industry is not evidence of distance from this vacancy, it is evidence of nothing
-— plenty of real professions are written without one. Grade what is stated, and use
-`neutral` when the posting did not ask.
+The mirror of that rule: silence in the PROFILE is not a mismatch either, and this is
+the difference between `miss` and `neutral` on an axis the posting DID ask about.
+
+A profile with no education section states nothing about education. Grading that
+`miss` would assert the person has no degree, which they never said — what it
+actually records is that nobody asked them. Same for tools, for certificates, for any
+axis the document simply does not carry: `neutral`.
+
+`miss` is for a profile that DOES speak to the axis and does not contain what was
+asked — a tools line that names five systems, none of them the one required.
+
+A profile naming no industry is likewise evidence of nothing, not evidence of
+distance: plenty of real professions are written without one.
 
 Do not grade a whole person. `weak` on an axis is a fact about the distance between
 one posting and one part of a record. It is not a verdict about the candidate, and

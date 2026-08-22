@@ -223,6 +223,7 @@ class LLMAgent:
         # Likewise — see _declared_skills. Both are the person's own declarations,
         # and both are read from the profile rather than configured anywhere else.
         self._declared_skills_cache: list | None = None
+        self._profile_axes_cache: set | None = None
         # Client is built lazily (see `client` property below) and cached
         # against the key it was built for.
         self._client_cache: OpenAI | None = None
@@ -691,11 +692,29 @@ class LLMAgent:
             self._system_prompts[reader] = self._build_system_prompt(reader)
         return self._system_prompts[reader]
 
+    # One preamble per reader, because they are not doing the same job. Until
+    # 2026-08-22 every call — including scoring — opened with "You are a job
+    # application assistant. Help craft personalized applications", which is the
+    # letter writer's brief. The scoring call then spent nine thousand characters
+    # saying the opposite: judge, do not write, do not decide. Asking a model to
+    # ignore its own system prompt is not a instruction, it is a handicap, and it
+    # was there because one preamble predated there being more than one caller.
+    _PREAMBLES = {
+        "score": ("You assess how a candidate's record lines up with a job posting. "
+                  "You do not write anything for them and you do not decide whether "
+                  "to apply — you report what you observe, and the decision is made "
+                  "outside this call.\n"),
+        "cover": ("You are a job application assistant. Help craft personalized "
+                  "applications based on the candidate profile below.\n"),
+        "answer": ("You answer an employer's questions on the candidate's behalf, "
+                   "from their profile below and nothing else.\n"),
+    }
+    _DEFAULT_PREAMBLE = ("You are a job application assistant. "
+                         "Help craft personalized applications based on the "
+                         "candidate profile below.\n")
+
     def _build_system_prompt(self, reader: str = "") -> str:
-        parts = [
-            "You are a job application assistant. "
-            "Help craft personalized applications based on the candidate profile below.\n"
-        ]
+        parts = [self._PREAMBLES.get(reader, self._DEFAULT_PREAMBLE)]
         # One document. There used to be two — job_preferences.md sat beside this one
         # and reached the model in the same prompt, holding its own answers to the same
         # questions; on a live profile it said "Not specified — open to market rate"
@@ -762,7 +781,8 @@ class LLMAgent:
         response untrusted, not just the field carrying it — a model confused enough
         to echo the schema is not a reliable source for the rest either.
         """
-        from core.axes import AXES, normalise_label, score_from_axes, validate_matched_skills
+        from core.axes import (AXES, axes_present, normalise_label, score_from_axes,
+                               validate_matched_skills)
 
         if self._is_template_echo(result):
             return {"score": None, "axes": {}, "matched_skills": [], "signals": [],
@@ -788,6 +808,26 @@ class LLMAgent:
                 continue
             grades[axis] = grade
             axes[axis] = {"grade": grade, "anchor": anchor}
+
+        # An axis the document does not speak to cannot be graded, and the prompt
+        # saying so was not enough — asked politely, the model still graded education
+        # `weak` on a profile with no education section, twice out of twelve. So the
+        # code decides it: we know what the document contains.
+        #
+        # Only when the profile speaks our vocabulary at all. A hand-written one whose
+        # headings the frame does not recognise yields an empty set, and coercing on
+        # that would silence every axis and score nothing — absence is only meaningful
+        # once presence is legible.
+        present = self._profile_axes()
+        ungrounded = []
+        if present:
+            for axis in list(grades):
+                if axis not in present and grades.get(axis) != "neutral":
+                    ungrounded.append(axis)
+                    grades[axis] = "neutral"
+                    axes.pop(axis, None)
+        if ungrounded:
+            result["axes_ungrounded"] = ungrounded
 
         verdict = score_from_axes(grades)
         result["axes"] = axes
@@ -825,6 +865,21 @@ class LLMAgent:
 
         result.update(self._validated_block(result))
         return result
+
+    def _profile_axes(self) -> set:
+        """Which axes this profile's own document speaks to. Empty when unreadable.
+
+        Empty is also what an unrecognised document gives, and the caller treats both
+        the same way — it coerces nothing. That is deliberate: absence of a section is
+        only evidence once the document's presence is legible to us.
+        """
+        if getattr(self, "_profile_axes_cache", None) is None:
+            try:
+                from core.axes import axes_present
+                self._profile_axes_cache = axes_present(self._load_profile("candidate.md"))
+            except Exception:
+                self._profile_axes_cache = set()
+        return self._profile_axes_cache
 
     def _declared_skills(self) -> list:
         """Everything on the candidate's own `skills:` and `tools:` lines.

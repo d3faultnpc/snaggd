@@ -505,6 +505,9 @@ class HHAdapter(SiteAdapter):
                 # with a regex, when two of them meant the same thing.
                 'axes': llm_cover.last_axes,
                 'non_compensable': llm_cover.last_non_compensable,
+                # Axes the model graded with no section behind them, corrected in
+                # code. Recorded because a silent correction cannot be reviewed.
+                'axes_ungrounded': llm_cover.last_axes_ungrounded,
                 # Which shape this record is in. Without it an aggregate cannot
                 # tell a verbatim selection from the paraphrases that preceded it.
                 'scoring_format': llm_cover.last_scoring_format,

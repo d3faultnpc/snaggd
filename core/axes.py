@@ -228,3 +228,49 @@ def validate_matched_skills(returned, declared) -> tuple[list, int]:
         else:
             dropped += 1
     return kept, dropped
+
+
+def axes_present(profile_markdown: str) -> set:
+    """Which axes this profile actually speaks to.
+
+    An axis whose sections the document does not carry cannot be graded, and the
+    difference matters more than it looks. A profile with no education section says
+    nothing about education — grading that `miss` asserts the person holds no degree,
+    which they never said. What it actually records is that nobody asked them.
+
+    Measured on the live profiles: 6 of 13 state no education at all and 11 of 13
+    carry no certificates. Letting an absent section read as a shortfall would
+    penalise most people for a gap in our own onboarding, on an axis where a miss is
+    non-compensable.
+
+    The prompt says this too. The prompt saying it is not enough — it was asked
+    politely on 2026-08-22 and the model still graded education `weak` on a profile
+    that has no education section, twice out of twelve, and `miss` once on another
+    model. This is the mechanism behind the rule: we know what the document contains,
+    so we do not have to ask.
+    """
+    if not profile_markdown:
+        return set()
+    from onboarding.profile_frame import KIND_HEADINGS
+
+    # Headings that actually carry something. A heading with nothing under it is the
+    # same as no heading: the wizard wrote a slot and the person did not fill it.
+    present, current, body = set(), None, False
+    for line in profile_markdown.splitlines():
+        if line.startswith("## "):
+            if current and body:
+                present.add(current)
+            current, body = line[3:].strip().lower(), False
+        elif current and line.strip():
+            body = True
+    if current and body:
+        present.add(current)
+
+    out = set()
+    for axis, sources in AXES.items():
+        for src in sources:
+            heading = KIND_HEADINGS.get(src, src)
+            if heading.lower() in present:
+                out.add(axis)
+                break
+    return out

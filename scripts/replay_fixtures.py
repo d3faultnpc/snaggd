@@ -67,6 +67,7 @@ def _score_one(cover: LLMCover, text: str) -> dict:
         "stop_evidence": cover.last_stop_evidence,
         "axes": dict(cover.last_axes or {}),
         "non_compensable": list(cover.last_non_compensable or []),
+        "axes_ungrounded": list(cover.last_axes_ungrounded or []),
         "matched_skills": list(cover.last_matched_skills or []),
         "matched_skills_dropped": cover.last_matched_skills_dropped,
         "scoring_format": cover.last_scoring_format,

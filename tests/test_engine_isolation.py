@@ -117,7 +117,9 @@ _expected_llm_agent_class_members = {
     # the categories come from the candidate's own profile, and an answer that
     # cannot say what its block rests on does not get to make one. Both read
     # local profile files; neither knows anything about transport or tiers.
-    "_declared_stop_categories", "_declared_skills", "_validated_block",
+    "_declared_stop_categories", "_declared_skills", "_profile_axes",
+    "_validated_block",
+    "_PREAMBLES", "_DEFAULT_PREAMBLE",
 }
 from core import llm_agent  # noqa: E402
 

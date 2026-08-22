@@ -118,6 +118,34 @@ def run():
     check("None on either side is survivable",
           validate_matched_skills(None, None) == ([], 0))
 
+    print("\nAn axis the document does not speak to is not gradeable")
+    from core.axes import axes_present
+    full = ("# Someone\n\n## Skills\nskills: sql\n\n## Tools\ntools: jira\n\n"
+            "## Work Experience\n\n### A | B | 2020\n- did things\n\n"
+            "## Education\n\n### Some University\n\n"
+            "## Certificates & Courses\n\n### A licence\n")
+    check("a document carrying all five is read as carrying all five",
+          axes_present(full) == {"skills", "tools", "experience", "education", "credential"})
+
+    thin = "# Barista\n\n## Skills\nskills: latte art\n\n## Work Experience\n\n### Cafe | 2021\n- served\n"
+    check("a thin profile speaks to what it carries and no more",
+          axes_present(thin) == {"skills", "experience"})
+    check("and an absent section is absent, not a shortfall to be graded",
+          "education" not in axes_present(thin) and "credential" not in axes_present(thin))
+
+    check("a heading with nothing under it is not content",
+          "tools" not in axes_present(thin + "\n## Tools\n"))
+
+    # The hand-written case, and the reason coercion is conditional. One live profile
+    # is written with its own headings — `## Навыки`, `## Side Projects` — and the
+    # frame recognises none of them. Coercing on that would silence every axis and
+    # score nothing at all: absence is only meaningful once presence is legible.
+    handwritten = "# Support Lead\n\n## Навыки\nsql, excel\n\n## ACME · 2020\n- did things\n"
+    check("a document written in its own vocabulary yields nothing, not five absences",
+          axes_present(handwritten) == set())
+
+    check("an empty document speaks to nothing", axes_present("") == set())
+
     print("\nThe axes stay tied to the frame")
     from onboarding.profile_frame import KIND_HEADINGS, DECLARED_SECTIONS
     known = set(KIND_HEADINGS) | {s.lower() for s in DECLARED_SECTIONS}
