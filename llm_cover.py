@@ -92,6 +92,9 @@ class LLMCover:
         # has gone back to paraphrasing and the aggregate has stopped meaning
         # what it says.
         self.last_matched_skills_dropped: int = 0
+        # The second question: how far the posting's role is from the profession the
+        # person names themselves as. Carried, not applied — see core.axes.ROLE_FIT.
+        self.last_role_fit: dict | None = None
         self.last_scoring_format: Optional[str] = None
         # What the call itself did: provider generation id and token counts.
         # None on a cache hit, and that is the truth about a cache hit — there
@@ -161,6 +164,7 @@ class LLMCover:
         self.last_axes = score_data.get("axes") or {}
         self.last_non_compensable = score_data.get("non_compensable") or []
         self.last_matched_skills_dropped = score_data.get("matched_skills_dropped", 0)
+        self.last_role_fit = score_data.get("role_fit")
         self.last_scoring_format = score_data.get("scoring_format")
         self.last_call_meta = score_data.get("call_meta", None)
         self.last_signals = score_data.get("signals", [])
@@ -177,6 +181,7 @@ class LLMCover:
             "matched_skills": self.last_matched_skills,
             "matched_skills_dropped": self.last_matched_skills_dropped,
             "axes": self.last_axes,
+            "role_fit": self.last_role_fit,
             "non_compensable": self.last_non_compensable,
             "stop_match": self.last_stop_match,
             "stop_basis": self.last_stop_basis,
@@ -247,6 +252,7 @@ class LLMCover:
         self.last_axes = {}
         self.last_non_compensable = []
         self.last_matched_skills_dropped = 0
+        self.last_role_fit = None
         self.last_scoring_format = None
         self.last_call_meta = None
         self.last_signals = []
@@ -299,6 +305,7 @@ class LLMCover:
             self.last_matched_skills = entry.get("matched_skills") or []
             self.last_matched_skills_dropped = entry.get("matched_skills_dropped", 0)
             self.last_axes = entry.get("axes") or {}
+            self.last_role_fit = entry.get("role_fit")
             self.last_non_compensable = entry.get("non_compensable") or []
             self.last_stop_match = entry.get("stop_match")
             self.last_stop_basis = entry.get("stop_basis")
@@ -310,6 +317,7 @@ class LLMCover:
         # Legacy positional array. gaps sat at index 5 and role_type at 7; neither
         # has anywhere to go now, so both are read past rather than restored.
         self.last_axes = {}
+        self.last_role_fit = None
         self.last_non_compensable = []
         self.last_matched_skills_dropped = 0
         self.last_scoring_format = None

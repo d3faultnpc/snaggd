@@ -569,6 +569,7 @@ class LLMAgent:
         # nobody gave — indistinguishable, downstream, from a genuine middling match.
         result = self._parse_json(raw, fallback={
             "axes": {},
+            "role_fit": None,
             "matched_skills": [],
             "signals": [],
             "stop_match": None,
@@ -781,11 +782,12 @@ class LLMAgent:
         response untrusted, not just the field carrying it — a model confused enough
         to echo the schema is not a reliable source for the rest either.
         """
-        from core.axes import (AXES, axes_present, normalise_label, score_from_axes,
-                               validate_matched_skills)
+        from core.axes import (AXES, axes_present, normalise_label, normalise_role_fit,
+                               score_from_axes, validate_matched_skills)
 
         if self._is_template_echo(result):
-            return {"score": None, "axes": {}, "matched_skills": [], "signals": [],
+            return {"score": None, "axes": {}, "role_fit": None, "matched_skills": [],
+                    "signals": [],
                     "stop_match": None, "stop_basis": None, "stop_evidence": None,
                     "stop_suppressed": None, "scoring_format": _SCORING_FORMAT}
 
@@ -822,6 +824,23 @@ class LLMAgent:
         if verdict.unknown_labels:
             result["axes_unknown"] = {k: str(v) for k, v in verdict.unknown_labels.items()}
             print(f"   ⚠️ grades outside the vocabulary: {result['axes_unknown']}")
+
+        # ── The second question ──────────────────────────────────────────────
+        # Recorded, not applied. What a distant role costs is a calibration question,
+        # and calibrating against a guess is how the domain modifier ended up halved
+        # twice and still called a stopgap. It rides beside the score until there is
+        # something to weigh it against.
+        raw_fit = result.get("role_fit")
+        fit = raw_fit if isinstance(raw_fit, dict) else {}
+        value = normalise_role_fit(fit.get("value"))
+        if value is None:
+            result["role_fit"] = None
+        else:
+            anchor = fit.get("anchor")
+            result["role_fit"] = {
+                "value": value,
+                "anchor": str(anchor).strip() if isinstance(anchor, (str, int, float)) else "",
+            }
 
         # ── Lists ────────────────────────────────────────────────────────────
         for key in ("signals", "matched_skills"):

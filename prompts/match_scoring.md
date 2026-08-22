@@ -91,6 +91,41 @@ nothing in your answer should read like one.
 Baseline capability common to most postings in a field is not a differentiator — it
 is table stakes. Weigh the specific over the generic on every axis.
 
+role_fit — the second question
+
+The five axes answer whether this person covers what the posting asked. They do not
+answer whether this is the kind of professional the job is for, and the difference
+matters: a posting that asks for little, met by someone who covers all of it, is a
+full match on coverage alone.
+
+Compare the profile's FIRST HEADING — the person's own professional identity — with
+the role this posting is for. THE ROLE ONLY.
+
+Industry, product type and domain are NOT part of this. They are already accounted
+for on the experience axis, and counting them twice is how a candidate can be
+demoted for the same distance in two places. A product manager at a bank and a
+product manager at a game studio hold the SAME role; a nurse in a hospital and a
+nurse on an oil rig hold the same role. Change the industry and the answer here does
+not move.
+
+One value, and only two exist:
+
+- same — the same profession. A step up or down inside it is still the same
+  profession: product manager and product owner, junior and senior of one craft,
+  head of support and support lead.
+- different — a genuinely different profession, of the kind a person would have to
+  change careers to hold: a barista posting against a product manager, a product
+  manager posting against a dentist, a PRODUCTION manager against a PRODUCT manager.
+
+When it could plausibly be either, it is `same`. The value that costs something has
+to be the one you are sure of.
+
+`different` is not a criticism and not a rejection — it runs in both directions and
+says nothing about worth. Nothing is decided here either: what the distance costs is
+decided outside this call.
+
+Judge it from the two documents, not from whether the person could learn the job.
+
 matched_skills
 
 Return the entries from the candidate's own `skills:` and `tools:` lines that this
@@ -150,12 +185,15 @@ placeholder verbatim:
     "education":  {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
     "credential": {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"}
   },
+  "role_fit": {"value": "<SAME_OR_DIFFERENT>", "anchor": "<THREE_TO_FIVE_WORDS>"},
   "matched_skills": ["<VERBATIM_ENTRY_FROM_THE_PROFILE_LISTS>"],
   "signals": ["<REAL_TAG_1>", "<REAL_TAG_2>", "<REAL_TAG_3>"],
   "stop_match": null,
   "stop_basis": null,
   "stop_evidence": null
 }
+
+`role_fit` names the posting's role in its anchor, so the comparison can be checked.
 
 All five axes must be present. `neutral` is how you say an axis does not apply — never
 omit one, and never invent a sixth.

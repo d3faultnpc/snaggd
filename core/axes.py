@@ -105,6 +105,43 @@ AXIS_WEIGHTS: dict[str, float] = {axis: 1.0 for axis in AXES}
 NON_COMPENSABLE: frozenset = frozenset({"credential"})
 
 
+# ── The second question ───────────────────────────────────────────────────────
+#
+# The five axes answer "does this person cover what the posting asked". They do not
+# answer "is this the kind of professional this job is for", and the gap between
+# those two shows up as an inflated score rather than as a wrong one: a posting that
+# asks little, met by someone who covers all of it, is a full match on coverage. A
+# product manager against a barista posting that asks for communication and teamwork
+# scores high, correctly, on the only question it was asked.
+#
+# The mechanism for the missing question existed and was deleted with role_type — for
+# the right reason, since role_type is empty in 0 of the 8 profiles built by the CV
+# parser. But the input is not gone, it is elsewhere: the first heading of every
+# profile is the person's own professional identity, present 8 of 8, extracted under
+# an explicit contract ("2-4 words, profession only"). One declaration, made at first
+# touch by the parser, read here and by the letter for its calibration.
+#
+# So this is not a new judgement layer. It is a second OBSERVATION on a different
+# question, and the code still decides what it costs — the model is never asked to
+# revise its own grade.
+# Two values, not three. It shipped with `same / adjacent / far` and the middle one
+# ate everything: 17 of 25 came back `adjacent`, including a posting the model's own
+# anchor described as "product manager to product manager". Seniority, focus and
+# industry all read as "adjacent" to a model, and none of them is the harm this
+# exists to catch — a product manager against a barista posting is.
+#
+# What survives is the distinction it made reliably. Both `different` verdicts in
+# that run were right and neither was a near miss: a production manager (not a
+# product manager) and a game producer.
+ROLE_FIT: tuple[str, ...] = ("same", "different")
+
+# Deliberately without a coefficient yet. What `far` should cost is a calibration
+# question, and calibration against a guess is how the domain modifier came to be
+# halved twice and still described as a stopgap. It is recorded first, measured
+# against the vacancies a person would actually refuse, and weighted after.
+ROLE_FIT_WEIGHTS: dict[str, float] = {}
+
+
 @dataclass
 class Verdict:
     """What the arithmetic concluded, and enough of its working to argue with it."""
@@ -125,6 +162,16 @@ class Verdict:
     unknown_labels: dict = field(default_factory=dict)
     """Axis -> the value returned, for values outside LABELS. Discarded, but counted:
     a model that starts inventing grades has to be visible, not silently averaged."""
+
+
+def normalise_role_fit(raw) -> str | None:
+    """A role-fit value in the vocabulary, or None. Same rule as a grade: a value
+    nobody declared is not a value, and guessing which was meant is how a scale
+    acquires members it never agreed to."""
+    if raw is None:
+        return None
+    val = str(raw).strip().lower()
+    return val if val in ROLE_FIT else None
 
 
 def normalise_label(raw) -> str | None:

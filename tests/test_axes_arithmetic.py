@@ -8,8 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.axes import (
-    AXES, AXIS_WEIGHTS, LABELS, NON_COMPENSABLE,
-    normalise_label, score_from_axes, validate_matched_skills,
+    AXES, AXIS_WEIGHTS, LABELS, NON_COMPENSABLE, ROLE_FIT, ROLE_FIT_WEIGHTS,
+    normalise_label, normalise_role_fit, score_from_axes, validate_matched_skills,
 )
 
 failures = []
@@ -154,6 +154,24 @@ def run():
           axes_present(handwritten) == set())
 
     check("an empty document speaks to nothing", axes_present("") == set())
+
+    print("\nrole_fit is a second observation, not a second judgement")
+    check("its vocabulary is closed, same rule as a grade",
+          normalise_role_fit("Different") == "different"
+          and normalise_role_fit("sort of") is None
+          and normalise_role_fit(None) is None)
+    # Two, not three. It shipped with a middle value and the middle value ate
+    # everything: 17 of 25 came back `adjacent`, one of them on a posting the model's
+    # own anchor called "product manager to product manager".
+    check("two values and no middle to hide in", ROLE_FIT == ("same", "different"))
+    # The score is coverage of what the posting asked, and role_fit answers a
+    # different question — whether the job is for this person at all. Letting it
+    # touch the number here would make the model's second answer revise its first,
+    # which is the judgement layer this design removed. It is weighed after it has
+    # been measured against decisions a person actually made.
+    check("it carries no weight yet, deliberately", ROLE_FIT_WEIGHTS == {})
+    check("and the arithmetic does not know about it at all",
+          score_from_axes({"skills": "ideal"}).score == 100)
 
     print("\nThe axes stay tied to the frame")
     from onboarding.profile_frame import KIND_HEADINGS, DECLARED_SECTIONS

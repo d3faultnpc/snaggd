@@ -45,7 +45,7 @@ from llm_cover import LLMCover  # noqa: E402
 
 # What a re-score is compared on. Deliberately not the whole answer: prose fields
 # move on wording alone, and a diff that lights up every run gets ignored.
-_COMPARED = ("score", "stop_match", "stop_basis", "non_compensable")
+_COMPARED = ("score", "stop_match", "stop_basis", "non_compensable", "role_fit")
 
 
 def _load_fixtures(d: Path) -> list:
@@ -66,6 +66,7 @@ def _score_one(cover: LLMCover, text: str) -> dict:
         "stop_basis": cover.last_stop_basis,
         "stop_evidence": cover.last_stop_evidence,
         "axes": dict(cover.last_axes or {}),
+        "role_fit": cover.last_role_fit,
         "non_compensable": list(cover.last_non_compensable or []),
         "matched_skills": list(cover.last_matched_skills or []),
         "matched_skills_dropped": cover.last_matched_skills_dropped,

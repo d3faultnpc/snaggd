@@ -505,6 +505,11 @@ class HHAdapter(SiteAdapter):
                 # with a regex, when two of them meant the same thing.
                 'axes': llm_cover.last_axes,
                 'non_compensable': llm_cover.last_non_compensable,
+                # How far this posting's role is from the profession the person names
+                # themselves as. The five axes say whether they cover what was asked;
+                # this says whether the job is for them. Recorded so the two can be
+                # weighed against real decisions before either is given a coefficient.
+                'role_fit': llm_cover.last_role_fit,
                 # Which shape this record is in. Without it an aggregate cannot
                 # tell a verbatim selection from the paraphrases that preceded it.
                 'scoring_format': llm_cover.last_scoring_format,

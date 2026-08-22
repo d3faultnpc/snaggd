@@ -77,6 +77,19 @@ check("a token nested inside axes is still caught — the old guard only looked 
       "top-level keys and would have missed it", r["score"] is None)
 check("and nothing survives from that answer", r["axes"] == {} and r["matched_skills"] == [])
 
+print("\nrole_fit is normalised, or it is nothing")
+check("a declared value survives with its anchor",
+      sanitize(axes={"skills": IDEAL},
+               role_fit={"value": "different", "anchor": "barista counter role"}
+               )["role_fit"] == {"value": "different", "anchor": "barista counter role"})
+check("an invented value is not a value",
+      sanitize(axes={"skills": IDEAL}, role_fit={"value": "kind of"})["role_fit"] is None)
+check("a missing one is None, not a guess",
+      sanitize(axes={"skills": IDEAL})["role_fit"] is None)
+check("and it does not touch the score — a different question, answered separately",
+      sanitize(axes={"skills": IDEAL},
+               role_fit={"value": "different", "anchor": "x"})["score"] == 100)
+
 print("\ngaps is gone")
 check("a model still sending it does not get it into the record",
       "gaps" not in sanitize(gaps=["something"], axes={"skills": IDEAL}))
