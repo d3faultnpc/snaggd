@@ -605,6 +605,24 @@ class ResumeParser:
             "C — Education: type='education', company=institution name, role=degree/program, "
             "period=years. Short courses and certificates → type='credential', not a type of "
             "their own.\n"
+            "C1 — What credential covers, and why it is not a skill: certificates, courses, "
+            "LICENCES, registrations, admissions and clearances — anything a person either "
+            "holds or does not, issued by someone else, that an employer can require before "
+            "the job is possible at all. A driving licence ('водительское удостоверение "
+            "категории B'), a nursing registration, a food-handling permit ('санитарная "
+            "книжка'), a security clearance, an accountant's attestation, a forklift ticket. "
+            "These go to cases[] with type='credential' — NEVER into skills[], which is where "
+            "one live CV's driving licence ended up, listed between 'Adobe Photoshop' and "
+            "'MS Outlook'. If the CV names the issuer or the category, put it in role.\n"
+            "C1a — And it goes in ONE place. A CV that lists 'аккредитация специалиста' "
+            "in its key-skills line and again under certificates is naming one thing twice; "
+            "it belongs in cases[] as a credential and must not also appear in skills[].\n"
+            "C2 — Volunteering: unpaid work with an organisation or cause → "
+            "type='volunteering', written exactly like employment (company, role, period, "
+            "bullets). It has a type of its own because for a junior, a student, or someone "
+            "returning to work it is not a footnote — it is the only evidence they have of "
+            "having done the thing. Do not fold it into employment and do not drop it as "
+            "minor.\n"
             "D — Responsibilities vs highlights: explicit responsibility/duty bullets with no single "
             "crisp metric → responsibilities[]. Bullets with a concrete before/after metric → "
             "highlights[]. An achievement cluster with several unrelated points and no one metric also "
@@ -613,6 +631,17 @@ class ResumeParser:
             "E — Target schema, not source format: always map content into the JSON shape above "
             "regardless of the source CV's own structure, heading levels, or language. Never mirror "
             "the source document's header depth or section order.\n"
+            "D1 — A number without a before/after is still evidence. 'До 360 напитков за "
+            "смену', '60 процедур за смену', 'команда 12 человек' state the scale a person "
+            "worked at, and scale is often the only thing separating two otherwise identical "
+            "records. They carry a metric but no change, so they fit neither side of D "
+            "cleanly — put them in responsibilities[]. Never drop them.\n"
+            "E1 — Evidence, not narration. A case records what the person DID. Why they left, "
+            "what they hoped for, how they felt about the company and what they are looking for "
+            "next are none of those — they are the person talking about themselves, and they do "
+            "not belong in context, responsibilities or results. Seen live: 'Ушел, так как не "
+            "видел прозрачного роста', 'Уходит в связи с бюрократией' sitting inside a work "
+            "entry as though they described the work. Drop them; they are not hints either.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
             "it in hints[] instead.\n"
             "G — role_type_options: these are quick-pick suggestions for a wizard field the candidate "
@@ -627,6 +656,13 @@ class ResumeParser:
             "acceptable here specifically, since the alternative (staying silent) leaves nothing for a "
             "cover letter to hook into at all. Do not add this hint when pitch or a case domain already "
             "covers it — only for the genuinely-thin case.\n"
+            "- skills vs tools vs languages — three buckets, and real CVs mix them. A SKILL is "
+            "something the person can do ('dispute resolution', 'latte art', 'incident "
+            "management'). A TOOL is a named product or system they operate ('Jira', "
+            "'MS Outlook', 'Lotus Notes', '1C', 'Adobe Photoshop', 'ЦФТ-Банк'). A LANGUAGE goes "
+            "to languages[] and NOWHERE else — 'Английский язык' in skills[] is wrong even when "
+            "the CV lists it there. Source CVs commonly dump all three into one 'key skills' "
+            "field; split them by what each item IS, not by where the CV put it.\n"
             "- skills: professional skills only — NO metrics (AOV, CAC, TTR are metrics, not skills)\n"
             "- If a field is absent in the CV, use null or empty array/object\n"
             "- Do NOT invent or assume anything not explicitly present\n"
@@ -687,7 +723,12 @@ class ResumeParser:
         identity = data.identity or {}
         hints = []
         if not identity.get("name"):     hints.append("Add your full name")
-        if not identity.get("role"):     hints.append("Add your target job title")
+        # "Target job title" is what you WANT; identity.role is what you ARE. The same
+        # field is written by the parser as a profession and by the wizard under a
+        # label saying target — and it becomes the profile's first heading, which
+        # scoring reads as the person's professional identity. One field cannot mean
+        # both, so it means the first one everywhere.
+        if not identity.get("role"):     hints.append("Add your profession")
         if not identity.get("location"): hints.append("Add your city/location")
         if len(data.skills) < 3:
             hints.append("Add at least 3 professional skills")
