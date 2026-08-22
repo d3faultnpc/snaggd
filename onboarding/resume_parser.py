@@ -452,9 +452,19 @@ class ResumeParser:
         # group is written here, and md_parse reads them back as one — so the
         # content survives through a path that already exists, and the file grows
         # no new shape. Round trip pinned in tests/test_candidate_md_roundtrip.py.
+        # The same split again, one gate further out. The comment above describes
+        # heading and content being gated together and fixed — and they still were,
+        # by target_market: a profile reading as western or global lost every
+        # responsibility bullet on save, silently, exactly like the Awards entry did.
+        # Nobody has hit it because all 13 live profiles read as `cis`, which makes it
+        # a bug waiting for the first international CV rather than one that never
+        # fires. The wizard writes into `responsibilities` for a card of any kind, so
+        # there is no shape it cannot reach.
+        #
+        # A heading is a market convention. Bullets are what a person typed.
         wrote_leading_group = False
-        if responsibilities and target_market != "western" and target_market != "global":
-            if include_zone:
+        if responsibilities:
+            if include_zone and target_market not in ("western", "global"):
                 lines += ["", "#### Zone of Responsibility"]
             lines += [f"- {r}" for r in responsibilities]
             wrote_leading_group = True
@@ -627,7 +637,10 @@ class ResumeParser:
             "crisp metric → responsibilities[]. Bullets with a concrete before/after metric → "
             "highlights[]. An achievement cluster with several unrelated points and no one metric also "
             "belongs in responsibilities[] — do not force it into a highlights[] entry with empty results[]. "
-            "Western CVs typically have no responsibilities section — leave responsibilities: [].\n"
+            "Western CVs typically have no responsibilities section, so this array is "
+            "usually empty for them — but extract duty bullets when the CV does carry "
+            "them. Absence is a convention of the format, not a rule about the person, "
+            "and dropping bullets that are on the page loses what they wrote.\n"
             "E — Target schema, not source format: always map content into the JSON shape above "
             "regardless of the source CV's own structure, heading levels, or language. Never mirror "
             "the source document's header depth or section order.\n"

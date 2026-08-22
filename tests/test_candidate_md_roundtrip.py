@@ -331,6 +331,42 @@ def run():
     check("and a bare list, as older files hold it",
           parse_candidate_md(_bare_md).get("skills") == ["python", "sql"])
 
+    # ── A market convention may drop a heading, never the bullets under it ────
+    # Until 2026-08-22 a profile reading as western or global lost every
+    # responsibility bullet on save. "Zone of Responsibility" is a CIS employment
+    # convention; the bullets are what a person typed into the wizard, which writes
+    # into that field for a card of any kind. All 13 live profiles read as `cis`, so
+    # this never fired — it was waiting for the first international CV.
+    print("\nA market convention drops a heading, not content:")
+    western = ResumeData(
+        identity={"name": "W"}, target_market="western",
+        cases=[{"type": "employment", "company": "Acme", "role": "PM",
+                "responsibilities": ["owned the roadmap", "ran weekly reviews"]}])
+    western_md = ResumeParser(None).to_md(western)
+    check("a western profile keeps its responsibility bullets",
+          "owned the roadmap" in western_md and "ran weekly reviews" in western_md)
+    check("and drops only the CIS heading",
+          "Zone of Responsibility" not in western_md)
+    # They come back under the entry as an unnamed group rather than as
+    # `responsibilities`, because the heading is what carried that meaning. Stated as
+    # the property it is, not the one that would be nicer: the same already happens to
+    # an award's or a degree's bullets, since the heading is written for employment
+    # only. What must never happen is the bullets disappearing, which is what this
+    # file exists to catch.
+    western_case = parse_candidate_md(western_md)["cases"][0]
+    survivors = set(western_case.get("responsibilities") or [])
+    for group in (western_case.get("highlights") or []):
+        survivors |= set(group.get("results") or [])
+    check("and every bullet survives the round trip, under the same case",
+          survivors == {"owned the roadmap", "ran weekly reviews"})
+
+    cis = ResumeData(
+        identity={"name": "C"}, target_market="cis",
+        cases=[{"type": "employment", "company": "Acme", "role": "PM",
+                "responsibilities": ["owned the roadmap"]}])
+    check("a CIS employment entry still gets the heading",
+          "Zone of Responsibility" in ResumeParser(None).to_md(cis))
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0
