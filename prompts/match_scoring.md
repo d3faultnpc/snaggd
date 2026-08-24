@@ -51,6 +51,11 @@ Grade the vacancy against the candidate on these five, and nothing else:
 For each axis, return a grade and an anchor of three to five words — not a sentence,
 not a quotation from the posting.
 
+Write anchors in the SAME LANGUAGE as the vacancy text (Russian vacancy → Russian
+anchors, English vacancy → English anchors). This is the rule cover_letter.md and
+form_fill.md already follow; the anchors were left out of it and drifted between
+languages inside a single run, which is what a person reads in their own log.
+
 The anchor names what DROVE the grade, not what softened it:
 - for `weak` and `miss` — the thing the posting asked for that the profile does not
   cover. That is the reason for the grade, and it is what a person needs to read.
