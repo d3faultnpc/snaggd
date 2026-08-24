@@ -551,7 +551,14 @@ class LLMAgent:
                   "BLOCKED CATEGORIES: this candidate declared none. stop_match is null.")
         content = self._chat_completion(
             model=self.model,
-            max_tokens=400,
+            # A ceiling is a cap, not a budget: output tokens are billed as
+            # generated, so headroom is free and a truncated answer is not. 400 was
+            # already cutting 8% of replies (measured 2026-08-24 over 140 calls) and
+            # `asked` — five more fields — took that to 22%. Every one of those was
+            # then "repaired" by json_repair into a shape that parses, which is the
+            # failure mode split scoring was rejected for: an answer that looks
+            # whole and lost its tail.
+            max_tokens=700,
             call_type="score",
             messages=[
                 {"role": "system", "content": self._system("score")},
