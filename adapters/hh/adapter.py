@@ -504,6 +504,13 @@ class HHAdapter(SiteAdapter):
                 # strings over 913 applications — an aggregate that had to guess,
                 # with a regex, when two of them meant the same thing.
                 'axes': llm_cover.last_axes,
+                # How much of a judgement this score is. Two axes in play make one
+                # label step worth 25 points, four make it 6 — so 58 out of two and
+                # 58 out of four are not the same statement, and the record could
+                # not tell them apart. Measured 2026-08-24: the median posting put
+                # two axes in play.
+                'axes_in_play': llm_cover.last_axes_in_play,
+                'axes_neutral': llm_cover.last_axes_neutral,
                 'non_compensable': llm_cover.last_non_compensable,
                 # How far this posting's role is from the profession the person names
                 # themselves as. The five axes say whether they cover what was asked;

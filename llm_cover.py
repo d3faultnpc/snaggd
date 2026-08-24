@@ -87,6 +87,13 @@ class LLMCover:
         # the scorer computed only for the letter to read, and they went with the
         # role_type rubric that no profile built by the CV parser ever filled in.
         self.last_axes: dict = {}
+        # How many of the five the posting actually raised. core.axes computes it
+        # while building the score and it stopped here, so the record carried the
+        # number without the one field that says how much of a judgement it is:
+        # at two axes in play a single label step is worth 25 points, at four it
+        # is 6. Carried, never recomputed — the definition lives in core.axes.
+        self.last_axes_in_play: list = []
+        self.last_axes_neutral: list = []
         # Axes graded `miss` whose absence cannot be bought back by strength
         # elsewhere. Advisory — the selector decides, this only carries it.
         self.last_non_compensable: list = []
@@ -165,6 +172,8 @@ class LLMCover:
         self.last_stop_evidence = score_data.get("stop_evidence", None)
         self.last_stop_suppressed = score_data.get("stop_suppressed", None)
         self.last_axes = score_data.get("axes") or {}
+        self.last_axes_in_play = score_data.get("axes_in_play") or []
+        self.last_axes_neutral = score_data.get("axes_neutral") or []
         self.last_non_compensable = score_data.get("non_compensable") or []
         self.last_matched_skills_dropped = score_data.get("matched_skills_dropped", 0)
         self.last_role_fit = score_data.get("role_fit")
@@ -184,6 +193,8 @@ class LLMCover:
             "matched_skills": self.last_matched_skills,
             "matched_skills_dropped": self.last_matched_skills_dropped,
             "axes": self.last_axes,
+            "axes_in_play": self.last_axes_in_play,
+            "axes_neutral": self.last_axes_neutral,
             "role_fit": self.last_role_fit,
             "non_compensable": self.last_non_compensable,
             "stop_match": self.last_stop_match,
@@ -256,6 +267,8 @@ class LLMCover:
         self.last_stop_evidence = None
         self.last_stop_suppressed = None
         self.last_axes = {}
+        self.last_axes_in_play = []
+        self.last_axes_neutral = []
         self.last_non_compensable = []
         self.last_matched_skills_dropped = 0
         self.last_role_fit = None
@@ -311,6 +324,8 @@ class LLMCover:
             self.last_matched_skills = entry.get("matched_skills") or []
             self.last_matched_skills_dropped = entry.get("matched_skills_dropped", 0)
             self.last_axes = entry.get("axes") or {}
+            self.last_axes_in_play = entry.get("axes_in_play") or []
+            self.last_axes_neutral = entry.get("axes_neutral") or []
             self.last_role_fit = entry.get("role_fit")
             self.last_non_compensable = entry.get("non_compensable") or []
             self.last_stop_match = entry.get("stop_match")
@@ -323,6 +338,8 @@ class LLMCover:
         # Legacy positional array. gaps sat at index 5 and role_type at 7; neither
         # has anywhere to go now, so both are read past rather than restored.
         self.last_axes = {}
+        self.last_axes_in_play = []
+        self.last_axes_neutral = []
         self.last_role_fit = None
         self.last_non_compensable = []
         self.last_matched_skills_dropped = 0
