@@ -187,6 +187,36 @@ def normalise_label(raw) -> str | None:
     return label if label in LABELS else None
 
 
+def grade_after_asked(grade: str | None, asked) -> tuple[str | None, str | None]:
+    """The grade the arithmetic uses, and what it replaced.
+
+    `asked` is the model's answer about the POSTING alone: did this posting raise
+    this axis at all. The prompt has said since the axes landed that an axis nobody
+    raised is `neutral` — and it kept being graded anyway. Measured 2026-08-24: a
+    support engineer got `education: miss` on a posting that contains no word about
+    education, and the anchor gave the reason away by naming his own record
+    (a line from their own record) rather than anything the posting asked.
+    That single axis cost him 8 points and put him level with a recruiter.
+
+    A rule with nobody to enforce it is not a rule here — this is the fourth one in
+    this codebase to be written in a prompt and broken in production. So the code
+    enforces it: `asked is False` makes the grade `neutral` whatever the model said,
+    and the replaced grade is returned so the disagreement stays visible instead of
+    being quietly corrected.
+
+    A grade that is not in the vocabulary is left alone: it belongs in
+    `unknown_labels`, where an inventing model is counted, and coercing it to
+    `neutral` would hide exactly that.
+
+    An absent or unparseable `asked` is NOT treated as false: an older answer that
+    never carried the field must keep behaving exactly as it did, and a missing
+    field is not a claim that the posting was silent.
+    """
+    if asked is False and grade is not None:
+        return ("neutral", grade if grade != "neutral" else None)
+    return (grade, None)
+
+
 def score_from_axes(labels: dict, grounded: set | None = None) -> Verdict:
     """Axis labels -> a score, with the working kept.
 

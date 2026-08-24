@@ -782,8 +782,8 @@ class LLMAgent:
         response untrusted, not just the field carrying it — a model confused enough
         to echo the schema is not a reliable source for the rest either.
         """
-        from core.axes import (AXES, axes_present, normalise_label, normalise_role_fit,
-                               score_from_axes, validate_matched_skills)
+        from core.axes import (AXES, axes_present, grade_after_asked, normalise_label,
+                               normalise_role_fit, score_from_axes, validate_matched_skills)
 
         if self._is_template_echo(result):
             return {"score": None, "axes": {}, "role_fit": None, "matched_skills": [],
@@ -803,6 +803,8 @@ class LLMAgent:
             grade = normalise_label(entry.get("grade"))
             anchor = entry.get("anchor")
             anchor = str(anchor).strip() if isinstance(anchor, (str, int, float)) else ""
+            # The posting is one question, the profile another. See grade_after_asked.
+            grade, coerced_from = grade_after_asked(grade, entry.get("asked"))
             if grade is None:
                 # Kept out of the arithmetic but not out of the record: an invented
                 # grade has to be visible, and score_from_axes counts it.
@@ -810,6 +812,10 @@ class LLMAgent:
                 continue
             grades[axis] = grade
             axes[axis] = {"grade": grade, "anchor": anchor}
+            if coerced_from:
+                # Kept in the record, not swallowed: the model contradicting its own
+                # `asked` is exactly what a later measurement will want to count.
+                axes[axis]["coerced_from"] = coerced_from
 
         # An absent section is a real gap in the document an employer reads, so it is
         # graded as one. Grounding is passed only to the non-compensable gate: 11 of

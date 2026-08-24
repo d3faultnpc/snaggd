@@ -60,6 +60,19 @@ The anchor names what DROVE the grade, not what softened it:
 An anchor naming a match beside a grade of `weak` explains nothing: it points at the
 part that worked while the grade is about the part that did not.
 
+`asked` — one question, answered before the grade
+
+For every axis, first answer a question about the POSTING ALONE: did this posting
+raise this axis at all? `asked` is true only if the posting says something this axis
+is about. It is not about the profile, and nothing in the profile can make it true —
+a candidate's unfinished law degree does not mean the posting asked for a degree.
+
+Answer it before grading, because the two are different questions and were being
+answered as one. When `asked` is false the grade is `neutral`, and the code enforces
+that: a grade sitting beside `asked: false` is replaced with `neutral` and the axis
+leaves the arithmetic. Grading an axis the posting never raised is how a person gets
+marked down for a question nobody asked.
+
 Grades, and they are the only five:
 
 - ideal — asked for, and the candidate already does exactly this, at this level
@@ -179,11 +192,11 @@ only — every `<PLACEHOLDER>` must be replaced with your real analysis; never c
 placeholder verbatim:
 {
   "axes": {
-    "skills":     {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
-    "tools":      {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
-    "experience": {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
-    "education":  {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
-    "credential": {"grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"}
+    "skills":     {"asked": <TRUE_OR_FALSE>, "grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "tools":      {"asked": <TRUE_OR_FALSE>, "grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "experience": {"asked": <TRUE_OR_FALSE>, "grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "education":  {"asked": <TRUE_OR_FALSE>, "grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"},
+    "credential": {"asked": <TRUE_OR_FALSE>, "grade": "<GRADE>", "anchor": "<THREE_TO_FIVE_WORDS>"}
   },
   "role_fit": {"value": "<SAME_OR_DIFFERENT>", "anchor": "<THREE_TO_FIVE_WORDS>"},
   "matched_skills": ["<VERBATIM_ENTRY_FROM_THE_PROFILE_LISTS>"],
