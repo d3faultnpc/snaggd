@@ -107,13 +107,16 @@ check("and the renderer no longer writes a MISSING heading into the profile",
 
 # ── One vocabulary of kinds, stated as closed ────────────────────────────────
 print("\nThe kind vocabulary is closed and singular:")
-from onboarding.profile_frame import KIND_HEADINGS, RETIRED_KINDS  # noqa: E402
+from onboarding.profile_frame import KIND_HEADINGS  # noqa: E402
 
 check("the extraction prompt says the list is exhaustive", "EXACTLY ONE OF" in _PARSER)
 check("every kind in the frame is offered by the prompt",
       all(k in _PARSER for k in KIND_HEADINGS))
-check("the prompt no longer asks for a retired kind",
-      not any(f"type='{k}'" in _PARSER for k in RETIRED_KINDS))
+# The two kinds that were once in the vocabulary. Named here rather than imported:
+# the translation table they lived in was removed once every profile had been
+# re-parsed, and this check is the reason a reader might wonder where they went.
+check("the prompt no longer asks for a kind the vocabulary retired",
+      not any(f"type='{k}'" in _PARSER for k in ("certification", "research")))
 check("other requires a label, so it cannot be a quiet resting place",
       "required for type=other" in _PARSER)
 check("a label is defined as a name that stands on its own",

@@ -44,13 +44,13 @@ KIND_HEADINGS: dict[str, str] = {
 
 HEADING_KINDS: dict[str, str] = {h: k for k, h in KIND_HEADINGS.items()}
 
-# Kinds that were once in the vocabulary, mapped onto the one that replaced them.
-# A migration artifact: finite, one-directional, and it shrinks. Nothing is added
-# here for a value a person or a model invented — those become `other`.
-RETIRED_KINDS: dict[str, str] = {
-    "certification": "credential",
-    "research": "project",
-}
+# RETIRED_KINDS lived here until 2026-08-24: a translation table for two kinds the
+# vocabulary once had (`certification` → `credential`, `research` → `project`). It
+# was a migration artifact and it was meant to shrink to nothing, which it now has —
+# every profile on disk has been re-parsed onto the current vocabulary, and a kind
+# outside it becomes `other` like any other invention. Removed rather than kept
+# "just in case": a translation nobody translates is a rule with no cases, and it
+# would quietly accept a retired name back into the vocabulary if a model produced one.
 
 # Headings this renderer used to write and no longer does, because their contents
 # are now placed by kind. Read for their content, then dropped — otherwise a save
@@ -253,7 +253,6 @@ def normalise_kind(raw) -> str:
     if not raw:
         return DEFAULT_KIND
     kind = str(raw).strip().lower()
-    kind = RETIRED_KINDS.get(kind, kind)
     return kind if kind in KIND_HEADINGS else DEFAULT_KIND
 
 
