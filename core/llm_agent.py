@@ -743,13 +743,20 @@ class LLMAgent:
     def _build_match_hint(self, match_context: dict) -> str:
         """Compact context injected between cover_letter prompt and VACANCY block.
 
-        Passes score, role type, vacancy signals (direction vector), and matched skills
+        Passes role type, vacancy signals (direction vector), and matched skills
         (ATS intersection — framed as "weave naturally" to prevent enumeration).
+        The score is deliberately NOT here. It is our verdict about this person's
+        distance from the posting, and handing it to the one call whose whole job is
+        to advocate for them puts the advocacy and the doubt in the same prompt — the
+        same mistake the system preamble carried until it was split per reader. What
+        stays is observation: the signals that say what this vacancy is, and the
+        skills the profile and the posting genuinely share. What the letter must not
+        receive is a number telling it how convinced we are.
+
+        Quality here is not measurable — one metric under four names, and no labelled
+        truth — so this is argued, not measured, and says so.
         """
         parts = []
-        score = match_context.get("score")
-        if score is not None:
-            parts.append(f"Match score: {score}/100")
         role_type = match_context.get("vacancy_role_type")
         if role_type and role_type not in ("unknown", None):
             parts.append(f"Vacancy role type: {role_type}")

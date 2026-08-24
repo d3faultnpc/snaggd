@@ -222,8 +222,11 @@ class LLMCover:
             self.last_cover_template_name = cover_entry[1]
             return cover_entry[0]
 
+        # No score. The writer advocates; the verdict about distance is not its
+        # business and used to be handed to it anyway — see _build_match_hint in
+        # core/llm_agent.py. Dropped at the producer too, so the contract and the
+        # consumer cannot drift back together by accident.
         match_context = {
-            "score": self.last_score,
             "matched_skills": self.last_matched_skills,
             "stop_match": self.last_stop_match,
             "signals": self.last_signals,
