@@ -48,8 +48,9 @@ SHAPES = [
     ("prose of the record, and a first unnamed group with prose of its own",
      {"type": "employment", "company": "snaggd", "role": "Founder", "period": "2026",
       "context": "Desktop AI app for job search. Open core under MIT.",
-      "highlights": [{"context": "Reads vacancies and writes a letter per posting.",
-                      "results": ["500+ applications"]}]},
+      "groups": [{"kind": "achievement",
+                  "bullets": ["Reads vacancies and writes a letter per posting.",
+                              "500+ applications"]}]},
      "live: the record's own prose was overwritten on read-back"),
 
     ("a thing containing the separator, plus a domain",
@@ -64,8 +65,8 @@ SHAPES = [
 
     ("duties and achievements together",
      {"type": "employment", "company": "Acme", "role": "PM", "period": "2020",
-      "responsibilities": ["веду роадмап", "провожу дискавери"],
-      "highlights": [{"label": "Checkout", "results": ["конверсия +30%"]}]},
+      "groups": [{"kind": "responsibilities", "bullets": ["веду роадмап", "провожу дискавери"]},
+                 {"kind": "achievement", "bullets": ["Checkout: конверсия +30%"]}]},
      "on target_market=western the duties came back as achievements"),
 
     ("a record that stops at its heading",
@@ -174,13 +175,16 @@ def run():
 
     print("\nThe same content must not change axis with the market")
     both = {"type": "employment", "company": "Acme", "role": "PM", "period": "2020",
-            "responsibilities": ["веду роадмап"],
-            "highlights": [{"label": "Checkout", "results": ["конверсия +30%"]}]}
+            "groups": [{"kind": "responsibilities", "bullets": ["веду роадмап"]},
+                       {"kind": "achievement", "bullets": ["конверсия +30%"]}]}
     _, cis, _ = roundtrip([both], "cis")
     _, west, _ = roundtrip([both], "western")
+    def _of_kind(parsed, kind):
+        return [g["bullets"] for g in (parsed["cases"][0].get("groups") or [])
+                if g["kind"] == kind]
     check("duties stay duties on both markets",
-          (cis["cases"][0].get("responsibilities") or []) ==
-          (west["cases"][0].get("responsibilities") or []))
+          _of_kind(cis, "responsibilities") == _of_kind(west, "responsibilities")
+          and _of_kind(cis, "responsibilities") == [["веду роадмап"]])
 
     print("\nA block naming neither place nor time keeps its content anyway")
     for name, case, note in NON_RECORDS:

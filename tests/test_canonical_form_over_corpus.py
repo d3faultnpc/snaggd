@@ -173,8 +173,11 @@ def run():
     check("`#### <text>` does not survive a save",
           not [l for l in saved.splitlines()
                if l.startswith("#### ") and l.strip() not in FRAME_HEADINGS])
-    check("…and the group's name is kept, on a `label:` line",
-          "label: Storefront MVP" in saved)
+    # REVERSED 2026-08-26 with the name slot itself. A group is a kind and its
+    # bullets; a name the file already carried becomes one of them, so it is kept
+    # without the canon having to keep a slot it does not use.
+    check("…and the group's name is kept, as one of its bullets",
+          "label: Storefront MVP" not in saved and "- Storefront MVP" in saved)
     # REVERSED 2026-08-26. This asserted that the CIS literal survives a save
     # "as decided" — the R3 deferral of 2026-08-17, which was restated in three
     # close notes so it would not read as an oversight. It is closed now, not
@@ -187,8 +190,12 @@ def run():
           and not any(l.startswith("- ") for l in _skills_block(saved)))
     check("no skill is lost converting the list to a line",
           _skill_count(saved) == _skill_count(LEGACY_MD) == 3)
+    # `>=`, not `==`. A group's name and its prose had slots of their own until
+    # 2026-08-26 and now become bullets of that group, so converting a legacy file
+    # RAISES the count. Loss is the property under test; a gain is the old shape
+    # being carried across rather than dropped.
     check("no bullet is lost anywhere else in the file",
-          _bullets_outside_skills(saved) == _bullets_outside_skills(LEGACY_MD) == 5)
+          _bullets_outside_skills(saved) >= _bullets_outside_skills(LEGACY_MD) == 5)
     check("saving again changes nothing", _save(saved) == saved)
 
     # ── A contact the type-sniffer does not recognise ─────────────────────
@@ -264,9 +271,12 @@ def run():
             # so it legitimately becomes several skills. Only a decrease is a bug.
             check(f"profile #{i}: loses no skill ({_skill_count(md)} → {_skill_count(out)})",
                   _skill_count(out) >= _skill_count(md))
+            # See the LEGACY_MD note above: a name or prose that used to sit in a
+            # group's own slot becomes a bullet, so a legacy profile gains lines on
+            # its first save. Only a decrease means something was dropped.
             check(f"profile #{i}: keeps every bullet outside Skills "
-                  f"({_bullets_outside_skills(md)})",
-                  _bullets_outside_skills(out) == _bullets_outside_skills(md))
+                  f"({_bullets_outside_skills(md)} → {_bullets_outside_skills(out)})",
+                  _bullets_outside_skills(out) >= _bullets_outside_skills(md))
             headline = _extract_headline(md)
             check(f"profile #{i}: the switcher shows a title, not markup",
                   bool(headline) and not headline.startswith("<!--")

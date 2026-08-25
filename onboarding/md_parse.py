@@ -143,15 +143,14 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         """
         nonlocal group
         if case is not None and group is not None:
-            if group["bullets"] or group["label"] or group["context"]:
+            if group["bullets"]:
                 case.setdefault("groups", []).append(group)
         group = None
 
-    def open_group(kind, label=None):
+    def open_group(kind):
         nonlocal group
         close_highlight()
-        group = {"kind": frame.normalise_group_kind(kind), "label": label,
-                 "context": None, "bullets": []}
+        group = {"kind": frame.normalise_group_kind(kind), "bullets": []}
 
     for raw in body:
         line = raw.strip()
@@ -196,17 +195,20 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         # before 2026-08-17, when the group's name lived in this line instead of
         # on a `label:` below it. Read tolerantly, write strictly — one save
         # converts the old shape, so this is one legacy form, not a table of them.
+        # `####` opens a group, and the frame's own word for the kind is the only
+        # thing read off this line. A group has no name of its own: that slot held
+        # something a source rarely says, and what it did hold turned out to be the
+        # same sentence its bullets already carried.
         if line.startswith("####"):
             text = line[4:].strip()
-            kind = frame.group_kind_for_heading(text)
-            # Text that is not one of the frame's own words is a file written before
-            # 2026-08-17, when the group's NAME lived on this line. Keep it as the
-            # name — dropping it would lose what the source called the section, which
-            # is the one thing about a group that was never ours to invent.
-            legacy_name = None
-            if text and text.lower() not in frame.GROUP_KINDS and text not in frame.RETIRED_GROUP_HEADINGS:
-                legacy_name = text
-            open_group(kind, legacy_name)
+            open_group(frame.group_kind_for_heading(text))
+            # Text on this line that is NOT one of the frame's own words is the
+            # source's own name for the section, from a file written before the
+            # group lost its name slot. It becomes the group's first bullet: the
+            # canon has nowhere else to put it, and nowhere else must not mean gone.
+            if text and text.lower() not in frame.GROUP_KINDS \
+                    and text not in frame.RETIRED_GROUP_HEADINGS:
+                group["bullets"].append(text)
             continue
         if line.startswith("url: "):
             case["url"] = line[5:].strip()
@@ -214,7 +216,11 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         if line.startswith("Context: "):
             ctx = line[9:].strip()
             if group is not None:
-                group["context"] = ctx
+                # Prose inside a group. The renderer does not write this and the
+                # canon has no slot for it, but a hand-edited file may carry it and
+                # "no slot" must not become "deleted" — it is a line of this group,
+                # so it becomes one of its bullets.
+                group["bullets"].append(ctx)
             elif case.get("context"):
                 # Two prose lines at the record's own level. The renderer no longer
                 # writes this shape — a group after the record's prose is bounded
@@ -229,9 +235,15 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         if keyed and group is None and keyed.group(1) in frame.NON_SLOT_RECORD_KEYS:
             case[keyed.group(1)] = keyed.group(2).strip()
             continue
-        # The group's name, now that it is content rather than a heading.
-        if keyed and keyed.group(1) == "label" and group is not None:
-            group["label"] = keyed.group(2).strip()
+        # A keyed line inside a group — `label:` from a file written before the
+        # group lost its name, or anything a person typed there by hand. Same rule
+        # as prose above: it belongs to this group, and the group holds bullets.
+        if keyed and group is not None:
+            # `label:` was OUR encoding of the group's name, so the bullet takes the
+            # value and leaves the key behind. Anything else is a line the person
+            # wrote in their own words and is kept whole.
+            group["bullets"].append(
+                keyed.group(2).strip() if keyed.group(1) == "label" else line)
             continue
         if keyed and group is None:
             # A prose line a person wrote themselves — `Architecture: …`, `Stack: …`.

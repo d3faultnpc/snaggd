@@ -487,10 +487,6 @@ class ResumeParser:
         # category exists.
         for group in frame.groups_of(case):
             lines += ["", frame.group_heading(group["kind"])]
-            if group["label"]:
-                lines.append(f"label: {group['label']}")
-            if group["context"]:
-                lines.append(f"Context: {group['context']}")
             lines += [f"- {bullet}" for bullet in group["bullets"]]
 
         return lines

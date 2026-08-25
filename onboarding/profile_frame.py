@@ -629,40 +629,34 @@ def group_kind_for_heading(text: str) -> str:
 
 
 def groups_of(case: dict) -> list:
-    """A record's h4 groups, in render order, read from either shape on disk.
+    """A record's h4 groups, normalised. One shape only, as of 2026-08-26.
 
-    THE one place that understands the pre-2026-08-26 shape, so nothing else has to.
-    A case used to carry two fields for what is one level of the cascade:
-    `responsibilities` (a bare list, its kind implied by the CIS heading the renderer
-    printed above it) and `highlights` (dicts, kind implied by the ABSENCE of that
-    heading). Two encodings of one thing, and the discriminant was an English string
-    that a market gate could remove — which is how the same bullets were duties for
-    one candidate and achievements for another.
+    This used to translate a pre-cascade case as well: `responsibilities` (a bare
+    list whose kind was implied by the CIS heading printed above it) and
+    `highlights` (dicts whose kind was implied by the ABSENCE of that heading).
+    Two encodings of one level of the cascade, told apart by an English string a
+    market gate could delete — which is how the same bullets were duties for one
+    candidate and achievements for another.
 
-    Returns dicts of {kind, label, context, bullets}: `kind` is the frame's
-    classification, `label` is the source's own name for the section and may be None.
+    The translation is gone rather than kept. No one's documents have to survive
+    the change yet, the extraction prompt emits this shape now, and a bridge held
+    for old data outlives the reason it was built — which is how legacy becomes
+    permanent.
+
+    A group is a KIND and its BULLETS. Nothing else: a name was a slot for
+    something a source rarely says, and prose at this level is what overwrote the
+    record's own prose on the way back in.
     """
-    case = case or {}
-    declared = case.get("groups")
-    if declared:
-        out = []
-        for group in declared:
-            out.append({
-                "kind": normalise_group_kind(group.get("kind")),
-                "label": group.get("label") or None,
-                "context": group.get("context") or None,
-                "bullets": [b for b in (group.get("bullets") or []) if str(b).strip()],
-            })
-        return out
-
-    # Legacy. Duties first, because that is the order the renderer wrote them in and
-    # a migration must not reshuffle a person's own document.
     out = []
-    if case.get("responsibilities"):
-        out.append({"kind": "responsibilities", "label": None, "context": None,
-                    "bullets": [b for b in case["responsibilities"] if str(b).strip()]})
-    for h in case.get("highlights") or []:
-        out.append({"kind": "achievement", "label": h.get("label") or None,
-                    "context": h.get("context") or None,
-                    "bullets": [b for b in (h.get("results") or []) if str(b).strip()]})
+    for group in ((case or {}).get("groups") or []):
+        # A `label` or a `context` on a group is the shape that came before this
+        # one. They fold into the bullets rather than being ignored: this is the
+        # single normalisation point every caller passes through, so folding here
+        # means no other place has to know the old shape existed. Once nothing
+        # produces either field, these two lines simply stop doing anything.
+        lines = [group.get("label"), group.get("context"), *(group.get("bullets") or [])]
+        out.append({
+            "kind": normalise_group_kind(group.get("kind")),
+            "bullets": [str(b).strip() for b in lines if str(b or "").strip()],
+        })
     return out

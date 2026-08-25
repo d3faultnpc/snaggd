@@ -179,10 +179,17 @@ def run():
     check("the CIS heading is read as the declared kind, not as a name",
           work["groups"][0]["kind"] == "responsibilities"
           and work["groups"][0]["bullets"] == ["roadmap", "discovery"])
-    check("a named group keeps its kind, its name, its prose and its bullets",
-          work["groups"][1] == {"kind": "achievement", "label": "Storefront MVP",
-                                "context": "built from zero",
-                                "bullets": ["30% conversion lift"]})
+    # REVERSED 2026-08-26. A group used to carry a `label` and a `context` of its
+    # own. Both are gone: the name was a slot for something a source rarely says,
+    # and prose at this level is what overwrote the RECORD's prose on the way back.
+    # A group is a kind and its bullets. Lines a file still carries in the old shape
+    # become bullets of that group rather than being dropped — "no slot" is not
+    # permission to delete someone's sentence.
+    check("a group is a kind and its bullets, and the old name is kept as one",
+          work["groups"][1]["kind"] == "achievement"
+          and set(work["groups"][1]) == {"kind", "bullets"}
+          and work["groups"][1]["bullets"]
+          == ["Storefront MVP", "built from zero", "30% conversion lift"])
     check("education is typed from its heading", by_company["Some University"]["type"] == "education")
     check("a project is typed from its heading", by_company["Side Thing"]["type"] == "project")
     # The distinction three headings could not hold: a diploma and a requalification
@@ -360,10 +367,11 @@ def run():
                "groups": [{"kind": "achievement", "label": "Storefront MVP",
                            "bullets": ["a"]}]}]
     _md, _hl = _groups(_named)
-    check("a group's name is content, not a heading",
-          "#### Storefront MVP" not in _md and "label: Storefront MVP" in _md)
-    check("and it comes back attached to its group",
-          len(_hl) == 1 and _hl[0].get("label") == "Storefront MVP")
+    check("a name the source gave a group is written as one of its bullets",
+          "#### Storefront MVP" not in _md and "label: Storefront MVP" not in _md
+          and "- Storefront MVP" in _md)
+    check("and it comes back inside that group, not beside it",
+          len(_hl) == 1 and _hl[0]["bullets"][0] == "Storefront MVP")
     # Same property as before, against the DECLARATION rather than a hardcoded pair:
     # the frame's words may stand on an h4 line, the source's may not. The vocabulary
     # grew from one borrowed literal to three declared kinds, so this reads it from
@@ -379,18 +387,24 @@ def run():
                "### Example Corp | PM\n\n#### Storefront MVP\n- a\n\n"
                "#### Zone of Responsibility\n- own the roadmap\n")
     _read = parse_candidate_md(_legacy)["cases"][0]
-    check("the old shape still names its group",
-          (_read.get("groups") or [{}])[0].get("label") == "Storefront MVP")
+    # REVERSED 2026-08-26 along with the name slot itself. A group is a kind and
+    # its bullets; a name a file still carries becomes the group's first bullet,
+    # because the canon has nowhere to file it and nowhere is not a licence to drop
+    # someone's words.
+    check("a name the old shape put on the heading survives as a bullet",
+          (_read.get("groups") or [{}])[0].get("bullets") == ["Storefront MVP", "a"])
     check("and the retired CIS heading still means duties",
           [g for g in _read["groups"] if g["kind"] == "responsibilities"][0]["bullets"]
           == ["own the roadmap"])
     _converted = ResumeParser(None).to_md(
         ResumeData(**parse_candidate_md(_legacy)), existing_content=_legacy)
     check("one save rewrites it into the new shape",
-          "#### Storefront MVP" not in _converted and "label: Storefront MVP" in _converted)
+          "#### Storefront MVP" not in _converted
+          and "label: Storefront MVP" not in _converted
+          and "- Storefront MVP" in _converted)
     check("without losing anything on the way",
           (parse_candidate_md(_converted)["cases"][0].get("groups") or [{}])[0]
-          .get("label") == "Storefront MVP")
+          .get("bullets") == ["Storefront MVP", "a"])
 
     # ── Skills is read in both shapes it exists in ────────────────────────
     # `to_md` writes skills as bullets and tools as a `tools:` line — the same
@@ -419,7 +433,8 @@ def run():
     western = ResumeData(
         identity={"name": "W"}, target_market="western",
         cases=[{"type": "employment", "company": "Acme", "role": "PM",
-                "responsibilities": ["owned the roadmap", "ran weekly reviews"]}])
+                "groups": [{"kind": "responsibilities",
+                            "bullets": ["owned the roadmap", "ran weekly reviews"]}]}])
     western_md = ResumeParser(None).to_md(western)
     check("a western profile keeps its responsibility bullets",
           "owned the roadmap" in western_md and "ran weekly reviews" in western_md)
@@ -456,7 +471,7 @@ def run():
     cis = ResumeData(
         identity={"name": "C"}, target_market="cis",
         cases=[{"type": "employment", "company": "Acme", "role": "PM",
-                "responsibilities": ["owned the roadmap"]}])
+                "groups": [{"kind": "responsibilities", "bullets": ["owned the roadmap"]}]}])
     check("a CIS employment entry declares the same kind, in the same words",
           "#### responsibilities" in ResumeParser(None).to_md(cis))
 

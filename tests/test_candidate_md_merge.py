@@ -86,7 +86,8 @@ def run():
         search={},
         rules={"stop_categories": ["alpha", "beta"]},
         cases=[{"company": "Northwind", "role": "PM", "period": "2020 — 2026",
-                "highlights": [{"label": "Storefront", "results": ["MVP shipped"]}]}],
+                "groups": [{"kind": "achievement",
+                            "bullets": ["Storefront", "MVP shipped"]}]}],
         skills=["product discovery", "SQL"],
     )
     merged = parser.to_md(wizard_save, existing_content=LEGACY_MD)
