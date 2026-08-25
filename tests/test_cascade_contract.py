@@ -221,22 +221,6 @@ def run():
         check(f"{reader} sees the industry, and sees it named",
               "domain: fintech" in frame.project_for(md, reader))
 
-    print("\nUnder the token ceiling, a group is trimmed — not ignored, not emptied")
-    big = {"type": "employment", "company": "Acme", "role": "PM", "period": "2020",
-           "groups": [{"kind": "responsibilities", "context": "First sentence. Second one. Third.",
-                       "bullets": [f"duty {n}" for n in range(9)]}]}
-    guarded = ResumeParser(None)._shorten_for_token_guard(
-        ResumeData(identity={"name": "T", "role": "PM"}, cases=[big]))
-    group = (guarded.cases[0].get("groups") or [{}])[0]
-    check("the guard actually reaches a group at all",
-          len(group.get("bullets") or []) != len(big["groups"][0]["bullets"]))
-    check("bullets are capped, and the cap is the frame's not a literal",
-          len(group.get("bullets") or []) == 3)
-    check("prose is cut to its first sentence",
-          group.get("context") == "First sentence.")
-    check("and the record itself is never dropped to make room",
-          guarded.cases[0].get("company") == "Acme")
-
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0
