@@ -177,7 +177,7 @@ def run():
           and work["domain"] == "fintech")
     check("its url survives", work["url"] == "https://example.com")
     check("the CIS heading is read as the declared kind, not as a name",
-          work["groups"][0]["kind"] == "duties"
+          work["groups"][0]["kind"] == "responsibilities"
           and work["groups"][0]["bullets"] == ["roadmap", "discovery"])
     check("a named group keeps its kind, its name, its prose and its bullets",
           work["groups"][1] == {"kind": "achievement", "label": "Storefront MVP",
@@ -354,7 +354,7 @@ def run():
     check("the old shape still names its group",
           (_read.get("groups") or [{}])[0].get("label") == "Storefront MVP")
     check("and the retired CIS heading still means duties",
-          [g for g in _read["groups"] if g["kind"] == "duties"][0]["bullets"]
+          [g for g in _read["groups"] if g["kind"] == "responsibilities"][0]["bullets"]
           == ["own the roadmap"])
     _converted = ResumeParser(None).to_md(
         ResumeData(**parse_candidate_md(_legacy)), existing_content=_legacy)
@@ -418,9 +418,9 @@ def run():
     # rather than borrows from CIS résumé custom is a separate change; keeping the
     # boundary is what stops the data being wrong in the meantime.
     check("the boundary that carries the category is written on every market",
-          "#### duties" in western_md)
+          "#### responsibilities" in western_md)
     western_case = parse_candidate_md(western_md)["cases"][0]
-    duties = [g for g in western_case["groups"] if g["kind"] == "duties"]
+    duties = [g for g in western_case["groups"] if g["kind"] == "responsibilities"]
     check("and duties come back as duties, not as achievements",
           len(duties) == 1
           and set(duties[0]["bullets"]) == {"owned the roadmap", "ran weekly reviews"})
@@ -430,7 +430,7 @@ def run():
         cases=[{"type": "employment", "company": "Acme", "role": "PM",
                 "responsibilities": ["owned the roadmap"]}])
     check("a CIS employment entry declares the same kind, in the same words",
-          "#### duties" in ResumeParser(None).to_md(cis))
+          "#### responsibilities" in ResumeParser(None).to_md(cis))
 
     # ── A hand edit sticks, including a deletion ──────────────────────────
     # The wizard opens on merge_over_json(candidate.md, candidate.json). Until

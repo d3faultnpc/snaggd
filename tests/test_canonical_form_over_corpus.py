@@ -181,7 +181,7 @@ def run():
     # deferred again: the literal carried a group's KIND, and a kind a market gate
     # can delete is not a kind. It converts, and its bullets keep meaning duties.
     check(f"`{KEPT_LITERAL}` converts to the frame's declared kind",
-          KEPT_LITERAL not in saved and "#### duties" in saved)
+          KEPT_LITERAL not in saved and "#### responsibilities" in saved)
     check("`## Skills` holds one `skills:` line, not bullets",
           any(l.startswith("skills:") for l in _skills_block(saved))
           and not any(l.startswith("- ") for l in _skills_block(saved)))

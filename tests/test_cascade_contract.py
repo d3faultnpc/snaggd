@@ -223,7 +223,7 @@ def run():
 
     print("\nUnder the token ceiling, a group is trimmed — not ignored, not emptied")
     big = {"type": "employment", "company": "Acme", "role": "PM", "period": "2020",
-           "groups": [{"kind": "duties", "context": "First sentence. Second one. Third.",
+           "groups": [{"kind": "responsibilities", "context": "First sentence. Second one. Third.",
                        "bullets": [f"duty {n}" for n in range(9)]}]}
     guarded = ResumeParser(None)._shorten_for_token_guard(
         ResumeData(identity={"name": "T", "role": "PM"}, cases=[big]))

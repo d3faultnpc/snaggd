@@ -245,12 +245,12 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         if bullet:
             item = line[bullet.end():].strip()
             if group is None:
-                # Bullets straight under the record, with no `####` above them. Every
-                # group the renderer writes is bounded now, so this is a legacy file
-                # or one edited by hand — and in both the source drew no line between
-                # duties and achievements. `unsorted` says exactly that, which is a
-                # fact about the document rather than a gap in it; guessing a side
-                # here is the same fabrication extraction rule D used to perform.
+                # Bullets straight under the record, with no `####` above them.
+                # Every group the renderer writes is bounded, so this is a file a
+                # person edited by hand. The reader has no evidence to sort them by
+                # and must not invent any, so they take the weaker of the two kinds
+                # (see DEFAULT_GROUP_KIND): saying someone did the work claims less
+                # than saying they achieved a result.
                 open_group(frame.DEFAULT_GROUP_KIND)
             group["bullets"].append(item)
             continue

@@ -569,21 +569,33 @@ def parse_record_name(text: str) -> tuple:
 # and a NAME from the source. `#### duties` with `label: Зона ответственности`
 # under it — the classification is ours, the words stay theirs.
 #
-# Why three kinds and not two. A CIS résumé prints «Обязанности» and «Достижения»
-# as separate sections; a western CV often prints one undifferentiated list under a
-# job. Forcing that list into either bucket invents a distinction the document does
-# not make, which is the same fabrication rule D performs today. `unsorted` records
-# that the source drew no line — a fact about the résumé, not a gap in it.
-GROUP_KINDS: tuple = ("duties", "achievement", "unsorted")
+# Two kinds, and the discriminator is the BULLET, not the source's section headings.
+# An earlier draft of this file carried a third, `unsorted`, defended on the grounds
+# that a western CV often prints one undifferentiated list and sorting it would
+# invent a distinction the document never drew. That argument was answered: the
+# distinction is not read off the résumé's layout, it is read off each line's own
+# nature. An impact carrying a figure is an achievement; a declarative statement of
+# what the person did is a responsibility. Nothing is invented, because nothing is
+# inferred from where the line happened to sit — so the third kind had no work left.
+#
+# The same two apply to every axis: employment, education, a driving licence, a side
+# project. One shape everywhere, which is what makes a record predictable to read
+# without knowing which kind it is.
+GROUP_KINDS: tuple = ("responsibilities", "achievement")
 
-# What a group is called when the source drew no line of its own.
-DEFAULT_GROUP_KIND = "unsorted"
+# What a group is called when the source drew no line of its own — a hand-edited
+# file, or bullets sitting under a record with no `####` above them.
+#
+# The weaker claim on purpose. Calling something an achievement asserts a RESULT;
+# calling it a responsibility asserts only that the person did it. Where the reader
+# has to pick without evidence, it must not manufacture accomplishments for people.
+DEFAULT_GROUP_KIND = "responsibilities"
 
 # Read tolerantly, write strictly — the same stance the record heading takes. Every
 # profile on disk before today carries the literal below (74 of 114 h4 headings in
 # the 20-CV corpus); the rest are bare `####`, which is an unnamed achievement group.
 # One save converts a file, so this is one legacy form and not a table of them.
-RETIRED_GROUP_HEADINGS: dict = {"Zone of Responsibility": "duties"}
+RETIRED_GROUP_HEADINGS: dict = {"Zone of Responsibility": "responsibilities"}
 
 
 def normalise_group_kind(raw) -> str:
@@ -647,7 +659,7 @@ def groups_of(case: dict) -> list:
     # a migration must not reshuffle a person's own document.
     out = []
     if case.get("responsibilities"):
-        out.append({"kind": "duties", "label": None, "context": None,
+        out.append({"kind": "responsibilities", "label": None, "context": None,
                     "bullets": [b for b in case["responsibilities"] if str(b).strip()]})
     for h in case.get("highlights") or []:
         out.append({"kind": "achievement", "label": h.get("label") or None,
