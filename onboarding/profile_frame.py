@@ -356,3 +356,164 @@ def evidence_sections(cases: list) -> list[tuple[str, list]]:
                                 or KIND_HEADINGS["other"], []).append(case)
         out += list(by_label.items())
     return out
+
+
+# ─── The cascade: how deep a record goes, and what each depth MEANS ──────────
+#
+# Added 2026-08-26. Until now the frame declared the AXES — which sections exist
+# (DECLARED_SECTIONS), which kinds of evidence exist (KIND_HEADINGS), which key
+# belongs where (KEY_OWNERS), and who may read what (SECTION_READERS). Those held
+# for five sprints and are not in question.
+#
+# What was never declared anywhere is the shape INSIDE a record. `to_md` writes
+# one and `md_parse` reads another, and the only thing that kept them agreeing was
+# that the same person wrote both on the same day. Every defect found on 2026-08-26
+# lives in that gap and none of them live in the axes:
+#
+#   · a case's own `Context:` overwritten by a first unnamed group's `Context:`
+#     — the level of a prose line was inferred from whether a `####` had been seen
+#   · `zip(keys, parts)` truncating a five-segment heading in silence, so a live
+#     profile's employment period ended up in `domain` and the domain was lost
+#   · a record with no name rendering as a bare `###`, because the heading was
+#     built from four fields and `label` was not among them
+#   · duties read back as ACHIEVEMENTS on `western`, because the heading that
+#     separated them was gated on target_market
+#   · any body line matching none of the reader's branches dropped without a word
+#
+# So this block declares the cascade once, for both halves to derive from. The
+# rule it encodes came out of the 2026-08-26 measurement over 20 real CVs plus the
+# user's own three profiles, and out of the user's own framing: the frame gives
+# depth, the source gives categories.
+
+
+class Level:
+    """One depth of the cascade. `optional` is about the LEVEL, not the content:
+    an optional level may be absent entirely without the document being wrong."""
+
+    __slots__ = ("depth", "name", "owner", "optional", "means")
+
+    def __init__(self, depth: int, name: str, owner: str, optional: bool, means: str):
+        self.depth, self.name, self.owner = depth, name, owner
+        self.optional, self.means = optional, means
+
+    def __repr__(self) -> str:  # pragma: no cover — diagnostics only
+        return f"<Level h{self.depth} {self.name} owner={self.owner}>"
+
+
+# `owner` answers "whose words are these": the frame's own vocabulary, or the
+# person's document. A level owned by the source must never be given words by us —
+# that is how `#### Zone of Responsibility`, a CIS résumé convention, ended up
+# baked into the frame and then gated on target_market.
+#
+# Measured 2026-08-26 over 20 CVs, which is why every level below h2 is optional:
+#   employment  92 records — 74 reach h4, 13 stop at prose, 5 stop at the heading
+#   education   26 records — 26 stop at the heading. Not a defect: a degree has no
+#                            milestones, it has an institution, a name and a year
+#   credential  21 records — 18 stop at the heading, 3 at prose, none reach h4
+# Forcing one depth on every axis would be exactly the imposed frame we are
+# removing. Depth is how much the source said, not what the axis is.
+LEVELS = (
+    Level(1, "identity", "source", False,
+          "who the person is, professionally. One per document."),
+    Level(2, "axis", "frame", False,
+          "which axis this evidence belongs to. The frame's own vocabulary."),
+    Level(3, "record", "source", True,
+          "one place, one thing, one time — see RECORD_SLOTS."),
+    Level(4, "group", "source", True,
+          "a milestone or grouping inside a record, named in the source's words."),
+    Level(5, "fact", "source", True,
+          "the leaf: a single fact, closest to the ground. Written as a bullet."),
+)
+
+LEVEL_BY_DEPTH = {lv.depth: lv for lv in LEVELS}
+MAX_DEPTH = max(lv.depth for lv in LEVELS)
+
+# The record's identity, and what each slot MEANS rather than what it is called.
+# Naming the meaning is the point: `company` holds a university for `education`
+# and an issuer for `credential`, and a reader that knows only the field name has
+# to guess. Measured over 138 live cases (2026-08-25): `company` is the place the
+# evidence comes FROM, `role` is the thing itself, `period` is when.
+RECORD_SLOTS = ("company", "role", "period")
+SLOT_MEANING = {"company": "place", "role": "thing", "period": "time"}
+
+# `domain` is deliberately NOT a slot. It rode along as a fourth position until
+# 2026-08-26, which is what `zip` truncated: a heading carrying place, thing,
+# time AND domain has four parts, and any thing containing a `|` pushed the count
+# to five. It belongs under the heading as a declared key, where a name says what
+# it is instead of a position implying it.
+NON_SLOT_RECORD_KEYS = ("domain", "url")
+
+
+def names_place(block: dict) -> bool:
+    """Does this block name a place of its OWN, rather than leaning on the record
+    above it? `Ранее в компании: …` and `Side project: …` name none — they refer
+    to the employer already on the page."""
+    return bool(str((block or {}).get("company") or "").strip())
+
+
+def names_time(block: dict) -> bool:
+    """Does this block name a time of its own? A course with only a year names one;
+    a progression written `Analyst → Senior → Lead` names none."""
+    return bool(str((block or {}).get("period") or "").strip())
+
+
+def is_record(block: dict) -> bool:
+    """The discriminator (2026-08-26, the user's rule, sharpened).
+
+    A block becomes a RECORD (h3) only if it names its own place OR its own time.
+    A block naming neither is not an orphan record — it is content of the record
+    above it: a named group (h4) if it has a name, prose or a bullet if it does not.
+
+    Why `or` and not `and`: 18 of 21 credentials in the corpus name an issuer and
+    no year, and `HTML/CSS. Интерактивный курс | 2020` names a year and no issuer.
+    Both are real records. Requiring both would demote them into their neighbours.
+
+    This does not contradict the extraction prompt's rule A ("a separate entry per
+    role at the same company") — it says which branch of it applies. Roles carrying
+    their own dates each name a time, so each is a record; a bare arrow chain names
+    none, so it stays inside the one record it describes.
+
+    It answers exactly one question — record, or content of a record — at exactly
+    one boundary, h3. Which axis a record lands under is a different question,
+    answered by its kind, and the two must not be merged: merging questions of
+    different natures is how duties came to be read as achievements.
+    """
+    return names_place(block) or names_time(block)
+
+
+def record_name(block: dict) -> str:
+    """The words that go on the h3 line, in the source's own language.
+
+    `label` is last on purpose. It is the name of a thing the frame could not slot
+    — for kind `other` it also becomes the SECTION heading (see evidence_sections)
+    — and for a record that has a place, the group's name must not displace it.
+    Before 2026-08-26 `label` was not consulted here at all, so a project the model
+    had named ("AI Health Assistant", present in candidate.json) rendered as a bare
+    `###` and lost its name on the way to the file.
+    """
+    block = block or {}
+    parts = [str(block.get(s) or "").strip() for s in RECORD_SLOTS]
+    parts = [p for p in parts if p]
+    if parts:
+        return " | ".join(parts)
+    return str(block.get("label") or "").strip()
+
+
+def parse_record_name(text: str) -> tuple:
+    """The inverse of record_name — and the ONLY place a record heading is decoded.
+
+    Returns `(slots, overflow)`. `overflow` is every segment beyond the slots, and
+    it is RETURNED rather than dropped: the caller decides what to do with it, but
+    it can no longer vanish. `zip(RECORD_SLOTS, parts)` silently discarded it, and
+    on live profile `pm` that shifted a whole heading by one slot — the role became
+    the company, the period became the role, the domain became the period.
+
+    No shape-sniffing, deliberately. Deciding which segment "looks like a year" is
+    the sort of heuristic this codebase has been burned by; the fix is that the
+    writer stops putting a fourth thing on this line, not that the reader gets
+    cleverer about finding it.
+    """
+    parts = [p.strip() for p in str(text or "").split("|")]
+    parts = [p for p in parts if p]
+    slots = {slot: value for slot, value in zip(RECORD_SLOTS, parts) if value}
+    return slots, parts[len(RECORD_SLOTS):]
