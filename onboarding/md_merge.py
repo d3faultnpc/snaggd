@@ -113,6 +113,8 @@ def _dissolve_undeclared(sections: list[tuple[str, list[str]]]) -> list[tuple[st
         if heading in DECLARED_SECTIONS or kind_for_heading(heading) or _is_evidence(body):
             out.append((heading, body))
             continue
+        # Lines of this section that own no key, and so stay under it.
+        stays: list[str] = []
         for line in body:
             if not line.strip():
                 continue
@@ -124,11 +126,29 @@ def _dissolve_undeclared(sections: list[tuple[str, list[str]]]) -> list[tuple[st
             # deletion, and it has to land as one. See profile_frame.RETIRED_KEYS.
             if key in RETIRED_KEYS:
                 continue
-            # An unkeyed line in a dissolved section has nothing to place it by, and
-            # guessing is what this whole design refuses to do. Additional is where
-            # loose profile text already lives.
-            target = section_for_key(key) if key else "Additional"
-            routed.setdefault(target, []).append(line)
+            # A line with no key has nothing to place it BY — and nothing to
+            # conflict with either. Until 2026-08-26 it was swept into
+            # `## Additional`, which cost the person the frame they wrote: that
+            # section holds interests and `hints (low-confidence — verify before
+            # relying on)`, so a heading someone added deliberately reached the
+            # letter writer labelled as a hedge.
+            #
+            # Dissolving exists for a heading that COMPETES with a declared one —
+            # `## Tools & Languages` beside `## Tools`, two english levels, both
+            # read as facts. Competition is what a key makes: a key has an owner,
+            # so two of them collide. An unkeyed line owns no slot and collides
+            # with nothing, so its heading stays and the lines stay under it.
+            if key is None:
+                stays.append(line)
+                continue
+            routed.setdefault(section_for_key(key), []).append(line)
+        # In place, not appended at the end. Collecting these and adding them after
+        # the loop moved the section to the bottom on the second save while its
+        # content stayed identical — stable bytes on the first save, different on
+        # the next, which is idempotence failing in the one way a diff catches and
+        # a content check does not.
+        if stays:
+            out.append((heading, stays))
 
     for target, lines in routed.items():
         for i, (heading, body) in enumerate(out):

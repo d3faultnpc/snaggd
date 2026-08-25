@@ -198,15 +198,43 @@ def run():
 
     # ── The invariant ─────────────────────────────────────────────────────
     # A save converges the file on the frame's own vocabulary and then stays put.
-    # Byte-identity on the FIRST save cannot be the test any more: a file holding a
-    # heading nobody declared is not yet canonical, and the whole point is that it
-    # stops being a heading. Idempotence is the honest form of the same guarantee —
-    # and the one a person actually feels, since it says re-opening the wizard and
-    # pressing save changes nothing at all.
+    # Byte-identity on the FIRST save cannot be the test: a file carrying a heading
+    # that duplicates a declared section is not canonical yet. Idempotence is the
+    # honest form of the guarantee, and the one a person feels — re-opening the
+    # wizard and pressing save changes nothing at all.
     saved = ResumeParser(None).to_md(ResumeData(**parsed), existing_content=PROFILE_MD)
     again = ResumeParser(None).to_md(ResumeData(**parse_candidate_md(saved)), existing_content=saved)
     check("a saved profile saves again to the same bytes", again == saved)
-    check("a heading nobody declared stops existing", "## My Own Section" not in saved)
+
+    # REVERSED 2026-08-26. This asserted that ANY undeclared heading stops existing.
+    # Dissolving was built for a heading that COMPETES with a declared one — real
+    # profiles carried `## Tools & Languages` beside `## Tools`, so the file stated
+    # two tool lists and two english levels and the model read both as facts. That
+    # is still dissolved, below.
+    #
+    # But it also swept away a heading competing with nothing, and cost the person
+    # the frame they wrote: the lines landed in `## Additional`, which holds
+    # interests and `hints (low-confidence — verify before relying on)`. A category
+    # someone added on purpose reached the letter writer labelled as a hedge.
+    #
+    # Competition is what a KEY makes: a key has an owner, so two of them collide.
+    # An unkeyed line owns no slot and collides with nothing.
+    check("a heading that competes with nothing keeps its own words",
+          "## My Own Section" in saved
+          and "whatever a person wants to write here" in saved)
+    check("and its lines are not demoted into Additional",
+          "whatever a person wants to write here"
+          not in saved.split("## Additional")[-1])
+
+    _synonym = ("# X\n\n## Identity\nname: Ivan\n\n"
+                "## Tools & Languages\ntools: Jira\nenglish: B2\n")
+    _dissolved = ResumeParser(None).to_md(
+        ResumeData(**parse_candidate_md(_synonym)), existing_content=_synonym)
+    check("a heading that duplicates a declared section still dissolves",
+          "## Tools & Languages" not in _dissolved)
+    check("and each of its lines goes to the section that owns its key",
+          "tools: Jira" in _dissolved.split("## Tools")[-1]
+          and "english: B2" in _dissolved.split("## Languages")[-1])
     check("…and its text is kept, re-homed rather than dropped",
           "whatever a person wants to write here" in saved)
     check("a hand-organised EVIDENCE heading is not dissolved — it is placed by kind, "
