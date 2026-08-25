@@ -218,6 +218,32 @@ def run():
         check(f"{reader} sees the industry, and sees it named",
               "domain: fintech" in frame.project_for(md, reader))
 
+    print("\nThe file's order is the frame's, never the order an answer arrived in")
+    import re as _re
+    scrambled = {"type": "employment", "company": "A", "role": "B", "period": "C",
+                 "groups": [{"kind": "achievement", "bullets": ["цифра ×3"]},
+                            {"kind": "responsibilities", "bullets": ["веду учёт"]},
+                            {"kind": "achievement", "bullets": ["ещё цифра"]}]}
+    _md, _back, _ = roundtrip([scrambled])
+    check("groups are written in the declared order, not the model's",
+          _re.findall(r"^#### (.+)$", _md, _re.M) == list(frame.GROUP_KINDS))
+    check("two groups of one kind merge, and no bullet is lost",
+          {g["kind"]: g["bullets"] for g in _back["cases"][0]["groups"]}
+          == {"responsibilities": ["веду учёт"],
+              "achievement": ["цифра ×3", "ещё цифра"]})
+
+    # Measured on two live parses of the same pipeline: one CV came back
+    # responsibilities-first, the other achievement-first. Identical content would
+    # have rendered two different files — and the wizard normalises on edit, so a
+    # parse and an edit disagreed about the same profile.
+    _sections = _re.findall(r"^## (.+)$", ResumeParser(None).to_md(
+        ResumeData(identity={"name": "X", "role": "PM"},
+                   cases=[{"type": "employment", "company": "A", "role": "B", "period": "C"}],
+                   skills=["python"], tools=["Jira"]), existing_content=""), _re.M)
+    check("Skills and Tools are neighbours, and they sit below the evidence",
+          _sections.index("Tools") - _sections.index("Skills") == 1
+          and _sections.index("Skills") > _sections.index("Work Experience"))
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0

@@ -629,7 +629,16 @@ def groups_of(case: dict) -> list:
     something a source rarely says, and prose at this level is what overwrote the
     record's own prose on the way back in.
     """
-    out = []
+    # In GROUP_KINDS order, one group per kind, whatever order they arrived in.
+    # Measured 2026-08-26 on two live parses of the same pipeline: one CV came back
+    # responsibilities-then-achievement, the other achievement-then-responsibilities.
+    # Identical content would have rendered two different files depending on how the
+    # model happened to list them — and the wizard already normalised on edit, so a
+    # parse and an edit produced different bytes from the same profile.
+    #
+    # Merging rather than keeping several of a kind is the canon the prompt states:
+    # a record has at most one group of each kind, both flat.
+    merged: dict = {}
     for group in ((case or {}).get("groups") or []):
         # A `label` or a `context` on a group is the shape that came before this
         # one. They fold into the bullets rather than being ignored: this is the
@@ -637,8 +646,8 @@ def groups_of(case: dict) -> list:
         # means no other place has to know the old shape existed. Once nothing
         # produces either field, these two lines simply stop doing anything.
         lines = [group.get("label"), group.get("context"), *(group.get("bullets") or [])]
-        out.append({
-            "kind": normalise_group_kind(group.get("kind")),
-            "bullets": [str(b).strip() for b in lines if str(b or "").strip()],
-        })
-    return out
+        kind = normalise_group_kind(group.get("kind"))
+        merged.setdefault(kind, []).extend(
+            str(b).strip() for b in lines if str(b or "").strip())
+    return [{"kind": kind, "bullets": merged[kind]}
+            for kind in GROUP_KINDS if merged.get(kind)]

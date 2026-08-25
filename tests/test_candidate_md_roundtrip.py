@@ -344,9 +344,19 @@ def run():
              "groups": [{"kind": "achievement", "bullets": ["a", "b"]},
                         {"kind": "achievement", "bullets": ["c"]}]}]
     _md, _hl = _groups(_two)
-    check("two unnamed groups come back as two, not as one", len(_hl) == 2)
-    check("and the second one's bullet did not join the first",
-          _hl[0]["bullets"] == ["a", "b"] and _hl[1]["bullets"] == ["c"])
+    # REVERSED 2026-08-26. Two unnamed groups of the SAME kind used to be kept
+    # apart, because before the kinds existed a boundary was the only thing telling
+    # one run of bullets from another. With kinds declared, the boundary between two
+    # achievement groups carries nothing the canon can express: a record holds at
+    # most one group of each kind, both flat, and the extraction prompt asks for
+    # exactly that. So they merge, in declared order, and no bullet is dropped.
+    #
+    # The property that mattered is unchanged and is what is checked now: nothing a
+    # record carries disappears because two groups became one.
+    check("two groups of one kind merge, because a record holds one of each",
+          len(_hl) == 1 and _hl[0]["kind"] == "achievement")
+    check("and every bullet from both is still there, in order",
+          _hl[0]["bullets"] == ["a", "b", "c"])
 
     # REVERSED 2026-08-26. This asserted `"####" not in _md` — a single unnamed group
     # was written with no boundary at all, on the reasoning that bare bullets under
@@ -402,9 +412,13 @@ def run():
           "#### Storefront MVP" not in _converted
           and "label: Storefront MVP" not in _converted
           and "- Storefront MVP" in _converted)
+    # Groups come back in GROUP_KINDS order now, not in the order the file listed
+    # them, so this reads the achievement group by kind rather than by position.
     check("without losing anything on the way",
-          (parse_candidate_md(_converted)["cases"][0].get("groups") or [{}])[0]
-          .get("bullets") == ["Storefront MVP", "a"])
+          {g["kind"]: g["bullets"]
+           for g in parse_candidate_md(_converted)["cases"][0]["groups"]}
+          == {"responsibilities": ["own the roadmap"],
+              "achievement": ["Storefront MVP", "a"]})
 
     # ── Skills is read in both shapes it exists in ────────────────────────
     # `to_md` writes skills as bullets and tools as a `tools:` line — the same

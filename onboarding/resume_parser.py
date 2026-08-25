@@ -384,20 +384,6 @@ class ResumeParser:
             lines += ["", "## Desired Salary", salary]
 
         # ── Skills ────────────────────────────────────────────────────────
-        if data.skills:
-            # One shape for both lists of the same nature. Skills used to be
-            # bullets while Tools, the section directly below it, was a single
-            # `tools:` line — so the file taught two grammars for one kind of
-            # thing, and a person editing Skills by hand wrote the other one.
-            #
-            # The keyed line wins on all three counts that were weighed: it costs
-            # the same to read (18 real skills — 354 characters as bullets, 343 on
-            # one line, so nothing is paid for the compactness), it takes 2 lines
-            # instead of 19 in a pane a person scrolls, and every character in it
-            # is one they can type. A separator they cannot reach on a keyboard
-            # would make the file's own format something they can read and not
-            # write, which is the opposite of why this file is editable.
-            lines += ["", "## Skills", "skills: " + ", ".join(data.skills)]
 
         # ── Evidence, one section per kind that has anything in it ────────
         # One list in the schema, grouped here. Three headings used to hold seven
@@ -413,6 +399,20 @@ class ResumeParser:
         # `tools:` rather than a bare line: a key is what lets this content be
         # placed when it turns up in a section someone invented (profile_frame's
         # KEY_OWNERS). It also makes the section merge per key like its neighbours.
+        if data.skills:
+            # One shape for both lists of the same nature. Skills used to be
+            # bullets while Tools, the section directly below it, was a single
+            # `tools:` line — so the file taught two grammars for one kind of
+            # thing, and a person editing Skills by hand wrote the other one.
+            #
+            # The keyed line wins on all three counts that were weighed: it costs
+            # the same to read (18 real skills — 354 characters as bullets, 343 on
+            # one line, so nothing is paid for the compactness), it takes 2 lines
+            # instead of 19 in a pane a person scrolls, and every character in it
+            # is one they can type. A separator they cannot reach on a keyboard
+            # would make the file's own format something they can read and not
+            # write, which is the opposite of why this file is editable.
+            lines += ["", "## Skills", "skills: " + ", ".join(data.skills)]
         if data.tools:
             lines += ["", "## Tools", "tools: " + ", ".join(data.tools)]
 
@@ -667,6 +667,12 @@ class ResumeParser:
             "entry as though they described the work. Drop them; they are not hints either.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
             "it in hints[] instead.\n"
+            "F1 — hints[] holds text FROM the CV that fitted nowhere else. It is never advice to "
+            "the person and never a note about what the CV is missing. 'Add at least 3 professional "
+            "skills' is a task for its author; further down this pipeline the profile is read as a "
+            "statement of fact about the candidate, so a to-do written here becomes something the "
+            "scorer and the letter writer believe about them. Seen live 2026-08-26. If a bucket is "
+            "empty, leave it empty — an absence is honest and is read as one.\n"
             "H — Thin-CV domain hook (narrow exception to F): if pitch is null AND no cases[].domain has "
             "a value, still add ONE short domain/industry phrase to hints[] if the CV supports even a "
             "loose read (e.g. 'fintech background', 'early-stage startup experience') — this is a minor "
