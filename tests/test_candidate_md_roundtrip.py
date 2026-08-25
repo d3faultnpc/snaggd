@@ -375,20 +375,34 @@ def run():
     western_md = ResumeParser(None).to_md(western)
     check("a western profile keeps its responsibility bullets",
           "owned the roadmap" in western_md and "ran weekly reviews" in western_md)
-    check("and drops only the CIS heading",
-          "Zone of Responsibility" not in western_md)
-    # They come back under the entry as an unnamed group rather than as
-    # `responsibilities`, because the heading is what carried that meaning. Stated as
-    # the property it is, not the one that would be nicer: the same already happens to
-    # an award's or a degree's bullets, since the heading is written for employment
-    # only. What must never happen is the bullets disappearing, which is what this
-    # file exists to catch.
+    # REVERSED 2026-08-26, deliberately, and this comment is the record of it.
+    #
+    # This block used to assert `"Zone of Responsibility" not in western_md` and then
+    # said, in as many words, that the bullets "come back under the entry as an
+    # unnamed group rather than as `responsibilities`, because the heading is what
+    # carried that meaning — stated as the property it is, not the one that would be
+    # nicer." So the loss was known and accepted, and the assertion pinned it.
+    #
+    # What that accepted is a category changing with the market. Measured on one case
+    # with identical data:
+    #     target_market=cis      responsibilities: ['веду роадмап']   highlights: [Checkout]
+    #     target_market=western  responsibilities: None               highlights: [unnamed
+    #                                                                  group holding the
+    #                                                                  duties, Checkout]
+    # A western candidate's ordinary duties are handed to the scorer as achievements.
+    # The bullets did survive as text, which is what the old assertion checked — the
+    # weaker of the two properties, and checking it blessed the stronger one's failure.
+    #
+    # A market convention may still choose the WORDS on a heading. It may not decide
+    # whether a category exists. Renaming this heading to something the frame owns
+    # rather than borrows from CIS résumé custom is a separate change; keeping the
+    # boundary is what stops the data being wrong in the meantime.
+    check("the boundary that carries the category is written on every market",
+          "Zone of Responsibility" in western_md)
     western_case = parse_candidate_md(western_md)["cases"][0]
-    survivors = set(western_case.get("responsibilities") or [])
-    for group in (western_case.get("highlights") or []):
-        survivors |= set(group.get("results") or [])
-    check("and every bullet survives the round trip, under the same case",
-          survivors == {"owned the roadmap", "ran weekly reviews"})
+    check("and duties come back as duties, not as achievements",
+          set(western_case.get("responsibilities") or []) ==
+          {"owned the roadmap", "ran weekly reviews"})
 
     cis = ResumeData(
         identity={"name": "C"}, target_market="cis",

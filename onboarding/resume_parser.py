@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+from onboarding import profile_frame as frame
+
 try:
     from json_repair import repair_json
     _HAS_JSON_REPAIR = True
@@ -426,17 +428,31 @@ class ResumeParser:
         return "\n".join(lines).lstrip("\n")
 
     def _render_case(self, case: dict, target_market: str, include_zone: bool) -> list:
-        header_parts = [x for x in [case.get("company"), case.get("role"),
-                                     case.get("period"), case.get("domain")] if x]
-        # A bare "###" when nothing names this entry. The heading is a boundary
-        # md_parse reads; its text is content, and content that does not exist is
-        # not written. It used to print "MISSING — company/role/period", which
-        # went verbatim into the system prompt — an instruction for a person,
+        # Built by the frame, in ONE place, so the reader can be built from the same
+        # one — profile_frame.record_name / parse_record_name. Two changes landed
+        # here on 2026-08-26.
+        #
+        # `label` takes part now, last. A record the model named but could not slot
+        # ("AI Health Assistant", sitting in candidate.json) used to render as a bare
+        # `###` and lose its name on the way to the file.
+        #
+        # And `domain` LEFT this line. It was a fourth value on a three-slot heading,
+        # so a role containing a `|` pushed the count past the slots and zip() dropped
+        # the tail without a word — on live profile `pm` that shifted every slot by
+        # one, putting the employment period into `domain`. It is a declared key now,
+        # beside `url`: a name saying what it is, instead of a position implying it.
+        #
+        # A bare "###" is still what an entry nothing names gets. The heading is a
+        # boundary md_parse reads; its text is content, and content that does not
+        # exist is not written. It used to print "MISSING — company/role/period",
+        # which went verbatim into the system prompt — an instruction for a person,
         # read by the model as a fact about the candidate.
-        lines = ["", f"### {' | '.join(header_parts)}".rstrip()]
+        lines = ["", f"### {frame.record_name(case)}".rstrip()]
 
         if case.get("url"):
             lines.append(f"url: {_ensure_https(case['url'])}")
+        if case.get("domain"):
+            lines.append(f"domain: {case['domain']}")
 
         highlights = case.get("highlights") or []
         responsibilities = case.get("responsibilities") or []
@@ -445,6 +461,7 @@ class ResumeParser:
         # condition silently dropped the prose of any case that also had bullets, which
         # is the ordinary shape of a hand-written project entry.
         ctx = case.get("context")
+        wrote_case_prose = bool(ctx)
         if ctx:
             lines.append(f"Context: {ctx}")
         for key, value in (case.get("notes") or {}).items():
@@ -477,7 +494,13 @@ class ResumeParser:
         # A heading is a market convention. Bullets are what a person typed.
         wrote_leading_group = False
         if responsibilities:
-            if include_zone and target_market not in ("western", "global"):
+            # No longer gated on target_market (2026-08-26). That gate decided whether
+            # duties got a boundary at all, and without one the reader attributed the
+            # bullets to a highlight — so the SAME case rendered duties as duties on
+            # `cis` and as ACHIEVEMENTS on `western`. An axis that changes with the
+            # market is not an axis. `include_zone` stays: a certificate has no ongoing
+            # duties, and that is a fact about the KIND, not about where someone applies.
+            if include_zone:
                 lines += ["", "#### Zone of Responsibility"]
             lines += [f"- {r}" for r in responsibilities]
             wrote_leading_group = True
@@ -500,7 +523,12 @@ class ResumeParser:
             # the bullets above already occupy the entry's first unnamed group, so
             # a first highlight without a label needs a boundary or the two read
             # back as one group and the next save writes them merged.
-            if index > 0 or label or wrote_leading_group:
+            # `wrote_case_prose` joins the other two for the same reason: the record
+            # has already written a `Context:` at ITS level, and a first unnamed group
+            # writing another one puts two prose lines under one heading. The reader
+            # cannot tell them apart without a boundary, so the second overwrote the
+            # first — reproduced live: snaggd lost the sentence saying what it is.
+            if index > 0 or label or wrote_leading_group or wrote_case_prose:
                 lines += ["", "####"]
             if label:
                 lines.append(f"label: {label}")

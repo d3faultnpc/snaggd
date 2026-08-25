@@ -34,7 +34,18 @@ Known limits, both structural rather than bugs:
 
 import re
 
+from onboarding import profile_frame as frame
 from onboarding.profile_frame import kind_for_heading
+
+# A key inside a record's body. Unicode by design: `_KEY_RE` is ASCII, so a line a
+# Russian-speaking person wrote — `Описание: …` — matched nothing and fell out of the
+# loop unread. The permissive `_OPEN_KEY_RE` is not the right tool here either; it
+# would turn any prose sentence containing a colon into a key. One word, any script.
+_CASE_KEY_RE = re.compile(r"^([^\W\d_]\w*):\s*(.*)$", re.UNICODE)
+
+# Either bullet marker. A file is edited by hand and by other editors, and which of
+# the two characters a person's tool inserts says nothing about their content.
+_BULLET_RE = re.compile(r"^[-*]\s+")
 
 _KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
 # The open-vocabulary section names its own keys, and a language is called whatever it
@@ -143,9 +154,19 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         # no company, role or period, which is the ordinary shape of a side project.
         if line.startswith("###") and not line.startswith("####"):
             close_highlight()
-            parts = [p.strip() for p in line[4:].split("|")]
-            keys = ("company", "role", "period", "domain")
-            case = {k: v for k, v in zip(keys, parts) if v}
+            # Decoded by the frame, which is also where it is encoded — one pair,
+            # so the two halves cannot drift apart again. What stood here was
+            # `zip(("company","role","period","domain"), parts)`, and zip truncates
+            # to the shorter side in silence: a heading with more segments than
+            # slots lost its tail, and on live profile `pm` every slot shifted by
+            # one, so the employment period was read as the domain. `domain` is a
+            # declared key below the heading now, not a fourth position on it.
+            slots, overflow = frame.parse_record_name(line[4:])
+            case = dict(slots)
+            if overflow:
+                # Nothing a person wrote may vanish because our line had fewer
+                # slots than their heading had parts.
+                case.setdefault("notes", {})["heading"] = " | ".join(overflow)
             if case_type:
                 case["type"] = case_type
             cases.append(case)
@@ -177,10 +198,20 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
             ctx = line[9:].strip()
             if highlight is not None:
                 highlight["context"] = ctx
+            elif case.get("context"):
+                # Two prose lines at the record's own level. The renderer no longer
+                # writes this shape — a group after the record's prose is bounded
+                # now — but files written before 2026-08-26 carry it, and the second
+                # line used to REPLACE the first. Live: snaggd lost the sentence
+                # saying what it is. Keep both; a reader below reads prose, not slots.
+                case["context"] = f"{case['context']} {ctx}"
             else:
                 case["context"] = ctx
             continue
-        keyed = _KEY_RE.match(line)
+        keyed = _CASE_KEY_RE.match(line)
+        if keyed and highlight is None and keyed.group(1) in frame.NON_SLOT_RECORD_KEYS:
+            case[keyed.group(1)] = keyed.group(2).strip()
+            continue
         # The group's name, now that it is content rather than a heading.
         if keyed and keyed.group(1) == "label" and highlight is not None:
             highlight["label"] = keyed.group(2).strip()
@@ -193,8 +224,9 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
             # renderer has no field for still belongs to the person who wrote it.
             case.setdefault("notes", {})[keyed.group(1)] = keyed.group(2).strip()
             continue
-        if line.startswith("- "):
-            item = line[2:].strip()
+        bullet = _BULLET_RE.match(line)
+        if bullet:
+            item = line[bullet.end():].strip()
             if in_zone:
                 case.setdefault("responsibilities", []).append(item)
                 continue
@@ -206,6 +238,16 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
                 highlight = {"results": []}
             highlight["results"].append(item)
             continue
+        # The else-branch this loop never had. A body line matching none of the
+        # branches above used to fall out of the bottom and disappear — no
+        # exception, no log, nothing in the file to show it had been there. That
+        # is the single node every defect of 2026-08-26 grew from, and it is
+        # exactly the failure mode a guard cannot report on its own.
+        #
+        # Prose is the honest home for it: the record already has a prose level,
+        # and a line we could not classify is still something the person wrote.
+        target = highlight if highlight is not None else case
+        target["context"] = f"{target['context']} {line}" if target.get("context") else line
 
     close_highlight()
     return cases

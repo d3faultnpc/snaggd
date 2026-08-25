@@ -191,11 +191,17 @@ def run():
             print(f"        lost {field}: {value[:64]}")
 
     print("\nThe heading is decoded in one place, and it drops nothing")
-    slots, overflow = frame.parse_record_name("Northwind | PM | Platforms | 2022–2026 | fintech")
-    check("a heading with more segments than slots reports the overflow",
-          overflow == ["2022–2026", "fintech"])
-    check("and the frame declares only three slots, so a fourth cannot ride along",
+    heading = "Northwind | PM | Platforms | 2022–2026 | fintech"
+    slots, overflow = frame.parse_record_name(heading)
+    # The property, not a count: a segment is either in a slot or in the overflow,
+    # and either way it is still here. Pinning the number of overflow items would
+    # pin how many slots we happen to read today, which is not the contract.
+    check("no segment of a heading is dropped, whatever the slot count",
+          set(slots.values()) | set(overflow) == {p.strip() for p in heading.split("|")})
+    check("the WRITER commits to three slots, so it can never produce a fourth",
           frame.RECORD_SLOTS == ("company", "role", "period"))
+    check("the READER still understands the fourth that every profile on disk carries",
+          frame.parse_record_name("Acme | PM | 2020 | fintech")[0].get("domain") == "fintech")
 
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")

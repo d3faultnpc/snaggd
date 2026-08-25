@@ -30,6 +30,8 @@ same way — which is the argument for naming it once, closing it, and giving it
 honest `other` rather than a section per fashion.
 """
 
+import re
+
 # Ordered: this is also the order sections appear in a rendered profile.
 KIND_HEADINGS: dict[str, str] = {
     "employment": "Work Experience",
@@ -433,6 +435,24 @@ MAX_DEPTH = max(lv.depth for lv in LEVELS)
 # and an issuer for `credential`, and a reader that knows only the field name has
 # to guess. Measured over 138 live cases (2026-08-25): `company` is the place the
 # evidence comes FROM, `role` is the thing itself, `period` is when.
+# The separator is escaped inside a value, because a value is allowed to contain it
+# and the line has to survive being read back. Live: a model returned the role
+# "Product Manager | Fintech Platforms (B2B / B2C)" — one field holding the character
+# that divides fields. Unescaped, three slots arrived as four parts and the tail was
+# lost. Escaping is reversible and stays legible to someone editing the file by hand,
+# which sniffing "which part looks like a year" would not be.
+_SLOT_SEP = "|"
+_SLOT_SPLIT = re.compile(r"(?<!\\)\|")
+
+
+def _escape_slot(value: str) -> str:
+    return str(value).replace("\\", "\\\\").replace(_SLOT_SEP, "\\" + _SLOT_SEP)
+
+
+def _unescape_slot(value: str) -> str:
+    return str(value).replace("\\" + _SLOT_SEP, _SLOT_SEP).replace("\\\\", "\\")
+
+
 RECORD_SLOTS = ("company", "role", "period")
 SLOT_MEANING = {"company": "place", "role": "thing", "period": "time"}
 
@@ -442,6 +462,15 @@ SLOT_MEANING = {"company": "place", "role": "thing", "period": "time"}
 # to five. It belongs under the heading as a declared key, where a name says what
 # it is instead of a position implying it.
 NON_SLOT_RECORD_KEYS = ("domain", "url")
+
+# Strict writer, tolerant reader. record_name() emits three slots and escapes the
+# separator inside a value, so nothing it writes can ever need a fourth. But every
+# profile on disk before 2026-08-26 carries `domain` as a fourth POSITION — 19 of
+# the 20 corpus files and all three live profiles — and a reader that stopped
+# understanding them would not be strict, it would be lossy on the user's own data.
+# So reading accepts the legacy fourth; writing has already stopped producing it,
+# and a profile drops it on its next save without anyone doing a migration.
+READ_SLOTS = RECORD_SLOTS + ("domain",)
 
 
 def names_place(block: dict) -> bool:
@@ -493,10 +522,10 @@ def record_name(block: dict) -> str:
     """
     block = block or {}
     parts = [str(block.get(s) or "").strip() for s in RECORD_SLOTS]
-    parts = [p for p in parts if p]
+    parts = [_escape_slot(p) for p in parts if p]
     if parts:
         return " | ".join(parts)
-    return str(block.get("label") or "").strip()
+    return _escape_slot(str(block.get("label") or "").strip())
 
 
 def parse_record_name(text: str) -> tuple:
@@ -513,7 +542,7 @@ def parse_record_name(text: str) -> tuple:
     writer stops putting a fourth thing on this line, not that the reader gets
     cleverer about finding it.
     """
-    parts = [p.strip() for p in str(text or "").split("|")]
+    parts = [_unescape_slot(p.strip()) for p in _SLOT_SPLIT.split(str(text or ""))]
     parts = [p for p in parts if p]
-    slots = {slot: value for slot, value in zip(RECORD_SLOTS, parts) if value}
-    return slots, parts[len(RECORD_SLOTS):]
+    slots = {slot: value for slot, value in zip(READ_SLOTS, parts) if value}
+    return slots, parts[len(READ_SLOTS):]
