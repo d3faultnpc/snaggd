@@ -158,6 +158,32 @@ def _typed_contact_line(raw: str) -> str:
     return raw
 
 
+def _locale_of(parsed: dict) -> str:
+    """The language of the profile, read off the profile itself.
+
+    `locale` was declared in the schema with no rule telling the model how to fill
+    it, so it came back empty and `or ""` made the emptiness silent — while
+    `target_market` beside it had both a rule and a real default. Nothing read the
+    field, so nothing complained.
+
+    Derived rather than defaulted, and derived from the EXTRACTED CONTENT rather
+    than the source document: a PDF is parsed multimodally and its text never
+    exists on this side, so there is nothing to inspect but the answer. That is
+    also the honest subject — `locale` describes the profile this produced, which
+    is the thing every reader downstream actually gets.
+
+    A default of "ru" was considered and rejected: it is a guess about someone's
+    document, and this codebase has paid for guesses before. Counting letters is
+    not a guess.
+    """
+    text = json.dumps(parsed, ensure_ascii=False)
+    cyrillic = sum(1 for ch in text if "\u0400" <= ch <= "\u04ff")
+    latin = sum(1 for ch in text if ("a" <= ch <= "z") or ("A" <= ch <= "Z"))
+    if not cyrillic and not latin:
+        return ""
+    return "ru" if cyrillic > latin else "en"
+
+
 class ResumeParser:
     SUPPORTED_TYPES = {
         ".pdf":  "application/pdf",
@@ -659,6 +685,12 @@ class ResumeParser:
             "E — Our shape, their words. Map content into the JSON above whatever the source's own "
             "structure and heading depth; never mirror its header levels or section order. The WORDS "
             "stay the author's: a bullet is their line, not a paraphrase of it.\n"
+            "E2 — The words keep their language. Whatever language the CV is written in, the "
+            "extracted values stay in it: a Russian CV yields a Russian profile. Do not translate, "
+            "do not normalise to English, do not render Russian dates as English ones. Set `locale` "
+            "to that language ('ru' or 'en'). This is not a style preference — a recruiter reads the "
+            "letter this profile produces, and a translated record is no longer what the person "
+            "wrote about themselves.\n"
             "E1 — Evidence, not narration. A case records what the person DID. Why they left, "
             "what they hoped for, how they felt about the company and what they are looking for "
             "next are none of those — they are the person talking about themselves, and they do "
@@ -667,12 +699,6 @@ class ResumeParser:
             "entry as though they described the work. Drop them; they are not hints either.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
             "it in hints[] instead.\n"
-            "F1 — hints[] holds text FROM the CV that fitted nowhere else. It is never advice to "
-            "the person and never a note about what the CV is missing. 'Add at least 3 professional "
-            "skills' is a task for its author; further down this pipeline the profile is read as a "
-            "statement of fact about the candidate, so a to-do written here becomes something the "
-            "scorer and the letter writer believe about them. Seen live 2026-08-26. If a bucket is "
-            "empty, leave it empty — an absence is honest and is read as one.\n"
             "H — Thin-CV domain hook (narrow exception to F): if pitch is null AND no cases[].domain has "
             "a value, still add ONE short domain/industry phrase to hints[] if the CV supports even a "
             "loose read (e.g. 'fintech background', 'early-stage startup experience') — this is a minor "
@@ -714,7 +740,7 @@ class ResumeParser:
 
         data = ResumeData(
             target_market=parsed.get("target_market") or "cis",
-            locale=parsed.get("locale") or "",
+            locale=parsed.get("locale") or _locale_of(parsed),
             identity=parsed.get("identity") or {},
             pitch=parsed.get("pitch"),
             cases=parsed.get("cases") or [],
@@ -738,24 +764,20 @@ class ResumeParser:
     def _finalize(self, data: ResumeData) -> ResumeData:
         # Preserve LLM-populated hints[] (Rule F, content-level) and append
         # structural hints — do not overwrite either.
-        data.hints = list(data.hints or []) + self._build_hints(data)
+        # The completeness checklist used to be appended here — "Add your full name",
+        # "Add at least 3 professional skills", "Add work history — run wizard or edit
+        # candidate.md directly". Those are tasks for the PERSON, and `hints` is
+        # rendered into the profile under "hints (low-confidence — verify before
+        # relying on)", which the scorer and both writers read as statements about
+        # the candidate. A letter writer reading "run wizard" as a fact about someone
+        # is the whole problem in one line.
+        #
+        # Found 2026-08-26 by re-parsing a CV to check a PROMPT rule written to stop
+        # the model doing this. The model was never doing it; we were. The rule was
+        # removed with the merge.
+        #
+        # The checklist itself had no other consumer — the app reads `hints` nowhere.
+        # Telling a person their profile is thin is worth doing, but it needs a
+        # surface of its own; see the app repo's deferred-2026-08-20.md, item 7.
         return data
 
-    def _build_hints(self, data: ResumeData) -> list:
-        identity = data.identity or {}
-        hints = []
-        if not identity.get("name"):     hints.append("Add your full name")
-        # "Target job title" is what you WANT; identity.role is what you ARE. The same
-        # field is written by the parser as a profession and by the wizard under a
-        # label saying target — and it becomes the profile's first heading, which
-        # scoring reads as the person's professional identity. One field cannot mean
-        # both, so it means the first one everywhere.
-        if not identity.get("role"):     hints.append("Add your profession")
-        if not identity.get("location"): hints.append("Add your city/location")
-        if len(data.skills) < 3:
-            hints.append("Add at least 3 professional skills")
-        if not data.cases:
-            hints.append("Add work history — run wizard or edit candidate.md directly")
-        if not identity.get("contacts"):
-            hints.append("Add LinkedIn/GitHub/Telegram — helps LLM answer HR form contact questions")
-        return hints

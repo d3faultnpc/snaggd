@@ -30,6 +30,8 @@ sys.path.insert(0, str(_REPO_ROOT))
 _SCORING = (_REPO_ROOT / "prompts" / "match_scoring.md").read_text(encoding="utf-8")
 _COVER = (_REPO_ROOT / "prompts" / "cover_letter.md").read_text(encoding="utf-8")
 _PARSER = (_REPO_ROOT / "onboarding" / "resume_parser.py").read_text(encoding="utf-8")
+_FORM = (_REPO_ROOT / "prompts" / "form_fill.md").read_text(encoding="utf-8")
+from onboarding.resume_parser import ResumeParser as _ResumeParser  # noqa: E402
 
 results = []
 
@@ -127,6 +129,55 @@ check("the CLI wizard offers the frame's vocabulary rather than its own copy",
       "set(KIND_HEADINGS)" in _wizard and "normalise_kind(" in _wizard)
 
 print()
+# ── Every surface that ships words says which language it writes in ───────────
+#
+# Four surfaces, and they do NOT share one rule — that was the trap. A first pass
+# called form_fill's rule a divergence and proposed "fixing" it to follow the
+# vacancy. The user's own observation stopped that: a Russian vacancy with an
+# English questionnaire is a real, repeated shape, and the questionnaire is
+# plausibly testing English. So the answer follows the QUESTION, the letter
+# follows where it is going, and neither is wrong.
+#
+# What each must do differs. That all four must SAY something does not.
+print("\nEvery surface that ships words declares the language it writes in:")
+# Against the ASSEMBLED prompt, not the source file. The source splits a rule
+# across adjacent string literals, so a phrase that reads as one sentence to the
+# model does not exist as one in the file — a first draft of this check failed for
+# exactly that reason and would have been "fixed" by weakening it.
+_ASSEMBLED = _ResumeParser(None)._extraction_prompt()
+check("the extraction prompt keeps the CV's own language",
+      "keep their language" in _ASSEMBLED and "Do not translate" in _ASSEMBLED)
+check("and it says how `locale` is set, which nothing told it before",
+      "Set `locale` to that language" in _ASSEMBLED)
+check("the cover letter follows the vacancy",
+      "SAME LANGUAGE as the vacancy" in _COVER)
+check("the scoring anchors follow the vacancy",
+      "SAME LANGUAGE as the vacancy" in _SCORING)
+check("a form answer follows the question it was asked",
+      "same language as the question" in _FORM)
+
+# The profile carries what the CV said, never what the product wants from its author.
+#
+# `_build_hints` appended a completeness checklist — "Add your full name", "Add at
+# least 3 professional skills", "Add work history — run wizard or edit candidate.md
+# directly" — onto the same `hints` list the model fills from the document. It is
+# rendered into the profile under "hints (low-confidence — verify before relying
+# on)", which the scorer and both writers read as statements about the candidate.
+#
+# Found by re-parsing a CV to verify a PROMPT rule written to stop the MODEL doing
+# this. The model never was; our own post-processing was. The rule went with it.
+# Comment lines are stripped before looking. The removal is recorded in a comment
+# that quotes the offending strings as evidence, and a first draft of this check
+# flagged its own documentation — a test that cannot tell a live string from a note
+# about a dead one would push the next reader to delete the note.
+_live = "\n".join(l for l in _PARSER.splitlines() if not l.strip().startswith("#"))
+check("no completeness checklist is written into the profile",
+      "_build_hints" not in _live)
+check("and none of its lines survives as code",
+      not any(t in _live for t in
+              ("Add your full name", "Add at least 3 professional skills",
+               "Add work history", "Add your city/location")))
+
 _total, _passed = len(results), sum(results)
 print(f"{_passed}/{_total} passed")
 sys.exit(0 if _passed == _total else 1)
