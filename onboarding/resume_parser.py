@@ -561,12 +561,11 @@ class ResumeParser:
             '      "role": "Job title / degree / project role",\n'
             '      "period": "2022–2024",\n'
             '      "domain": "industry domain — employment cases only",\n'
-            '      "context": "1-2 sentences, used only when there is no highlight/responsibility to attach it to",\n'
+            '      "context": "1-2 sentences about the entry as a whole, else null",\n'
             '      "url": "URL if present, else null",\n'
-            '      "responsibilities": ["ongoing duty bullets with no single crisp metric"],\n'
-            '      "highlights": [\n'
-            '        {"label": "project/initiative name or null", "context": "1-2 sentences", '
-            '"results": ["quantified metric tied to this highlight"]}\n'
+            '      "groups": [\n'
+            '        {"kind": "EXACTLY ONE OF: responsibilities | achievement", '
+            '"bullets": ["the CV\'s own lines, each kept whole"]}\n'
             '      ]\n'
             '    }\n'
             '  ],\n'
@@ -579,8 +578,11 @@ class ResumeParser:
             "}\n\n"
             "Rules:\n"
             "A — Multi-role: if the candidate held multiple positions at the same company, create a "
-            "separate case entry per role, each with its own role/period/highlights. Do not merge roles "
-            "into one entry.\n"
+            "separate case entry per role, each with its own role, period and groups. Do not merge "
+            "roles into one entry. This applies when each role names its OWN period. A bare "
+            "progression with no dates per step — 'Analyst → Senior → Lead', "
+            "'L2 Support → Back-office → Risk/Compliance' — names no time of its own, so it is not "
+            "several entries: it is one line of the entry it sits under.\n"
             "A1 — identity.role is who they ARE, never what they want. Many CVs open with a "
             "wanted-position line — hh.ru prints 'Желаемая должность' at the very top, and "
             "Western CVs use 'Objective' or 'Target role' the same way. That line states an "
@@ -589,14 +591,17 @@ class ResumeParser:
             "history as a whole describes. If a CV states ONLY a wanted position and shows no "
             "work history to read a profession from, return null — an empty heading is honest, "
             "a borrowed ambition is not.\n"
-            "B — Bullet split: if a bullet has a project/initiative name followed by metrics, put the "
-            "name in highlights[].label and the metrics as separate strings in highlights[].results. "
-            "Do not put the project name inside results.\n"
-            "B1 — What a label is: a name that stands on its own, the way it would appear on a slide "
-            "or a badge ('Onboarding v2', 'Marketplace Checkout', 'ISO 27001 audit'). It is NOT the "
-            "thing a verb acts on: in 'grew the development team from 3 to 11', the label is not 'the "
-            "development team' — that bullet has no name, so leave label null and let the sentence be "
-            "the context. A label that only makes sense with the verb in front of it is not a label.\n"
+            "B — A bullet is kept whole. Do not split one line of the CV into a name and a "
+            "metric, and do not invent a name for it. 'Развил партнёрский канал → база ×30, AOV ×2.5' "
+            "is ONE bullet, exactly as written. Splitting it was how a single line about a tech stack "
+            "became an achievement with five 'results', none of which was a result.\n"
+            "B1 — What a `label` is, and it now belongs to ONE place: an entry of "
+            "type='other'. It is a name that stands on its own, the way it would appear on a "
+            "slide or a badge ('Onboarding v2', 'ISO 27001 audit', 'Военная служба'). It is "
+            "NOT the thing a verb acts on: in 'grew the development team from 3 to 11' the "
+            "name is not 'the development team' — that line has no name, it is simply a "
+            "bullet. A phrase that only makes sense with its verb in front of it is not a "
+            "name. Groups have no labels at all: a group is its kind and its bullets.\n"
             "C — Education: type='education', company=institution name, role=degree/program, "
             "period=years. Short courses and certificates → type='credential', not a type of "
             "their own.\n"
@@ -629,26 +634,28 @@ class ResumeParser:
             "returning to work it is not a footnote — it is the only evidence they have of "
             "having done the thing. Do not fold it into employment and do not drop it as "
             "minor.\n"
-            "D — Responsibilities vs highlights: explicit responsibility/duty bullets with no single "
-            "crisp metric → responsibilities[]. Bullets with a concrete before/after metric → "
-            "highlights[]. An achievement cluster with several unrelated points and no one metric also "
-            "belongs in responsibilities[] — do not force it into a highlights[] entry with empty results[]. "
-            "Western CVs typically have no responsibilities section, so this array is "
-            "usually empty for them — but extract duty bullets when the CV does carry "
-            "them. Absence is a convention of the format, not a rule about the person, "
-            "and dropping bullets that are on the page loses what they wrote.\n"
-            "E — Target schema, not source format: always map content into the JSON shape above "
-            "regardless of the source CV's own structure, heading levels, or language. Never mirror "
-            "the source document's header depth or section order.\n"
-            "D1 — A number without a before/after is still evidence. 'До 360 напитков за "
-            "смену', '60 процедур за смену', 'команда 12 человек' state the scale a person "
-            "worked at, and scale is often the only thing separating two otherwise identical "
-            "records. They carry a metric but no change, so they fit neither side of D "
-            "cleanly — put them in responsibilities[]. Never drop them.\n"
+            "D — Two groups, and the BULLET decides which. A line carrying a figure — a change, "
+            "a scale, a share, a count — is an achievement. A line stating what the person was "
+            "responsible for, with no figure, is a responsibility. Sort every bullet by what it "
+            "says, never by the heading it sat under: a CV's own sections ('Обязанности', "
+            "'Достижения', 'Key responsibilities') are a hint about the author, not the answer.\n"
+            "  · A record has AT MOST ONE group of each kind, both flat. Do not create several "
+            "achievement groups, and do not nest.\n"
+            "  · A figure with no before/after still counts as a figure. 'До 360 напитков за "
+            "смену', '60 процедур за смену', 'команда 12 человек' state the scale someone worked "
+            "at, and scale is often the only thing separating two otherwise identical records. "
+            "They are achievements. Never drop them.\n"
+            "  · Western CVs often print no responsibilities section at all. That is a convention "
+            "of the format, not a fact about the person: extract the duty bullets when they are "
+            "on the page, and leave the group out when they are not. An empty group is never "
+            "written.\n"
+            "E — Our shape, their words. Map content into the JSON above whatever the source's own "
+            "structure and heading depth; never mirror its header levels or section order. The WORDS "
+            "stay the author's: a bullet is their line, not a paraphrase of it.\n"
             "E1 — Evidence, not narration. A case records what the person DID. Why they left, "
             "what they hoped for, how they felt about the company and what they are looking for "
             "next are none of those — they are the person talking about themselves, and they do "
-            "not belong in context, responsibilities or results. Seen live: 'Ушел, так как не "
+            "not belong in a record's context or in any of its bullets. Seen live: 'Ушел, так как не "
             "видел прозрачного роста', 'Уходит в связи с бюрократией' sitting inside a work "
             "entry as though they described the work. Drop them; they are not hints either.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
