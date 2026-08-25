@@ -112,6 +112,18 @@ _CALL_TEMPERATURE = {
 }
 
 
+# Case and quotation marks only. Deliberately NOT a fuzzy match: the whole point of
+# the check that uses this is to separate a name from one that merely resembles it,
+# so anything tolerant of a character difference would defeat it. Russian «» and the
+# various apostrophes are stripped because a model quoting a posting keeps them, and
+# a name inside guillemets is the same name.
+_MATCH_STRIP = str.maketrans("", "", "«»\"'`“”‘’")
+
+
+def _fold_for_match(text: str) -> str:
+    return str(text).lower().translate(_MATCH_STRIP)
+
+
 def _temperature_for(call_type: str | None) -> float:
     """The temperature for this call type. A call type nobody declared is a gap
     in this table, not a licence to fall back to the provider's default — that
@@ -376,149 +388,27 @@ class LLMAgent:
             _SESSION_REPORTER.emit(f'Cover letter drafted: "{_preview}{_ellipsis}"', actor="llm")
         return stripped
 
-    # A requirement the posting calls mandatory counts double. "unspecified" sits
-    # with "nice" rather than with "must": when a posting does not say how much
-    # something matters, treating it as mandatory is our invention, not its.
-    _REQUIREMENT_WEIGHTS = {"must": 2.0, "nice": 1.0, "unspecified": 1.0}
-    # "silent" is deliberately absent. A verdict of silent leaves the denominator
-    # entirely — see _score_from_verdicts.
-    _VERDICT_CREDIT = {"met": 1.0, "partial": 0.5, "absent": 0.0}
-
-    def _score_from_verdicts(self, requirements: list, verdicts: list):
-        """Coverage as a ratio: what the profile closes over what was asked.
-
-        A ratio rather than a sum, because the demand belongs in the denominator.
-        A junior posting with three requirements where two are met is a better
-        match than a senior one with twelve where four are — and the absolute
-        bands the single-call prompt uses cannot express that at all: they measure
-        the candidate, not the relation.
-
-        A `silent` requirement leaves the denominator rather than scoring zero.
-        Counting silence as failure is the same defect fixed in the domain
-        modifier on 2026-08-16 — a profile that never discusses punctuality has
-        not failed at it. Most of what a short profile does not cover is silence.
-
-        Returns None when nothing was judgeable at all. There is no honest number
-        for that, and inventing one is what this whole layer exists to stop.
-        """
-        by_index = {v.get("i"): v for v in verdicts if isinstance(v, dict)}
-        earned = asked = 0.0
-        for i, req in enumerate(requirements):
-            verdict = (by_index.get(i) or {}).get("verdict")
-            if verdict not in self._VERDICT_CREDIT:
-                continue  # silent, missing, or a word we did not ask for
-            weight = self._REQUIREMENT_WEIGHTS.get(req.get("importance"), 1.0)
-            asked += weight
-            earned += weight * self._VERDICT_CREDIT[verdict]
-        if asked <= 0:
-            return None
-        return max(0, min(100, round(100 * earned / asked)))
-
-    def _requirements_of(self, vacancy_text: str) -> dict:
-        """Stage one: what the posting asks for. No candidate in this call.
-
-        Deliberately given no profile at all, the way ask_modal_action is: the
-        question is about the posting, and a profile in the context is something
-        to read the posting against — which is the entanglement this layer exists
-        to take apart.
-
-        A requirement whose quote cannot be found in the posting is dropped. The
-        quote is the whole basis for calling something a requirement, and unlike
-        every other rule in these prompts this one can be enforced rather than
-        asked for.
-        """
-        content = self._chat_completion(
-            model=self.model, max_tokens=900, call_type="requirements",
-            messages=[
-                {"role": "system", "content": "You read job postings and list what they ask for."},
-                {"role": "user", "content": f"{self._load_prompt('vacancy_requirements.md')}"
-                                            f"\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
-            ],
-        )
-        parsed = self._parse_json((content or "{}").strip(), fallback={})
-        haystack = " ".join(vacancy_text.split()).lower()
-        kept = []
-        for req in parsed.get("requirements") or []:
-            if not isinstance(req, dict) or not str(req.get("text", "")).strip():
-                continue
-            quote = " ".join(str(req.get("quote", "")).split()).lower()
-            if not quote or quote not in haystack:
-                continue
-            kept.append({"text": str(req["text"]).strip(),
-                         "importance": req.get("importance", "unspecified"),
-                         "quote": req.get("quote", "")})
-        parsed["requirements"] = kept
-        return parsed
-
-    def _match_requirements(self, requirements: list) -> dict:
-        """Stage two: the candidate against that list, with no numbers in it.
-
-        The posting's own text is not sent again — the requirements are what is
-        left of it, and they are what the candidate is being read against. So
-        neither call carries both large documents, which is where the input cost
-        of the single call actually goes.
-        """
-        import json as _json
-        listing = "\n".join(
-            f"{i}. [{r.get('importance', 'unspecified')}] {r['text']}"
-            for i, r in enumerate(requirements))
-        prompt = self._load_prompt("requirement_match.md").replace("{{REQUIREMENTS}}", listing)
-        content = self._chat_completion(
-            model=self.model, max_tokens=900, call_type="score",
-            messages=[
-                {"role": "system", "content": self._system("score")},
-                {"role": "user", "content": prompt},
-            ],
-        )
-        return self._parse_json((content or "{}").strip(), fallback={})
-
-    def score_vacancy_split(self, vacancy_text: str) -> dict | None:
-        """Both stages plus our own arithmetic. None means "this did not work".
-
-        Returning None rather than a guess is the point: the caller falls back to
-        the single call, one extra request in a rare case, instead of a number
-        with nothing behind it.
-        """
-        stage1 = self._requirements_of(vacancy_text)
-        meta1 = last_call_snapshot()
-        requirements = stage1.get("requirements") or []
-        if not requirements:
-            return None
-
-        stage2 = self._match_requirements(requirements)
-        meta2 = last_call_snapshot()
-        verdicts = stage2.get("verdicts") or []
-        score = self._score_from_verdicts(requirements, verdicts)
-        if score is None:
-            return None
-
-        judged = {v.get("i"): v.get("verdict") for v in verdicts if isinstance(v, dict)}
-        gaps = [r["text"] for i, r in enumerate(requirements)
-                if judged.get(i) in ("absent", "partial")]
-
-        result = {
-            "score": score,
-            "matched_skills": stage2.get("matched_skills") or [],
-            "gaps": gaps,
-            "signals": stage1.get("signals") or [],
-            "stop_match": stage2.get("stop_match"),
-            "stop_basis": stage2.get("stop_basis"),
-            "stop_evidence": stage2.get("stop_evidence"),
-            "vacancy_role_type": stage1.get("vacancy_role_type"),
-            "role_type_match": stage2.get("role_type_match"),
-        }
-        scored = self._sanitize_score_result(result)
-        # Both calls, or the token figures understate the split by half and the
-        # comparison it exists to enable would be wrong in its own favour.
-        scored["call_meta"] = {
-            "generation_id": meta2.get("generation_id"),
-            "generation_id_stage1": meta1.get("generation_id"),
-            "tokens_prompt": (meta1.get("tokens_prompt") or 0) + (meta2.get("tokens_prompt") or 0),
-            "tokens_completion": (meta1.get("tokens_completion") or 0) + (meta2.get("tokens_completion") or 0),
-            "stages": 2,
-        }
-        scored["requirements"] = requirements
-        return scored
+    # Two-stage "split" scoring lived here until 2026-08-25, behind
+    # SNAGGD_SPLIT_SCORING: stage one read a posting for its requirements
+    # in its own prompt, stage two matched the profile against them in a second, and
+    # code turned the verdicts into a coverage ratio. Both prompt files went with it;
+    # they are deliberately not named here, because a name in a comment is what
+    # tests/test_docs_name_real_files.py reads as a live claim about a file.
+    #
+    # Removed as a rejected experiment, not as working code nobody switched on. The
+    # measurement that rejected it is in tz-2026-08-22 §2: stage one, asked to read a
+    # posting with no candidate in front of it, cannot rank — 12 requirements out of
+    # 12 came back "unspecified", the reply was truncated in 11 runs out of 12, and
+    # the output grew 5.9x for it. The design that replaced it asks one call to grade
+    # five axes AGAINST the person, which is the comparison stage one was missing.
+    #
+    # Two things made keeping it worse than deleting it. Its prompts asked for
+    # `role_type`, a field retired the same day this was removed, so the flag no
+    # longer described anything the schema had. And a flag that silently swaps the
+    # scorer is a second scorer to keep true — every change to axes, anchors, the
+    # stop rule or the arithmetic would have had to be made twice or knowingly not
+    # made twice. It is in git history if the idea is ever revisited; what it must
+    # not be is a live path pretending to be maintained.
 
     def score_vacancy(self, vacancy_text: str) -> dict:
         """Returns {score, axes, matched_skills, signals, stop_match, ...}.
@@ -532,12 +422,6 @@ class LLMAgent:
         The list of blocked categories comes from the `stop_categories:` line in
         candidate.md, already in the system prompt — no extra parameters needed.
         """
-        if os.getenv("SNAGGD_SPLIT_SCORING", "").strip() in ("1", "true", "yes"):
-            split = self.score_vacancy_split(vacancy_text)
-            if split is not None:
-                return split
-            print("   ℹ️ split scoring produced nothing to judge — falling back to one call")
-
         prompt = self._load_prompt("match_scoring.md")
         # Passed in, not left to survive the projection. The block vocabulary used
         # to reach the model only because it sat in a section the scorer happened
@@ -545,10 +429,17 @@ class LLMAgent:
         # which is what the projection is there to withhold. A list the answer is
         # validated against is data this call needs; it says so.
         declared = sorted(self._declared_stop_categories())
-        blocks = ("BLOCKED CATEGORIES (this candidate's own list — the entire "
-                  f"vocabulary available to you): {', '.join(declared)}"
+        # "categories or named employers" since 2026-08-25: the wizard now collects
+        # both through one field, because a person refusing work does not sort their
+        # own refusals into a semantic tier and an exact-match tier — that split is
+        # ours, not theirs. Naming both here is what lets the prompt's two judging
+        # rules (primary domain for a kind, identity for a name) apply to the right
+        # entry. Header said "CATEGORIES" alone while a name could arrive on the list.
+        blocks = ("BLOCKED (this candidate's own list — categories of business and "
+                  "named employers, the entire vocabulary available to you): "
+                  f"{', '.join(declared)}"
                   if declared else
-                  "BLOCKED CATEGORIES: this candidate declared none. stop_match is null.")
+                  "BLOCKED: this candidate declared nothing. stop_match is null.")
         content = self._chat_completion(
             model=self.model,
             # A ceiling is a cap, not a budget: output tokens are billed as
@@ -998,6 +889,41 @@ class LLMAgent:
                                       "evidence": evidence.strip(), "why": why}
             return out
 
+        # A block on an EMPLOYER NAME must quote the name it is blocking on.
+        #
+        # Names reached this tier on 2026-08-25, when one wizard field started
+        # feeding both stop tiers. Everything below was built and measured for
+        # CATEGORIES, and names break one of its premises: "a quote from the
+        # posting supports itself" holds for a kind of business, because the quote
+        # has to describe the business. It does not hold for a name, because a
+        # posting is full of company names — clients, partners, vendors — and a
+        # name that merely RESEMBLES the declared one reads as a quote just fine.
+        #
+        # Measured, twice, on five synthetic postings (deepseek-v3.2):
+        #   · before the prompt said which evidence counts for a name, the employer
+        #     itself was not blocked (the model reached for company_knowledge for
+        #     something the posting said out loud) while a company whose CLIENT was
+        #     the named employer WAS blocked. Wrong in both directions.
+        #   · after the prompt fixed that, the employer itself blocked correctly and
+        #     a grocery chain called «Монетка» blocked as «Монеткин», quoting its own
+        #     name as the evidence.
+        #
+        # The prompt says resemblance is not evidence. It said so during the run
+        # that produced the false block, which makes it a rule with nobody to
+        # enforce it — the same shape as the company_knowledge corroboration below,
+        # and the same answer: the model labels, the code decides. `stop_kind` is
+        # the label; this is the decision.
+        #
+        # Deliberately NOT applied to a category: a category legitimately matches
+        # wording that never contains the word (a posting saying "онлайн-казино"
+        # evidences a gambling block without spelling it), and demanding containment
+        # there would break the semantic tier's whole reason to exist.
+        if result.get("stop_kind") == "employer" and basis == "text":
+            haystack = _fold_for_match(evidence)
+            if _fold_for_match(category) not in haystack:
+                return _refused("an employer block must quote the name it blocks on, "
+                                "and this quote does not contain it")
+
         # Both checks below are scoped to company knowledge on purpose. A quote
         # from the posting supports itself: refusing it for a formatting
         # deficiency would mean applying to an employer the person explicitly
@@ -1033,7 +959,12 @@ class LLMAgent:
                 return _refused("company knowledge is not corroborated by its own signals")
 
         return {"stop_match": category, "stop_basis": basis,
-                "stop_evidence": evidence.strip(), "stop_suppressed": None}
+                "stop_evidence": evidence.strip(), "stop_suppressed": None,
+                # Which of the two judgements the model made. Carried out of here so
+                # a reviewer can see WHICH guard a block passed, not only that it
+                # passed one. Not yet threaded into the written record (llm_cover /
+                # adapter carry stop_basis and stop_evidence) — see the TZ.
+                "stop_kind": result.get("stop_kind")}
 
     def _is_template_echo(self, result: dict) -> bool:
         """True if anything anywhere in the answer is still an unfilled <TOKEN> from

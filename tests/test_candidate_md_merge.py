@@ -76,13 +76,15 @@ def run():
 
     # ── The wipe this file exists to prevent ──────────────────────────────
     # A wizard save carrying a parsed resume: real cases and skills, and the
-    # empty career_profile/logistics/search a GUI wizard actually produces.
+    # empty logistics/search a GUI wizard actually produces. `career_profile` was
+    # part of this shape until 2026-08-25 and is gone with the human layer — the
+    # wizard no longer collects role_type/edge/aspiration and the schema no longer
+    # has a slot for them.
     wizard_save = ResumeData(
         identity={"name": "Test Person", "role": "Product Manager"},
-        career_profile={"role_type": "builder", "edge": None, "aspiration": None},
         logistics={},
         search={},
-        rules={},
+        rules={"stop_categories": ["alpha", "beta"]},
         cases=[{"company": "Northwind", "role": "PM", "period": "2020 — 2026",
                 "highlights": [{"label": "Storefront", "results": ["MVP shipped"]}]}],
         skills=["product discovery", "SQL"],
@@ -99,7 +101,10 @@ def run():
           "note: Match vacancy domain" in merged)
 
     # ── What the save is actually allowed to change ───────────────────────
-    check("a rendered key overwrites the existing one", "role_type: builder" in merged)
+    # Was checked on `role_type` until 2026-08-25 — a key that no longer exists. The
+    # property is unchanged and still worth pinning; it just needs a key that does.
+    check("a rendered key overwrites the existing one",
+          "stop_categories: alpha, beta" in merged)
     # Written `skills: a, b` since 2026-08-17, not one bullet per line — Tools,
     # the section directly below it, had always been the keyed form, and one kind
     # of list deserves one shape. What this check is about is unchanged: the new
@@ -108,8 +113,10 @@ def run():
           "skills: product discovery, SQL" in merged and "platform thinking" not in merged)
     check("a section the wizard has nothing for is left alone",
           "interests: Bitcoin Ordinals, UTXO data model" in merged)
+    # Same substitution, same reason. `relocation_cities` is a key the renderer never
+    # emits, in a section it does emit — which is exactly the shape this is about.
     check("an absent value does not erase the existing one",
-          "aspiration: move deeper into AI-native / agentic product work" in merged)
+          "relocation_cities: city A (current), city B (ok), abroad (ok)" in merged)
     check("Work Experience arrives from the save", "Northwind" in merged and "MVP shipped" in merged)
 
     # ── No scaffolding reaches the file (and therefore the system prompt) ──

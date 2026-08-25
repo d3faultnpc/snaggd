@@ -60,10 +60,12 @@ class ResumeData:
     identity: dict = field(default_factory=dict)        # name, role, location, contacts: []
     pitch: Optional[str] = None
 
-    # career_profile.role_type/edge are the candidate's own confirmed framing, set via the
-    # wizard (possibly starting from career_profile_suggestions below, but never written
-    # directly by the parser) — logistics/search/rules are filter/config data, not CV content.
-    career_profile: dict = field(default_factory=dict)  # role_type, edge
+    # `career_profile` (role_type / edge / aspiration) lived here until 2026-08-25.
+    # Deleted with the human layer, not moved: the scoring rebuild took "what I want
+    # to be" out of scope on a measurement, and the work those three were meant to do
+    # is done by identity.role — the document's first heading, which the scoring
+    # prompt names as the comparison frame and which the parser fills 8 times out of
+    # 8. See onboarding/profile_frame.RETIRED_KEYS.
     logistics: dict = field(default_factory=dict)       # relocation, work_format
     search: dict = field(default_factory=dict)          # wise_link, queries, salary, region
     rules: dict = field(default_factory=dict)           # stop, penalize, min_match, min_employer_rating
@@ -80,10 +82,8 @@ class ResumeData:
     suggested_queries: list = field(default_factory=list)
 
     # Parser-only convenience field, same exclusion treatment as suggested_queries above —
-    # 0-3 LLM-suggested role_type quick-picks for the wizard's SegmentFreetextField to render
-    # as buttons alongside its free-text input. Never the final career_profile.role_type value
-    # itself, and never forced — empty when the CV doesn't clearly support one.
-    career_profile_suggestions: dict = field(default_factory=dict)  # role_type_options: []
+    # `career_profile_suggestions` (role_type quick-picks for the wizard) went with
+    # the field it suggested values for, same date and same reason.
 
     # Operational metadata — not schema content, used directly by Python code
     source_file: str = ""
@@ -175,9 +175,21 @@ class ResumeParser:
     # same family, same native-PDF-reading rationale. RESUME_PARSE_MODEL still
     # overrides for anyone who wants a different multimodal model.
     MULTIMODAL_MODEL = os.getenv("RESUME_PARSE_MODEL", "google/gemini-2.5-flash")
-    # claude-3-5-haiku 404s live as of 2026-07 — claude-haiku-4.5 is the current
-    # same-tier replacement. LLM_MODEL still overrides as before.
-    TEXT_MODEL       = os.getenv("LLM_MODEL", "anthropic/claude-haiku-4.5")
+    # The same setting, because this is the same job. It read LLM_MODEL until
+    # 2026-08-25 — the SCORING model — so which model read a person's CV depended on
+    # the file they happened to save it as: a PDF went to RESUME_PARSE_MODEL and a
+    # .docx to the scorer's. Caught in a batch of 20 real CVs, where the single .docx
+    # among them was the single call to a different model and provider.
+    #
+    # It is not a cosmetic inconsistency. Two formats of one document have to produce
+    # one profile, and every acceptance number measured on PDFs said nothing about
+    # .docx. Worse ahead: the scoring model is about to vary per subscription tier,
+    # which would have made "how well your CV is read" depend on what you pay.
+    #
+    # Still two constants, because a text-only model cannot read a PDF and someone
+    # may legitimately want to pair them. They now differ only if set to differ.
+    TEXT_MODEL       = os.getenv("RESUME_PARSE_TEXT_MODEL",
+                                 os.getenv("RESUME_PARSE_MODEL", "google/gemini-2.5-flash"))
 
     def __init__(self, llm_client):
         self.llm = llm_client
@@ -313,27 +325,28 @@ class ResumeParser:
         if identity_lines:
             lines += ["", "## Identity"] + identity_lines
 
-        # ── Career Profile ────────────────────────────────────────────────
-        cp = data.career_profile or {}
-        career_lines = [f"{k}: {cp[k]}" for k in ("role_type", "edge", "aspiration") if cp.get(k)]
-        # `not_looking_for` is where "soft-skip anything with X" actually works, and it has
-        # worked for a long time — as prose in a hand-written candidate.md that the model
-        # reads. There is no numeric penalty behind it anywhere in the engine, so the wizard
-        # collected `rules.penalize` into candidate.json and nothing ever read it. Writing it
-        # here connects the field to the mechanism that already existed.
-        penalize = [str(p).strip() for p in ((data.rules or {}).get("penalize") or []) if str(p).strip()]
-        if penalize:
-            career_lines.append(f"not_looking_for: {', '.join(penalize)}")
-        # Semantic categories the person refuses outright — the hard tier of the same
-        # preference `not_looking_for` states softly. Rendered here so it lands in the
-        # one file the model already reads, which is also the list the block validator
-        # checks an answer against: one line, one meaning, no second copy to drift.
+        # ── Constraints ───────────────────────────────────────────────────
+        # What the person refuses outright: semantic categories and named employers.
+        # Rendered into the one file the model already reads, which is also the list
+        # the block validator checks an answer against — one line, one meaning, no
+        # second copy to drift out of step with the first.
+        #
+        # This section and the next were one `## Career Profile` until 2026-08-25,
+        # alongside role_type/edge/aspiration. Those three are gone (see
+        # profile_frame.KEY_OWNERS), and what remained was two kinds of refusal with
+        # two different readerships under a heading that described neither.
         stop_categories = [str(c).strip() for c in ((data.rules or {}).get("stop_categories") or [])
                            if str(c).strip()]
         if stop_categories:
-            career_lines.append(f"stop_categories: {', '.join(stop_categories)}")
-        if career_lines:
-            lines += ["", "## Career Profile"] + career_lines
+            lines += ["", "## Constraints", f"stop_categories: {', '.join(stop_categories)}"]
+
+        # ── Preferences ───────────────────────────────────────────────────
+        # The soft half, and deliberately without a mechanism behind it. It filters
+        # nothing and scores nothing; the letter writer reads it so it can avoid
+        # pitching someone into work they said they did not want.
+        penalize = [str(p).strip() for p in ((data.rules or {}).get("penalize") or []) if str(p).strip()]
+        if penalize:
+            lines += ["", "## Preferences", f"not_looking_for: {', '.join(penalize)}"]
 
         # ── Relocation & Work Format ─────────────────────────────────────
         lg = data.logistics or {}
@@ -560,7 +573,8 @@ class ResumeParser:
             '  "identity": {\n'
             '    "name": "Full name or null",\n'
             '    "role": "Short profession/role label only — 2-4 words, no platform/tech/company '
-            'detail (e.g. \'fintech PM\', \'barista\', \'dentist\') or null",\n'
+            'detail (e.g. \'fintech PM\', \'barista\', \'dentist\'). What they ARE, not what they '
+            'are looking for — see rule A1. null if the CV does not say",\n'
             '    "location": "City or null",\n'
             '    "contacts": ["raw contact strings — URLs, @handles, emails, phone numbers, exactly as found"]\n'
             '  },\n'
@@ -591,12 +605,6 @@ class ResumeParser:
             '  "tools": ["tool1", "tool2"],\n'
             '  "languages": [{"lang": "english", "level": "B2", "note": null}],\n'
             '  "interests": ["interest1"],\n'
-            '  "career_profile_suggestions": {\n'
-            '    "role_type_options": ["0-3 short archetype labels (2-4 words each, e.g. \'hands-on '
-            'builder\', \'process-driven operator\', \'high-volume service lead\') ONLY if the CV\'s '
-            'cases clearly support one — empty array if nothing clearly points that way, never force '
-            'a guess"]\n'
-            '  },\n'
             '  "hints": ["content that does not clearly fit one bucket above — low-confidence, do not force a classification"],\n'
             '  "suggested_queries": ["product manager b2b", "руководитель продукта"]\n'
             "}\n\n"
@@ -604,6 +612,14 @@ class ResumeParser:
             "A — Multi-role: if the candidate held multiple positions at the same company, create a "
             "separate case entry per role, each with its own role/period/highlights. Do not merge roles "
             "into one entry.\n"
+            "A1 — identity.role is who they ARE, never what they want. Many CVs open with a "
+            "wanted-position line — hh.ru prints 'Желаемая должность' at the very top, and "
+            "Western CVs use 'Objective' or 'Target role' the same way. That line states an "
+            "ambition, not a record, and it must NOT become identity.role. Read the role off "
+            "the evidence instead: the most recent employment case, or the profession the work "
+            "history as a whole describes. If a CV states ONLY a wanted position and shows no "
+            "work history to read a profession from, return null — an empty heading is honest, "
+            "a borrowed ambition is not.\n"
             "B — Bullet split: if a bullet has a project/initiative name followed by metrics, put the "
             "name in highlights[].label and the metrics as separate strings in highlights[].results. "
             "Do not put the project name inside results.\n"
@@ -618,12 +634,23 @@ class ResumeParser:
             "C1 — What credential covers, and why it is not a skill: certificates, courses, "
             "LICENCES, registrations, admissions and clearances — anything a person either "
             "holds or does not, issued by someone else, that an employer can require before "
-            "the job is possible at all. A driving licence ('водительское удостоверение "
-            "категории B'), a nursing registration, a food-handling permit ('санитарная "
+            "the job is possible at all. A driving licence — 'водительское удостоверение "
+            "категории B', and equally the everyday form most CVs actually use, 'права категории А, В' — a nursing registration, a food-handling permit ('санитарная "
             "книжка'), a security clearance, an accountant's attestation, a forklift ticket. "
             "These go to cases[] with type='credential' — NEVER into skills[], which is where "
             "one live CV's driving licence ended up, listed between 'Adobe Photoshop' and "
             "'MS Outlook'. If the CV names the issuer or the category, put it in role.\n"
+            "C1b — And a credential is never low-confidence, so rule F does not apply "
+            "to it. A licence, permit, registration or admission is a fact stated on "
+            "the page: the person either holds it or does not. It is a credential "
+            "wherever the CV happens to mention it — under 'Additional information', "
+            "under a heading about driving, in a line of personal details, or on its "
+            "own. Measured 2026-08-25 over 20 real CVs: 'Права категории А, В', sitting "
+            "under a driving heading, went to hints[] and that person's credential axis "
+            "stayed empty. If the issuer and the date are not stated, leave company and "
+            "period null — an entry with only a role is still an entry, and hints[] is "
+            "for text you could not classify, never for text you classified and then "
+            "hedged on.\n"
             "C1a — And it goes in ONE place. A CV that lists 'аккредитация специалиста' "
             "in its key-skills line and again under certificates is naming one thing twice; "
             "it belongs in cases[] as a credential and must not also appear in skills[].\n"
@@ -657,11 +684,6 @@ class ResumeParser:
             "entry as though they described the work. Drop them; they are not hints either.\n"
             "F — Uncertainty: if something does not clearly belong in one bucket, do not guess — put "
             "it in hints[] instead.\n"
-            "G — role_type_options: these are quick-pick suggestions for a wizard field the candidate "
-            "confirms or overrides by hand, not a scored classification — err toward an empty array over "
-            "a weak guess. Base them only on what the cases/highlights actually show (e.g. built "
-            "something from scratch vs ran/optimized an existing operation — applies the same whether "
-            "that's a codebase, a support queue, or a storefront), never on job title alone.\n"
             "H — Thin-CV domain hook (narrow exception to F): if pitch is null AND no cases[].domain has "
             "a value, still add ONE short domain/industry phrase to hints[] if the CV supports even a "
             "loose read (e.g. 'fintech background', 'early-stage startup experience') — this is a minor "
@@ -713,9 +735,7 @@ class ResumeParser:
             interests=parsed.get("interests") or [],
             hints=parsed.get("hints") or [],
             suggested_queries=parsed.get("suggested_queries") or [],
-            career_profile_suggestions=parsed.get("career_profile_suggestions") or {},
             # wizard-filled only — never parsed from the CV
-            career_profile={},
             logistics={},
             search={},
             rules={},

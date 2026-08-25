@@ -213,7 +213,7 @@ def _append_salary_to_candidate(data_dir: Path, salary_text: str) -> None:
 #
 # LLM-driven only — no interactive Q&A here (that's steps 2/5/6). Owns fields the
 # parser actually derives from the CV: cases, skills, tools, languages, interests,
-# hints, target_market, locale, identity, pitch. Never touches career_profile/
+# hints, target_market, locale, identity, pitch. Never touches
 # logistics/search/rules — those are wizard-filled only, never CV content — and
 # are preserved verbatim from an existing candidate.json if one exists.
 
@@ -239,7 +239,7 @@ def _require_candidate(data_dir: Path) -> ResumeData | None:
         print(f"⚠  candidate.json doesn't match the expected schema ({e}) — "
               f"re-run Step 1, or fix the file by hand.")
         return None
-    expected_types = {"identity": dict, "career_profile": dict, "logistics": dict,
+    expected_types = {"identity": dict, "logistics": dict,
                        "search": dict, "rules": dict, "cases": list, "skills": list,
                        "tools": list, "languages": list, "interests": list,
                        "suggested_queries": list, "hints": list}
@@ -303,7 +303,7 @@ def step_1_resume(resume_path: Path | None = None) -> ResumeData | None:
 
     existing = _read_candidate_json(CONFIG.data_dir)
     if existing:
-        preserved = [k for k in ("career_profile", "logistics", "search", "rules") if existing.get(k)]
+        preserved = [k for k in ("logistics", "search", "rules") if existing.get(k)]
         for key in preserved:
             setattr(data, key, existing[key])
         if preserved:
@@ -476,13 +476,16 @@ def step_5_skills() -> bool:
             langs.append({"lang": lang.strip(), "level": level.strip() or None, "note": None})
         data.languages = langs
 
-    print("\n🎯 Career self-profile (shapes scoring and cover letter angle — Enter to keep current):")
-    cp = dict(data.career_profile or {})
-    role_examples = ["builder", "operator", "strategic", "ops", "head"]
-    cp["role_type"] = ask(f"Role type (examples: {'/'.join(role_examples)}, or your own)", cp.get("role_type") or "") or None
-    cp["edge"] = ask("Your edge vs other candidates in 1 sentence", cp.get("edge") or "") or None
-    cp["aspiration"] = ask("Direction you want to move toward (optional)", cp.get("aspiration") or "") or None
-    data.career_profile = cp
+    # A "career self-profile" block asked for role_type / edge / aspiration here
+    # until 2026-08-25. All three are retired: they were the human layer, the scoring
+    # rebuild took it out of scope on a measurement, and the schema no longer has a
+    # slot for them. What the block claimed to do — "shapes scoring and cover letter
+    # angle" — is done by the document's first heading and by `pitch`, both of which
+    # this wizard already collects.
+    print("\n💬 How you introduce yourself (two or three lines, Enter to keep current):")
+    print("   Read by the cover letter and by form answers. Never by scoring — the")
+    print("   scorer judges evidence, and this is a claim.")
+    data.pitch = ask("Your introduction", data.pitch or "") or None
 
     _write_candidate(CONFIG.data_dir, data)
 

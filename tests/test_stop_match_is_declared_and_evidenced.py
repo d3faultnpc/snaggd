@@ -159,6 +159,50 @@ check("but a quoted posting still blocks even when the rest of the answer is thi
       _r["stop_match"] == "example_category")
 
 
+# ── A name on the list is not a category, and is checked differently ─────────
+# Names started reaching this tier on 2026-08-25, when one wizard field began
+# feeding both stop tiers — a person refusing work does not sort their refusals by
+# matching mechanism, so the wizard stopped asking them to.
+#
+# Everything above was built and measured for CATEGORIES, and a name breaks one of
+# its premises: "a quote from the posting supports itself" holds for a kind of
+# business (the quote has to describe the business) and fails for a name (a posting
+# is full of other companies' names). Measured live twice on five synthetic
+# postings; the run that produced these rules blocked a grocery chain called
+# «Монетка» for a stop entry «Монеткин», quoting its own name as the evidence.
+print("\nAn employer block is checked against the name it claims:")
+
+_named = _agent_declaring("example_company", "example_category")
+
+_r = _verdict(_named, stop_match="example_company", stop_kind="employer",
+              stop_basis="text", stop_evidence="Компания «Example_Company» приглашает")
+check("a quote that contains the name blocks, case and guillemets ignored",
+      _r["stop_match"] == "example_company")
+
+_r = _verdict(_named, stop_match="example_company", stop_kind="employer",
+              stop_basis="text", stop_evidence="«Example_Cmpny» приглашает")
+check("a quote naming a DIFFERENT, similar company does not block",
+      _r["stop_match"] is None)
+check("and the refusal says which rule refused it",
+      "quote the name it blocks on" in ((_r.get("stop_suppressed") or {}).get("why") or ""))
+
+# The half that must NOT change. A category is matched by meaning, so wording that
+# never contains the word is exactly how the semantic tier earns its keep — demanding
+# containment there would break it.
+_r = _verdict(_named, stop_match="example_category", stop_kind="category",
+              stop_basis="text", stop_evidence="a phrase that never says the word")
+check("a category still blocks on wording that does not contain it",
+      _r["stop_match"] == "example_category")
+
+# An answer that does not say which judgement it made cannot be checked, so it is
+# treated as the unguarded case it currently is — recorded here as the known gap
+# rather than asserted as correct.
+_r = _verdict(_named, stop_match="example_company",
+              stop_basis="text", stop_evidence="«Example_Cmpny» приглашает")
+check("an answer omitting stop_kind falls through to the category path (known gap)",
+      _r["stop_match"] == "example_company")
+
+
 # ── The prompt no longer teaches the mistake ─────────────────────────────────
 print("\nThe prompt no longer teaches recognition by name:")
 _prompt = (_REPO_ROOT / "prompts" / "match_scoring.md").read_text(encoding="utf-8")
@@ -177,6 +221,10 @@ check("contradicting your own signals is told to stop the block",
       "contradict the category you" in _prompt)
 check("the answer shape asks for the basis and the evidence",
       '"stop_basis": null' in _prompt and '"stop_evidence": null' in _prompt)
+check("and asks which of the two judgements was made",
+      '"stop_kind": null' in _prompt)
+check("the prompt tells the model a client is not the employer",
+      "AMONG its clients" in _prompt)
 
 
 # ── The record keeps the basis, or the review cannot happen twice ────────────

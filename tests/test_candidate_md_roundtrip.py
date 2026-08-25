@@ -35,6 +35,7 @@ hand_written_key: survives
 edge: designs systems from inside the domain
 aspiration: move deeper into agentic product work
 not_looking_for: process_management, pmm, outsource
+stop_categories: alpha, beta
 
 ## Relocation & Work Format
 relocation: yes
@@ -123,7 +124,36 @@ def run():
           and parsed["identity"]["role"] == "Fintech PM")
     check("contacts come back, unlabelled again",
           parsed["identity"]["contacts"] == ["someone@example.com", "https://t.me/example"])
-    check("Career Profile comes back", parsed["career_profile"]["role_type"] == "builder")
+    # `Career Profile` was one section holding five keys of four different natures.
+    # Split 2026-08-25 into the two kinds of refusal that were left once the human
+    # layer went (role_type / edge / aspiration are retired, not moved), because the
+    # two have different readerships: constraints are addressed to nobody and reach
+    # the scorer as explicit data, preferences reach the letter writer only.
+    check("a retired key does not come back, and does not get rehomed either",
+          "career_profile" not in parsed
+          and "role_type" not in (parsed.get("rules") or {}))
+    check("the hard refusals come back as rules.stop_categories",
+          (parsed.get("rules") or {}).get("stop_categories") is not None)
+
+    # ── A stray key in Identity is not somebody's elevator pitch ──────────
+    # `pitch` is read as "prose in Identity", which until 2026-08-25 meant "anything
+    # here that is not a known key AND is longer than one word". A `key: value` line
+    # is longer than one word, so `role: Product Manager` became the pitch — and the
+    # pitch is read by the letter writer and by form answers. Live profile `pm`
+    # carried four such strays (role, experience_years, current_company, domain) as
+    # its own introduction.
+    #
+    # The single-token test has to come first, because a URL has a colon in it and
+    # matches the key pattern with `https` as its key. Ordering it the other way
+    # stopped unrecognised contacts being read as contacts at all — caught here by
+    # test_canonical_form_over_corpus, which is why both directions are pinned.
+    _strays = parse_candidate_md(
+        "# X\n\n## Identity\nname: Ivan\nrole: PM\nexperience_years: 5\n"
+        "https://example.com/profile\nReal prose about a person.\n")
+    check("a keyed line this section does not own never becomes the pitch",
+          _strays.get("pitch") == "Real prose about a person.")
+    check("and a URL is still a contact, colon and all",
+          _strays["identity"]["contacts"] == ["https://example.com/profile"])
     check("not_looking_for comes back as rules.penalize — the field the wizard shows",
           parsed["rules"]["penalize"] == ["process_management", "pmm", "outsource"])
     check("work_format comes back", parsed["logistics"]["work_format"] == "Hybrid")
@@ -366,6 +396,92 @@ def run():
                 "responsibilities": ["owned the roadmap"]}])
     check("a CIS employment entry still gets the heading",
           "Zone of Responsibility" in ResumeParser(None).to_md(cis))
+
+    # ── A hand edit sticks, including a deletion ──────────────────────────
+    # The wizard opens on merge_over_json(candidate.md, candidate.json). Until
+    # 2026-08-25 the JSON "filled a section the markdown does not have at all",
+    # which meant a section deleted by hand came straight back on the next wizard
+    # open and was written to disk again on the next save. The person could not tell
+    # which of their edits would survive — worse than losing one edit, because it
+    # makes the whole file untrustworthy, and it is exactly why the user stopped
+    # editing his own profile by hand.
+    #
+    # The JSON now contributes only what candidate.md CANNOT carry. That is a
+    # property of the format, not a list of keys we happen to consider legacy — the
+    # test [[feedback_canonicalise_dont_preserve]] applies: a solution needing a list
+    # of exceptions is the wrong solution.
+    from onboarding.md_parse import merge_over_json
+    _edited = "# бариста\n\n## Identity\nname: Ivan\n\n## Skills\nskills: кофе\n"
+    _saved = {
+        "schema_version": "1.0", "locale": "ru",
+        "interests": ["a hobby the person deleted"],
+        "identity": {"name": "Old Name", "location": "a city the person deleted"},
+        "search": {"queries": ["a search the file cannot hold"], "salary": "deleted"},
+        "rules": {"stop": ["a company, from filters.json"], "stop_categories": ["deleted"]},
+    }
+    _open = merge_over_json(_edited, _saved)
+    check("a section deleted by hand does not come back from the wizard's copy",
+          "interests" not in _open)
+    check("nor does a key deleted from a section that still exists",
+          _open["identity"].get("location") is None
+          and _open["search"].get("salary") is None
+          and (_open.get("rules") or {}).get("stop_categories") is None)
+    check("but what candidate.md cannot express is still carried",
+          _open["search"]["queries"] == ["a search the file cannot hold"]
+          and _open["rules"]["stop"] == ["a company, from filters.json"]
+          and _open["schema_version"] == "1.0")
+
+    # ── The open vocabulary is open in every script ───────────────────────
+    # `## Languages` is the one section the frame lets name its own keys, because a
+    # language is called whatever it is called. The reader applied the ASCII key
+    # pattern to it anyway, so `Русский: Родной` matched nothing and the WHOLE
+    # section vanished on the way back in.
+    #
+    # Found by the frame's own idempotence invariant over 20 real CVs on 2026-08-25:
+    # the first save wrote the section and the second lost it, in 19 documents out of
+    # 20. Invisible until then because every profile it had been measured on wrote
+    # language names in Latin. On a product whose users write their CVs in Russian it
+    # silently emptied the section — and the SCORER reads Languages, where for some
+    # jobs it is the requirement.
+    _cyr = parse_candidate_md(
+        "# X\n\n## Languages\nРусский: Родной\nАнглийский: С1 (Продвинутый)\nenglish: B2\n")
+    check("a language named in Cyrillic survives the read",
+          [l["lang"] for l in _cyr["languages"]] == ["Русский", "Английский", "english"])
+    check("and its level and note are still separated",
+          _cyr["languages"][1]["level"] == "С1" and _cyr["languages"][1]["note"] == "Продвинутый")
+
+    # The narrowness is the point: widening the key pattern everywhere would make any
+    # Russian prose line with a colon in it read as a slot.
+    _prose = parse_candidate_md(
+        "# X\n\n## Identity\nname: Ivan\nОпыт работы: пять лет в отрасли\n")
+    check("a prose line with a colon elsewhere is still prose, not a key",
+          _prose.get("pitch") == "Опыт работы: пять лет в отрасли")
+
+    # ── A case nothing names is still a case ──────────────────────────────
+    # The renderer writes a BARE `###` when a case has no company, role or period —
+    # deliberately, because "content that does not exist is not written". The reader
+    # looked for `"### "` WITH the space, so it never saw that line as a boundary.
+    #
+    # The failure was not that the entry was lost. Its lines were absorbed into the
+    # PREVIOUS case, whose url and context they then overwrote: two entries became
+    # one wrong one, and the profile lost a project while gaining a false fact about
+    # a job. Found on the first profile created through the wizard after the frame
+    # rework — a side project with a link and a description and no employer, which is
+    # the ordinary shape of a side project.
+    _headless = parse_candidate_md(
+        "# X\n\n## Work Experience\n\n### Acme | Engineer | 2020\n"
+        "url: https://acme.example\nContext: the job\n\n"
+        "###\nurl: https://side.example\nContext: the side project\n")
+    _cases = _headless.get("cases") or []
+    check(f"a bare ### opens its own case ({len(_cases)} found)", len(_cases) == 2)
+    check("and does not overwrite the case above it",
+          len(_cases) == 2
+          and _cases[0].get("url") == "https://acme.example"
+          and _cases[1].get("url") == "https://side.example")
+    check("a #### inside a case is still NOT a case boundary",
+          len(parse_candidate_md(
+              "# X\n\n## Work Experience\n\n### Acme | Engineer | 2020\n"
+              "####\nlabel: a highlight\n- a result\n").get("cases") or []) == 1)
 
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")

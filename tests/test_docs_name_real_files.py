@@ -14,6 +14,7 @@ CHANGELOG.md is exempt and must stay exempt — it records what was true when it
 written, and rewriting history to match today is how a changelog stops being one.
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,14 +41,35 @@ for py in list(_ROOT.rglob("*.py")):
 
 # Docs that describe the present. CHANGELOG records the past on purpose.
 _EXEMPT = {"CHANGELOG.md"}
-# Relative to the root, always. Computed on the absolute path this excluded every
-# file in the repository, because the checkout itself sits under a directory called
-# `worktrees` — and the guard passed on an empty set, which is why "is there anything
-# to check" is the first assertion here rather than an afterthought.
-_docs = [p for p in _ROOT.rglob("*.md")
-         if not any(part in (".git", "venv", "node_modules", "working-notes")
-                    for part in p.relative_to(_ROOT).parts)
-         and p.name not in _EXEMPT]
+# The documents this REPOSITORY carries, asked of git rather than of the filesystem.
+#
+# Until 2026-08-25 this walked the tree with rglob and an exclusion list, and the two
+# things it swept up made the local answer differ from CI's without either being wrong:
+#
+#   · gitignored local files — a three-month-old `data/README.md` describing the flat
+#     pre-profile era, and DEVLOG.md. Neither is shipped, neither is in CI, so the
+#     test failed on one machine and passed on the build. A claim this repository
+#     does not carry is not a claim this repository makes.
+#   · nested worktrees under .claude/worktrees — another checkout of this same repo at
+#     another commit, so the test was reporting a different branch's docs as this
+#     branch's ghosts. Same class as the corpus test reading debug_screenshots: the
+#     instrument's scope had grown to include something that is not the product.
+#
+# Asking git also means the exclusion list stops being a list to maintain: .gitignore
+# already is that list, and it is the one the build obeys.
+_ls = subprocess.run(["git", "-C", str(_ROOT), "ls-files", "-z", "*.md"],
+                     capture_output=True, text=True)
+if _ls.returncode != 0:
+    print("  ❌ cannot ask git what this repository carries — this test needs a checkout")
+    sys.exit(1)
+# `.exists()` because `git ls-files` lists what the INDEX holds, and a file deleted
+# from the working tree is still in it until the deletion is staged. A document that
+# is not on disk makes no claim about anything; without this the test crashed on the
+# first commit that removed a prompt.
+_docs = [d for d in (_ROOT / p for p in _ls.stdout.split("\0") if p)
+         if d.name not in _EXEMPT
+         and "working-notes" not in d.relative_to(_ROOT).parts
+         and d.exists()]
 
 check(f"the code names profile files, so there is something to check against "
       f"({len(_code_named)} found)", len(_code_named) >= 5)

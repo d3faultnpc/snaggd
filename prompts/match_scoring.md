@@ -7,7 +7,8 @@ answered every question and returned one number, changing anything moved everyth
 What you are given
 
 CANDIDATE PROFILE opens with the person's own professional identity as its first
-heading — "barista", "dentist", "fintech PM". That line is the frame for reading
+heading — two to four words, the way a person answers "what do you do?" rather than
+a job advert's title. That line is the frame for reading
 everything under it. It is not a preference or a goal: it is what this person calls
 themselves on the document employers read. Everything below it is evidence belonging
 to that identity.
@@ -70,7 +71,7 @@ part that worked while the grade is about the part that did not.
 For every axis, first answer a question about the POSTING ALONE: did this posting
 raise this axis at all? `asked` is true only if the posting says something this axis
 is about. It is not about the profile, and nothing in the profile can make it true —
-a candidate's unfinished law degree does not mean the posting asked for a degree.
+an unfinished degree in the profile does not mean the posting asked for a degree.
 
 Answer it before grading, because the two are different questions and were being
 answered as one. When `asked` is false the grade is `neutral`, and the code enforces
@@ -121,19 +122,24 @@ the role this posting is for. THE ROLE ONLY.
 
 Industry, product type and domain are NOT part of this. They are already accounted
 for on the experience axis, and counting them twice is how a candidate can be
-demoted for the same distance in two places. A product manager at a bank and a
-product manager at a game studio hold the SAME role; a nurse in a hospital and a
-nurse on an oil rig hold the same role. Change the industry and the answer here does
-not move.
+demoted for the same distance in two places. One trade practised in two industries is
+one role: the same work, the same training, the same thing done all day, with a
+different sign over the door. Change the industry and the answer here does not move.
+Ask what the person DOES, then ask what the posting wants DONE, and compare only
+those two.
 
 One value, and only two exist:
 
-- same — the same profession. A step up or down inside it is still the same
-  profession: product manager and product owner, junior and senior of one craft,
-  head of support and support lead.
+- same — the same profession. Seniority is not a profession: rising within a trade
+  is still that trade, and so are the duties that arrive with the rise. Someone who
+  now plans the work, orders the supplies, sets the standard or runs the team that
+  does the job STILL HOLDS THAT JOB — they hold it senior. The test is what the work
+  is about, not how much of it is hands-on. Two names for one job are also `same`.
 - different — a genuinely different profession, of the kind a person would have to
-  change careers to hold: a barista posting against a product manager, a product
-  manager posting against a dentist, a PRODUCTION manager against a PRODUCT manager.
+  change careers to hold — retrain, requalify, or start again at the bottom.
+  Beware the pair whose names differ by one word and whose work has nothing in
+  common; job titles are not a reliable guide to what the job is, and two roles can
+  read almost identically and require entirely different people.
 
 When it could plausibly be either, it is `same`. The value that costs something has
 to be the one you are sure of.
@@ -170,11 +176,45 @@ answer must say which kind:
 - "company_knowledge" — the text does not say it, but you know this employer's
   business is in that category. State the fact in stop_evidence.
 
-Block only when the category is the employer's PRIMARY domain, as defined above.
-What the employer's business IS, not what its product deals with. A compliance team,
-a regulator, a bank, a research group or a newsroom whose subject matter is
-<CATEGORY> is not in <CATEGORY> — blocking those takes an opportunity away from
-someone who would have wanted it, and they never find out it happened.
+An entry on that list is one of two things, and they are judged differently.
+
+A KIND of business — <CATEGORY>. Block only when the kind is the employer's PRIMARY
+domain, as defined above. What the employer's business IS, not what its product deals
+with. A compliance team, a regulator, a bank, a research group or a newsroom whose
+subject matter is <CATEGORY> is not in <CATEGORY> — blocking those takes an
+opportunity away from someone who would have wanted it, and they never find out it
+happened.
+
+A NAMED employer — <EMPLOYER>. Here the question is identity, not domain, and there
+is exactly one question to answer: **is the party doing the hiring <EMPLOYER>?**
+
+Yes — including the same organisation under a different spelling, transliteration or
+legal form, and a subsidiary trading under it. When the posting states the hiring
+company and that company is <EMPLOYER>, that is stop_basis "text": quote the naming
+phrase. Do not reach for company_knowledge to establish something the posting has
+already said out loud.
+
+No — for every other appearance of the name in the posting. A posting names companies
+for many reasons, and only one of them is "this is who you would work for". Its
+clients, its customers, its partners, its vendors, its integrations, its competitors,
+the tools it buys, the case studies it brags about: none of these make the employer
+<EMPLOYER>, and all of them are stop_match null. If the posting says the employer
+SERVES <EMPLOYER>, works WITH <EMPLOYER>, or counts <EMPLOYER> AMONG its clients, the
+employer is somebody else and the answer is null. Read who is hiring before you read
+which names appear.
+
+And a name that merely resembles <EMPLOYER> is not evidence of anything. Companies
+with similar names are usually unrelated, and that is where this goes wrong most
+easily.
+
+For a name, the company_knowledge basis means you recognise the hiring organisation
+itself — not that its name sounds like something.
+
+Say which of the two judgements you used, in `stop_kind`: "category" when you matched
+a kind of business, "employer" when you matched an identity. It is null whenever
+stop_match is null. The two are checked differently, so an answer that does not say
+which one it made cannot be checked at all — and an "employer" block whose quoted
+evidence does not contain the name itself is discarded rather than trusted.
 
 What is not evidence:
 - A neighbouring field. A domain that shares users, mechanics, vocabulary or
@@ -207,6 +247,7 @@ placeholder verbatim:
   "matched_skills": ["<VERBATIM_ENTRY_FROM_THE_PROFILE_LISTS>"],
   "signals": ["<REAL_TAG_1>", "<REAL_TAG_2>", "<REAL_TAG_3>"],
   "stop_match": null,
+  "stop_kind": null,
   "stop_basis": null,
   "stop_evidence": null
 }

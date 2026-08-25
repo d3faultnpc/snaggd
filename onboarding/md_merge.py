@@ -44,6 +44,7 @@ say about this", and preserving is always the right answer.
 import re
 
 from onboarding.profile_frame import (
+    RETIRED_KEYS,
     DECLARED_SECTIONS, kind_for_heading, section_for_key,
 )
 
@@ -78,7 +79,7 @@ KEYED_SECTIONS = frozenset({
 def _is_evidence(body: list[str]) -> bool:
     """A section holding `### ` blocks. That shape, not the heading's spelling, is
     what makes a section part of the evidence the renderer owns."""
-    return any(line.startswith("### ") for line in body)
+    return any(line.startswith("###") and not line.startswith("####") for line in body)
 
 
 def _key_of(line: str) -> str | None:
@@ -116,6 +117,13 @@ def _dissolve_undeclared(sections: list[tuple[str, list[str]]]) -> list[tuple[st
             if not line.strip():
                 continue
             key = _key_of(line)
+            # A key WE retired is dropped, not rehomed. Without this it would fall
+            # through to the open-vocabulary section — `role_type: hands-on builder`
+            # filed under `## Languages` on the next save of every profile still
+            # carrying it. Dissolving is for a person's own heading; this is our own
+            # deletion, and it has to land as one. See profile_frame.RETIRED_KEYS.
+            if key in RETIRED_KEYS:
+                continue
             # An unkeyed line in a dissolved section has nothing to place it by, and
             # guessing is what this whole design refuses to do. Additional is where
             # loose profile text already lives.

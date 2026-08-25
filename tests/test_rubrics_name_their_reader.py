@@ -54,11 +54,17 @@ _unaddressed = sorted(s for s in _every_section
 check(f"every declared section is named in the map (missing: {_unaddressed or 'none'})",
       not _unaddressed)
 
-# Career Profile is the one addressed to nobody today, and it has to be visibly
-# deliberate rather than an oversight — the two look identical from a distance and
-# behave oppositely.
+# Constraints is the one addressed to nobody, and it has to be visibly deliberate
+# rather than an oversight — the two look identical from a distance and behave
+# oppositely. (It was `Career Profile` until 2026-08-25, which held five keys of four
+# natures; the three that were "what I want to be" are retired, and what was left
+# split by readership into Constraints and Preferences.)
+#
+# Nobody, and not by accident: the scorer is handed the list explicitly by llm_agent,
+# because a vocabulary an answer is validated against is data the call needs rather
+# than a side effect of what projection happened to keep.
 check("a section addressed to nobody says so explicitly",
-      SECTION_READERS.get("Career Profile") == ())
+      SECTION_READERS.get("Constraints") == ())
 
 _unknown = sorted(s for s in SECTION_READERS if s not in _every_section)
 check(f"and no reader is declared for a section the frame does not have "
@@ -73,13 +79,38 @@ check(f"every reader is a real kind of call (invented: {_bad_kinds or 'none'})",
 # ── The declaration has to mean something ────────────────────────────────────
 print("\nThe map says something, rather than listing everyone everywhere:")
 
-# If every section were readable by every call, the map would be decoration. The
-# four below are the ones an employer's form asks about and capability does not
-# depend on — they are the reason the split exists at all.
-_answerer_only = ("Desired Salary", "Relocation & Work Format", "Identity")
-for _section in _answerer_only:
-    check(f"{_section} is for answering questions, not for scoring capability",
-          readers_of(_section) == ("answer",))
+# If every section were readable by every call, the map would be decoration. Since
+# 2026-08-25 the map has TWO readerships rather than three (the user's rule: the
+# letter writer and the form answerer see everything declared; the scorer sees hard
+# facts and, explicitly, not the salary). So what the map has to say is no longer
+# "one section per caller" — it is which sections the SCORER is kept away from.
+#
+# These are the ones an employer asks about and capability does not depend on. They
+# are the reason the projection exists at all: judging whether a person can do a job
+# while holding their salary range and relocation preference is the coupling the
+# scoring rebuild removed.
+_not_for_scoring = ("Desired Salary", "Relocation & Work Format", "Identity", "Additional")
+for _section in _not_for_scoring:
+    check(f"{_section} is kept away from scoring capability",
+          "score" not in readers_of(_section))
+    # And the other half of the same statement: withheld from the scorer is not the
+    # same as withheld from everyone. The letter writer was not being given the
+    # NAME of the person it writes for, and nobody had noticed, because the flag
+    # that enforces this map is off.
+    check(f"...and still reaches the calls that write to an employer",
+          set(readers_of(_section)) == {"cover", "answer"})
+
+# The two exceptions, and they are exceptions for one reason: what a person refuses
+# is not something to volunteer to an employer.
+check("a hard refusal is addressed to nobody", readers_of("Constraints") == ())
+# Corrected the same day it was written. The first version gave this to `cover`
+# alone, splitting by CALL TYPE — but `fill_form` is one call that answers short
+# fields AND writes the cover letter when a form has one glued among them, so a
+# standalone letter avoided unwanted work and the same letter inside a form did not.
+# What to WRITE is a prompt rule (prompts/form_fill.md carries it); a projection can
+# only decide what is KNOWN.
+check("a soft one reaches everything that writes to an employer",
+      set(readers_of("Preferences")) == {"cover", "answer"})
 
 # Languages left that list on 2026-08-22. It was there because the frame calls it
 # the open-vocabulary section, not because a language is unrelated to capability —

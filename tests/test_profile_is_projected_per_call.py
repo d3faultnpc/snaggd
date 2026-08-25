@@ -35,12 +35,17 @@ def check(label, condition):
 
 _PROFILE = """# A person, in one line
 
-## Career Profile
-role_type: builder
+## Constraints
+stop_categories: a_category, A Company Name
+
+## Preferences
 not_looking_for: not this kind of work
 
 ## Skills
 skills: one, two
+
+## Tools
+tools: a_tool, another
 
 ## Desired Salary
 default: a number
@@ -84,9 +89,12 @@ check("but it DOES read languages — a language is a requirement a posting stat
       "Withholding it was this map's sharpest defect: 11 of 13 live profiles "
       "carry languages and the scoring prompt named them zero times",
       "Languages" in _headings(_score))
-check("and it no longer reads what the person wants — role_type, edge and "
-      "aspiration are out of scope while the scorer is rebuilt on evidence",
-      "Career Profile" not in _headings(_score))
+# The refusals. The scorer gets the hard list from llm_agent explicitly (a vocabulary
+# an answer is validated against is data the call needs, not a side effect of what the
+# projection kept), so the section itself has no reader at all — and the soft one is
+# the letter writer's alone.
+check("the scorer reads neither kind of refusal from the document",
+      "Constraints" not in _headings(_score) and "Preferences" not in _headings(_score))
 
 _answer = project_for(_PROFILE, "answer")
 for _needed in ("Desired Salary", "Relocation & Work Format", "Languages", "Identity"):
@@ -94,8 +102,26 @@ for _needed in ("Desired Salary", "Relocation & Work Format", "Languages", "Iden
           _needed in _headings(_answer))
 check("and skills, because 'list your key skills' is an ordinary question",
       "Skills" in _headings(_answer))
-check("but not the refusals — a form answer to an employer is not where those go",
-      "not_looking_for" not in _answer)
+# The HARD list stays out of every call that writes to an employer. The soft one
+# does not: `fill_form` writes cover letters too, and it needs the same context the
+# standalone writer has. Not saying it out loud is prompts/form_fill.md's job.
+check("the hard list reaches no writer, in either shape",
+      "stop_categories" not in _answer)
+check("the soft one does, because this call also writes letters",
+      "not_looking_for" in _answer)
+
+# The half that changed on 2026-08-25: the letter writer used to be given only Skills,
+# Additional and the evidence — not the stack, not the languages, not the NAME of the
+# person it writes for. Nobody had noticed, because the flag that enforces this map is
+# off and the writer was quietly receiving the whole file.
+_cover = project_for(_PROFILE, "cover")
+for _needed in ("Skills", "Tools", "Languages", "Identity"):
+    check(f"the letter writer reads {_needed} — it writes to an employer on their behalf",
+          _needed in _headings(_cover))
+check("and the soft refusal, which is what stops it pitching unwanted work",
+      "not_looking_for" in _cover)
+check("but never the hard list — that is a refusal, not a selling point",
+      "stop_categories" not in _cover)
 
 
 # ── Evidence belongs to everyone ─────────────────────────────────────────────
@@ -134,7 +160,7 @@ with redirect_stdout(StringIO()):
     _agent = LLMAgent(data_dir=_d)
     _a, _b = _agent._system("score"), _agent._system("answer_question")
 check("with the switch off the answerer still reads the whole file",
-      "Desired Salary" in _b and "Career Profile" in _b)
+      "Desired Salary" in _b and "Constraints" in _b)
 check("but the scorer projects either way — it is not an option there, and a "
       "scorer measured with the whole profile is not the scorer that ships",
       _a != _b and "Desired Salary" not in _a)

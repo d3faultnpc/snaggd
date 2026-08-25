@@ -37,6 +37,23 @@ import re
 from onboarding.profile_frame import kind_for_heading
 
 _KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$")
+# The open-vocabulary section names its own keys, and a language is called whatever it
+# is called — in whatever script it is called it in. `_KEY_RE` is ASCII by design,
+# because every key the frame declares is one of ours and ASCII; applying it to
+# Languages meant `Русский: Родной` matched nothing and the whole section was dropped
+# on the way back in.
+#
+# Found 2026-08-25 by the frame's own idempotence invariant, over 20 real CVs: the
+# first save wrote the section and the second one lost it, 19 documents out of 20.
+# It had been invisible because the profiles it was measured on all wrote language
+# names in Latin. On a product whose users write their CVs in Russian, this silently
+# removed the languages from every profile — and Languages is read by the SCORER,
+# where for some jobs it is the requirement.
+#
+# Deliberately narrow: this pattern is used for Languages and nowhere else. Widening
+# `_KEY_RE` itself would make any Russian prose line with a colon in it read as a key
+# — "Опыт работы: 5 лет" in a hand-written Identity section would become a slot.
+_OPEN_KEY_RE = re.compile(r"^([^\s:][^:]*):\s*(.*)$")
 _EMPTY_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*:\s*$")
 
 # `_typed_contact_line()`'s labels, inverted. Anything else in the Identity
@@ -46,8 +63,15 @@ _CONTACT_KEYS = {"telegram", "github", "linkedin", "email", "phone"}
 # Sections that are prose or key/value rather than evidence. A heading outside
 # both this set and the frame is a person's own heading over `###` blocks, and
 # becomes evidence of kind `other` — captured, not guessed at, not lost.
+# `Career Profile` is kept in this set after being retired as a heading (2026-08-25):
+# a profile written before the split still carries it, and its lines are keys we still
+# read. Listing it here is what stops those lines being mistaken for evidence of kind
+# `other` on the way in — the keys themselves are placed by KEY_OWNERS on the way out,
+# so stop_categories lands in Constraints and not_looking_for in Preferences without a
+# rule of their own.
 _NON_EVIDENCE_SECTIONS = frozenset({
-    "Identity", "Career Profile", "Relocation & Work Format",
+    "Identity", "Constraints", "Preferences", "Career Profile",
+    "Relocation & Work Format",
     "Desired Salary", "Skills", "Tools", "Languages", "Additional",
 })
 
@@ -106,7 +130,18 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         line = raw.strip()
         if not line:
             continue
-        if line.startswith("### "):
+        # A case boundary is the `###` itself, with or without text after it.
+        #
+        # `startswith("### ")` — with the space — until 2026-08-25, while the renderer writes a
+        # BARE `###` for a case nothing names (see resume_parser._render_case: "content that
+        # does not exist is not written"). The two disagreed, and the failure was not that the
+        # headless case was lost: it was silently absorbed into the PREVIOUS case, whose url
+        # and context it then overwrote. Two entries became one wrong one.
+        #
+        # Found on the first profile created through the wizard after the frame rework, by the
+        # corpus test's own round-trip check — a project entry with a url and a description and
+        # no company, role or period, which is the ordinary shape of a side project.
+        if line.startswith("###") and not line.startswith("####"):
             close_highlight()
             parts = [p.strip() for p in line[4:].split("|")]
             keys = ("company", "role", "period", "domain")
@@ -202,11 +237,33 @@ def parse_candidate_md(markdown: str) -> dict:
                 identity["location"] = m.group(2).strip()
             elif m and m.group(1) in _CONTACT_KEYS:
                 contacts.append(m.group(2).strip())
+            elif len(line.split()) == 1:
+                # A single token is a contact — and this test has to come BEFORE the
+                # keyed one below, not after it. A URL contains a colon, so
+                # `https://example.com/x` matches the key pattern with `https` as its
+                # key; ordered the other way it stopped being read as a contact at
+                # all. `_typed_contact_line` passes an unknown contact through
+                # unlabelled by design, which is what makes this the right test.
+                contacts.append(line)
+            elif m:
+                # A `key: value` line whose key this section does not own. It is
+                # NOT prose, so it is not the pitch — and until 2026-08-25 it was:
+                # the test below was word count alone, so `role: Product Manager`
+                # (three words) became someone's elevator pitch. Live profile `pm`
+                # carried four such strays as its pitch — role, experience_years,
+                # current_company, domain — and the letter writer read them as the
+                # person's own introduction.
+                #
+                # Nothing is done with it here on purpose. It stays in the file,
+                # under the heading the person can see, because the renderer does
+                # not emit it and _merge_keyed therefore preserves it. Guessing a
+                # home for it is what the frame refuses to do; making it invisible
+                # by filing it as prose is worse than leaving it visible.
+                pass
             else:
-                # `_typed_contact_line` passes an unrecognized contact through
-                # unlabeled, and the pitch is unlabeled too. A pitch is prose;
-                # a bare contact is a single token.
-                (contacts if len(line.split()) == 1 else pitch_lines).append(line)
+                # Prose, and therefore the pitch: not a key this section owns, not a
+                # key at all, not a single token.
+                pitch_lines.append(line)
     if contacts:
         # The same contact named twice is one contact. It arrives twice on the
         # save after a value the type-sniffer could not label: the sniffer
@@ -220,12 +277,23 @@ def parse_candidate_md(markdown: str) -> dict:
     if pitch_lines:
         data["pitch"] = "\n".join(pitch_lines)
 
-    career = _keyed(sec.get("Career Profile", []))
-    cp = {k: career[k] for k in ("role_type", "edge", "aspiration") if career.get(k)}
-    if cp:
-        data["career_profile"] = cp
-    if career.get("not_looking_for"):
-        data["rules"] = {"penalize": _split_list(career["not_looking_for"])}
+    # Two sections since 2026-08-25, plus the retired heading they were split out of.
+    # Read from wherever the line currently sits: a profile on disk can be in either
+    # shape, and a save canonicalises it. role_type/edge/aspiration are NOT read back
+    # — they were deleted from the frame, so a profile still carrying them loses them
+    # on the next save, which is the migration and is intended.
+    refusals = _keyed(sec.get("Constraints", []))
+    soft = _keyed(sec.get("Preferences", []))
+    legacy = _keyed(sec.get("Career Profile", []))
+    rules = {}
+    for src in (legacy, refusals):
+        if src.get("stop_categories"):
+            rules["stop_categories"] = _split_list(src["stop_categories"])
+    for src in (legacy, soft):
+        if src.get("not_looking_for"):
+            rules["penalize"] = _split_list(src["not_looking_for"])
+    if rules:
+        data["rules"] = rules
 
     logistics = _keyed(sec.get("Relocation & Work Format", []))
     lg = {k: logistics[k] for k in ("relocation", "work_format") if logistics.get(k)}
@@ -266,7 +334,7 @@ def parse_candidate_md(markdown: str) -> dict:
 
     languages = []
     for raw in sec.get("Languages", []):
-        m = _KEY_RE.match(raw.strip())
+        m = _OPEN_KEY_RE.match(raw.strip())
         if not m:
             continue
         value = m.group(2).strip()
@@ -294,7 +362,7 @@ def parse_candidate_md(markdown: str) -> dict:
         # model) can place them later. A prose section with no blocks is left
         # alone — md_merge preserves it verbatim, and inventing structure for it
         # would be the guessing this frame exists to avoid.
-        if any(l.strip().startswith("### ") for l in body):
+        if any(l.strip().startswith("###") and not l.strip().startswith("####") for l in body):
             for case in _parse_cases(body, "other"):
                 case["label"] = heading
                 cases.append(case)
@@ -321,22 +389,60 @@ def parse_candidate_md(markdown: str) -> dict:
     return data
 
 
+# What `candidate.md` genuinely cannot express, and therefore the only things the
+# wizard's saved answers are allowed to contribute when it opens.
+#
+# Declared as a closed list on 2026-08-25, replacing "the JSON fills a section the
+# markdown does not have at all". That sentence was an exception list wearing a rule,
+# and it is how a hand edit got undone: delete a section from the profile, open the
+# wizard, and the JSON put it back — from a copy nothing had updated since the last
+# save. The person could not tell which of their edits would stick, which is a worse
+# failure than losing one, because it makes the whole file untrustworthy.
+#
+# The discriminant is not "which keys are legacy" but "which keys this FORMAT cannot
+# carry". Bookkeeping about the parse, and the two rules that live in filters.json and
+# search_urls.txt, are absent from the markdown because it has nowhere to put them —
+# not because the person removed them.
+_CARRIED_FROM_JSON = frozenset({
+    "schema_version", "locale", "target_market",
+    "source_file", "parsed_at", "hints", "suggested_queries",
+})
+# Same rule one level down, for sections the markdown owns only part of.
+_CARRIED_SUBKEYS = {
+    "search": frozenset({"queries"}),          # search_urls.txt
+    "rules": frozenset({"stop", "min_employer_rating"}),  # filters.json
+}
+
+
 def merge_over_json(markdown: str, candidate_json: dict | None) -> dict:
     """What the wizard should open with.
 
-    The markdown wins wherever it says anything, because it is the profile. The
-    JSON supplies only what the markdown cannot carry — schema_version, locale,
-    target_market, the finer case `type` values — and fills a section the
-    markdown does not have at all.
+    The markdown is the profile, so it wins — including where it is SILENT. A key
+    the markdown no longer states is a key the person removed, and the wizard has to
+    open without it or the next save writes it back.
+
+    The JSON contributes only what the markdown cannot carry (see the two lists
+    above). It is the wizard's saved answers, not a second copy of the profile.
     """
     base = dict(candidate_json or {})
     parsed = parse_candidate_md(markdown)
 
+    out = {k: v for k, v in base.items() if k in _CARRIED_FROM_JSON}
     for key, value in parsed.items():
-        if key in ("identity", "career_profile", "logistics", "search", "rules") and isinstance(base.get(key), dict):
-            merged = dict(base[key])
+        carried = _CARRIED_SUBKEYS.get(key)
+        if carried and isinstance(base.get(key), dict) and isinstance(value, dict):
+            merged = {k: v for k, v in base[key].items() if k in carried}
             merged.update(value)
-            base[key] = merged
+            out[key] = merged
         else:
-            base[key] = value
-    return base
+            out[key] = value
+
+    # A section the markdown says nothing about can still hold a carried key — the
+    # rules live in filters.json, and a profile with no refusals written into
+    # candidate.md may still have a company stop list.
+    for key, carried in _CARRIED_SUBKEYS.items():
+        if key not in out and isinstance(base.get(key), dict):
+            kept = {k: v for k, v in base[key].items() if k in carried}
+            if kept:
+                out[key] = kept
+    return out

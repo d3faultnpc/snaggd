@@ -86,6 +86,10 @@ _expected_llm_agent_module_names = {
     # of a local call, same as max_tokens beside it.
     "_STRUCTURED_TEMPERATURE", "_PROSE_TEMPERATURE", "_CALL_TEMPERATURE",
     "_temperature_for",
+    # Text folding for the employer-name block guard (2026-08-25). Case and
+    # quotation marks, nothing else — a pure string helper with no knowledge of
+    # where the strings came from, which is exactly what this guard permits.
+    "_MATCH_STRIP", "_fold_for_match",
     # GatewayClient: the raw-client interface ResumeParser expects, routed
     # through _chat_completion so the CV parse stops being the one call with a
     # private route. Deliberately transport-agnostic — it knows only that an
@@ -104,14 +108,11 @@ _expected_llm_agent_class_members = {
     # kind of reader it speaks as — local, and about this repo's own prompts;
     # no transport, tier or billing notion travels with it.
     "_CALL_READERS",
-    # Split scoring, added 2026-08-21 behind SNAGGD_SPLIT_SCORING. Two calls
-    # instead of one — read the posting for what it asks, then read the profile
-    # against that list — and the score computed here rather than asked for. All
-    # of it is about this repo's own prompts and its own arithmetic: no
-    # transport, tier or billing concept arrives with any of it, and a standalone
-    # engine benefits from the same split.
-    "_REQUIREMENT_WEIGHTS", "_VERDICT_CREDIT", "_score_from_verdicts",
-    "_requirements_of", "_match_requirements", "score_vacancy_split",
+    # Split scoring lived here from 2026-08-21 to 2026-08-25 — six members behind
+    # SNAGGD_SPLIT_SCORING. Removed as a rejected experiment: stage one, asked to
+    # read a posting with no candidate in front of it, returned "unspecified" 12
+    # times out of 12 and truncated in 11 runs out of 12. See core/llm_agent.py,
+    # where the removal is recorded next to the call that replaced it.
     "_load_profile", "_load_prompt", "_sanitize_score_result", "_is_template_echo", "_parse_json",
     # A block is only as good as its vocabulary and its evidence (2026-08-16):
     # the categories come from the candidate's own profile, and an answer that

@@ -169,8 +169,16 @@ def run():
               "stop_categories: example_category, second_category" in cat_md)
         check("and the engine reads it back, normalised",
               load_stop_filters(cat_dir).categories == ["example_category", "second_category"])
+        # `Career Profile` until 2026-08-25. The section split by readership once the
+        # human layer was retired out of it: the hard refusals went to Constraints,
+        # addressed to nobody, and the soft one to Preferences, addressed to the
+        # letter writer. What this pins is unchanged — ONE section owns the key, so a
+        # hand-written line has exactly one place to land.
         check("the frame owns the key, so a hand-written line lands in one place",
-              KEY_OWNERS.get("stop_categories") == "Career Profile")
+              KEY_OWNERS.get("stop_categories") == "Constraints")
+        check("and the soft refusal is owned separately, because it is read by "
+              "someone else entirely",
+              KEY_OWNERS.get("not_looking_for") == "Preferences")
 
         (cat_dir / "job_preferences.md").write_text(
             "stop_categories:\n  - third_category\n", encoding="utf-8")
