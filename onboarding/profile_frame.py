@@ -473,41 +473,23 @@ NON_SLOT_RECORD_KEYS = ("domain", "url")
 READ_SLOTS = RECORD_SLOTS + ("domain",)
 
 
-def names_place(block: dict) -> bool:
-    """Does this block name a place of its OWN, rather than leaning on the record
-    above it? `Ранее в компании: …` and `Side project: …` name none — they refer
-    to the employer already on the page."""
-    return bool(str((block or {}).get("company") or "").strip())
-
-
-def names_time(block: dict) -> bool:
-    """Does this block name a time of its own? A course with only a year names one;
-    a progression written `Analyst → Senior → Lead` names none."""
-    return bool(str((block or {}).get("period") or "").strip())
-
-
-def is_record(block: dict) -> bool:
-    """The discriminator (2026-08-26, the user's rule, sharpened).
-
-    A block becomes a RECORD (h3) only if it names its own place OR its own time.
-    A block naming neither is not an orphan record — it is content of the record
-    above it: a named group (h4) if it has a name, prose or a bullet if it does not.
-
-    Why `or` and not `and`: 18 of 21 credentials in the corpus name an issuer and
-    no year, and `HTML/CSS. Интерактивный курс | 2020` names a year and no issuer.
-    Both are real records. Requiring both would demote them into their neighbours.
-
-    This does not contradict the extraction prompt's rule A ("a separate entry per
-    role at the same company") — it says which branch of it applies. Roles carrying
-    their own dates each name a time, so each is a record; a bare arrow chain names
-    none, so it stays inside the one record it describes.
-
-    It answers exactly one question — record, or content of a record — at exactly
-    one boundary, h3. Which axis a record lands under is a different question,
-    answered by its kind, and the two must not be merged: merging questions of
-    different natures is how duties came to be read as achievements.
-    """
-    return names_place(block) or names_time(block)
+# A record needs a place of its own or a time of its own — that was the rule, and
+# it had `names_place()`, `names_time()` and `is_record()` here to express it from
+# 2026-08-26 until later the same day, when they were removed unused.
+#
+# Why they went, kept because the reasoning is worth more than the code was: the
+# question they answered — is this block a record, or content of the record above
+# it — cannot be answered from a parsed case. The extraction prompt tells the model
+# to put a project's NAME in `company`, so every named project "names a place" and
+# the discriminator returns True for all of them. Measured on a real CV: five cases,
+# five True, nothing it would have reclassified. What actually places a block is the
+# prompt (rules A and C3), and it does it correctly — a bare progression with no
+# dates stays a line of the entry above, a venture with an organisation, a role and
+# a period becomes employment.
+#
+# An unwired declaration with a test beside it reads like a working rule. This one
+# misled its own author for a day. If the question comes back, it needs a signal the
+# prompt cannot already act on — not this function again.
 
 
 def record_name(block: dict) -> str:

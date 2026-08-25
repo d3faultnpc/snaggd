@@ -74,9 +74,9 @@ SHAPES = [
      "live: 26 of 26 education records carry nothing below h3"),
 ]
 
-# Blocks naming neither a place nor a time. The frame says these are not records —
-# they are content of the record above. Written here as a second case following an
-# anchor, because that is how they arrive in a document.
+# Blocks naming neither a place nor a time. Whether such a block becomes a record is
+# the extraction prompt's call (rules A and C3), not the reader's — but wherever it
+# lands, what it says must still be in the file. That is what these check.
 NON_RECORDS = [
     ("a progression with no dates",
      {"type": "employment", "role": "Analyst → Senior → Lead"},
@@ -157,13 +157,6 @@ def run():
         md = ResumeParser(None).to_md(data, existing_content="")
         back = parse_candidate_md(md)
         return md, back, values_of(back.get("cases") or [])
-
-    print("The discriminator: a block is a record only if it names its own place or time")
-    for name, case, note in NON_RECORDS:
-        check(f"not a record — {name}", not frame.is_record(case))
-    for name, case, note in SHAPES:
-        if case.get("company") or case.get("period"):
-            check(f"is a record — {name}", frame.is_record(case))
 
     print("\nDATA to file to DATA: nothing a shape carries may disappear")
     for name, case, note in SHAPES:
