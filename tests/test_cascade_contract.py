@@ -203,6 +203,24 @@ def run():
     check("the READER still understands the fourth that every profile on disk carries",
           frame.parse_record_name("Acme | PM | 2020 | fintech")[0].get("domain") == "fintech")
 
+    print("\nIndustry reaches the axis that is already told to weigh it")
+    # prompts/match_scoring.md has said since the axis rebuild that "domain distance
+    # lives here" — inside `experience` — and that there is no separate domain
+    # adjustment anywhere. So no new axis, and no prompt change: AXES declares five,
+    # and core/axes.py says calibration needs that set FROZEN.
+    #
+    # What was missing was not the rule but the value's shape. `domain` rode as an
+    # unlabelled fourth segment of a heading, so the model had to infer that the
+    # fourth thing after the pipes meant industry. It is a named key now, and this
+    # pins that it survives the projection each reader gets — the scorer receives
+    # candidate.md as text, so a field it cannot see is a field it cannot weigh.
+    industry = {"type": "employment", "company": "Northwind", "role": "PM",
+                "period": "2022–2026", "domain": "fintech"}
+    md, _, _ = roundtrip([industry])
+    for reader in frame.EVIDENCE_READERS:
+        check(f"{reader} sees the industry, and sees it named",
+              "domain: fintech" in frame.project_for(md, reader))
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0
