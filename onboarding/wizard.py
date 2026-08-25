@@ -86,6 +86,7 @@ if __name__ == "__main__":
         _active_profile = _name
         os.environ["DATA_DIR"] = str(PROFILES_DIR / _active_profile)
 from config import CONFIG
+from onboarding import profile_frame as frame
 from onboarding.profile_frame import KIND_HEADINGS, normalise_kind
 from onboarding.resume_parser import ResumeParser, ResumeData
 from utils.filters import patch_filters_json
@@ -372,24 +373,32 @@ def _edit_case_fields(case: dict) -> dict:
     case["domain"] = ask("Domain/industry (Enter to skip)", case.get("domain") or "") or None
     case["url"] = ask("URL (Enter to skip)", case.get("url") or "") or None
 
-    highlights = list(case.get("highlights") or [])
-    print(f"Current highlights: {len(highlights)}")
-    for h in highlights:
-        print(f"  · {h.get('label') or '(no label)'}: {', '.join(h.get('results') or [])}")
-    if ask("Add a highlight? yes/no", "no").lower().startswith("y"):
+    # Groups, not the `responsibilities` + `highlights` pair this asked about until
+    # 2026-08-26. Editing here has to write the shape profile_frame.groups_of() reads
+    # FIRST, or the edit is silently ignored: a case parsed from a file now carries
+    # `groups`, and the adapter prefers it over the legacy fields — so asking about
+    # highlights and writing them back would have collected the person's answers and
+    # rendered the file without them.
+    groups = frame.groups_of(case)
+    print(f"Current groups: {len(groups)}")
+    for g in groups:
+        name = g["label"] or "(unnamed)"
+        print(f"  · [{g['kind']}] {name}: {', '.join(g['bullets']) or '(no bullets)'}")
+    if ask("Add a group? yes/no", "no").lower().startswith("y"):
         while True:
-            label = ask("  Highlight label (project/initiative name, Enter to finish)")
-            if not label:
+            kind = ask(f"  Kind {'/'.join(frame.GROUP_KINDS)} (Enter to finish)")
+            if not kind:
                 break
-            h_ctx = ask("  Context (1-2 sentences)")
-            results = ask_list("  Metrics/results")
-            highlights.append({"label": label, "context": h_ctx or None, "results": results})
-    case["highlights"] = highlights
-
-    responsibilities = list(case.get("responsibilities") or [])
-    if not ask(f"Keep responsibilities as-is? (currently {len(responsibilities)}) yes/no", "yes").lower().startswith("y"):
-        responsibilities = ask_list("Responsibilities (ongoing duties, no single metric)")
-    case["responsibilities"] = responsibilities
+            label = ask("  What the CV calls this section (Enter if it has no name)")
+            g_ctx = ask("  Context (1-2 sentences)")
+            groups.append({"kind": frame.normalise_group_kind(kind),
+                           "label": label or None, "context": g_ctx or None,
+                           "bullets": ask_list("  Bullets")})
+    case["groups"] = groups
+    # The legacy pair must go, not linger: left in place they would be a second,
+    # staler encoding of the same level sitting next to the one that is read.
+    case.pop("responsibilities", None)
+    case.pop("highlights", None)
 
     return case
 

@@ -37,6 +37,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import onboarding.profile_frame as _frame  # noqa: E402
+
 # Every shape the local corpus was found to hold on 2026-08-18, with none of its
 # content: an old-form `#### <text>` group, a bulleted `## Skills`, a `####`
 # already in the new form, and the legacy `#### Zone of Responsibility` literal
@@ -85,13 +87,26 @@ OLD_HEADING_RE = re.compile(r"^#### +\S", re.M)
 # kept for the CIS resume convention (decision recorded 2026-08-17). It has to be
 # excluded explicitly rather than by a general rule, which is the whole reason it
 # is worth a named constant here.
+# The property this file protects has not changed: a name invented by the model, or
+# written by the source, must never become a heading — only the frame's own words may
+# sit on an h4 line. What changed on 2026-08-26 is that the frame's words are now
+# DECLARED (profile_frame.GROUP_KINDS) instead of being one hardcoded literal, so this
+# list is derived from the declaration and cannot drift away from it.
+#
+# `#### Zone of Responsibility` is no longer among them, and that is the point rather
+# than a casualty. It was a CIS résumé convention printed into every file regardless of
+# whose résumé it was, and the kind of a group was carried by whether that one English
+# string appeared — so a gate on target_market deleted it and the same bullets became
+# achievements. It converts to `#### duties` on save now, like any other legacy shape
+# this file exists to watch convert.
+FRAME_HEADINGS = {f"#### {kind}" for kind in _frame.GROUP_KINDS}
 KEPT_LITERAL = "#### Zone of Responsibility"
 
 
 def _old_headings(md: str) -> list:
     return [h for h in OLD_HEADING_RE.findall(md) or []
             for h in [h]] and [line for line in md.splitlines()
-                               if line.startswith("#### ") and line.strip() != KEPT_LITERAL]
+                               if line.startswith("#### ") and line.strip() not in FRAME_HEADINGS]
 
 
 def _skills_block(md: str) -> list:
@@ -157,11 +172,16 @@ def run():
 
     check("`#### <text>` does not survive a save",
           not [l for l in saved.splitlines()
-               if l.startswith("#### ") and l.strip() != KEPT_LITERAL])
+               if l.startswith("#### ") and l.strip() not in FRAME_HEADINGS])
     check("…and the group's name is kept, on a `label:` line",
           "label: Storefront MVP" in saved)
-    check(f"…while `{KEPT_LITERAL}` is left alone, as decided",
-          KEPT_LITERAL in saved)
+    # REVERSED 2026-08-26. This asserted that the CIS literal survives a save
+    # "as decided" — the R3 deferral of 2026-08-17, which was restated in three
+    # close notes so it would not read as an oversight. It is closed now, not
+    # deferred again: the literal carried a group's KIND, and a kind a market gate
+    # can delete is not a kind. It converts, and its bullets keep meaning duties.
+    check(f"`{KEPT_LITERAL}` converts to the frame's declared kind",
+          KEPT_LITERAL not in saved and "#### duties" in saved)
     check("`## Skills` holds one `skills:` line, not bullets",
           any(l.startswith("skills:") for l in _skills_block(saved))
           and not any(l.startswith("- ") for l in _skills_block(saved)))
@@ -236,7 +256,7 @@ def run():
                 continue
             check(f"profile #{i}: no `#### <text>` survives",
                   not [l for l in out.splitlines()
-                       if l.startswith("#### ") and l.strip() != KEPT_LITERAL])
+                       if l.startswith("#### ") and l.strip() not in FRAME_HEADINGS])
             check(f"profile #{i}: `## Skills` is a line, not a list",
                   not any(l.startswith("- ") for l in _skills_block(out)))
             # `>=`, not `==`, and the reason is the rule itself: a bullet holding

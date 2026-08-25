@@ -128,14 +128,30 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
     """`### header` blocks, mirroring ResumeParser._render_case()."""
     cases: list[dict] = []
     case: dict | None = None
-    highlight: dict | None = None
-    in_zone = False
+    group: dict | None = None
 
     def close_highlight():
-        nonlocal highlight
-        if case is not None and highlight is not None:
-            case.setdefault("highlights", []).append(highlight)
-        highlight = None
+        """Close the open h4 group onto its record.
+
+        Was `close_highlight`, and kept the name only because the call sites read
+        the same either way. What changed on 2026-08-26 is what it closes: a record
+        used to collect `responsibilities` (a bare list whose kind was implied by a
+        heading the renderer printed) and `highlights` (dicts whose kind was implied
+        by that heading's ABSENCE). One level of the cascade, two encodings, and the
+        discriminant was an English string a market gate could delete. Now every
+        group carries its declared kind and the source's own name for it.
+        """
+        nonlocal group
+        if case is not None and group is not None:
+            if group["bullets"] or group["label"] or group["context"]:
+                case.setdefault("groups", []).append(group)
+        group = None
+
+    def open_group(kind, label=None):
+        nonlocal group
+        close_highlight()
+        group = {"kind": frame.normalise_group_kind(kind), "label": label,
+                 "context": None, "bullets": []}
 
     for raw in body:
         line = raw.strip()
@@ -181,23 +197,24 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         # on a `label:` below it. Read tolerantly, write strictly — one save
         # converts the old shape, so this is one legacy form, not a table of them.
         if line.startswith("####"):
-            label = line[4:].strip()
-            close_highlight()
-            if label == "Zone of Responsibility":
-                in_zone = True
-            else:
-                in_zone = False
-                highlight = {"results": []}
-                if label:
-                    highlight["label"] = label
+            text = line[4:].strip()
+            kind = frame.group_kind_for_heading(text)
+            # Text that is not one of the frame's own words is a file written before
+            # 2026-08-17, when the group's NAME lived on this line. Keep it as the
+            # name — dropping it would lose what the source called the section, which
+            # is the one thing about a group that was never ours to invent.
+            legacy_name = None
+            if text and text.lower() not in frame.GROUP_KINDS and text not in frame.RETIRED_GROUP_HEADINGS:
+                legacy_name = text
+            open_group(kind, legacy_name)
             continue
         if line.startswith("url: "):
             case["url"] = line[5:].strip()
             continue
         if line.startswith("Context: "):
             ctx = line[9:].strip()
-            if highlight is not None:
-                highlight["context"] = ctx
+            if group is not None:
+                group["context"] = ctx
             elif case.get("context"):
                 # Two prose lines at the record's own level. The renderer no longer
                 # writes this shape — a group after the record's prose is bounded
@@ -209,14 +226,14 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
                 case["context"] = ctx
             continue
         keyed = _CASE_KEY_RE.match(line)
-        if keyed and highlight is None and keyed.group(1) in frame.NON_SLOT_RECORD_KEYS:
+        if keyed and group is None and keyed.group(1) in frame.NON_SLOT_RECORD_KEYS:
             case[keyed.group(1)] = keyed.group(2).strip()
             continue
         # The group's name, now that it is content rather than a heading.
-        if keyed and keyed.group(1) == "label" and highlight is not None:
-            highlight["label"] = keyed.group(2).strip()
+        if keyed and keyed.group(1) == "label" and group is not None:
+            group["label"] = keyed.group(2).strip()
             continue
-        if keyed and highlight is None:
+        if keyed and group is None:
             # A prose line a person wrote themselves — `Architecture: …`, `Stack: …`.
             # The schema has one prose slot per case (`context`) and a real profile
             # uses several, so the rest are kept as they were written and rendered
@@ -227,16 +244,15 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         bullet = _BULLET_RE.match(line)
         if bullet:
             item = line[bullet.end():].strip()
-            if in_zone:
-                case.setdefault("responsibilities", []).append(item)
-                continue
-            if highlight is None:
-                # `_render_case` writes no `####` line for a highlight that has no
-                # label, so its results arrive as bare bullets under the `###`
-                # header. Dropping them here lost a whole case's content on a
-                # profile whose bullets were never labelled.
-                highlight = {"results": []}
-            highlight["results"].append(item)
+            if group is None:
+                # Bullets straight under the record, with no `####` above them. Every
+                # group the renderer writes is bounded now, so this is a legacy file
+                # or one edited by hand — and in both the source drew no line between
+                # duties and achievements. `unsorted` says exactly that, which is a
+                # fact about the document rather than a gap in it; guessing a side
+                # here is the same fabrication extraction rule D used to perform.
+                open_group(frame.DEFAULT_GROUP_KIND)
+            group["bullets"].append(item)
             continue
         # The else-branch this loop never had. A body line matching none of the
         # branches above used to fall out of the bottom and disappear — no
@@ -246,7 +262,7 @@ def _parse_cases(body: list[str], case_type) -> list[dict]:
         #
         # Prose is the honest home for it: the record already has a prose level,
         # and a line we could not classify is still something the person wrote.
-        target = highlight if highlight is not None else case
+        target = group if group is not None else case
         target["context"] = f"{target['context']} {line}" if target.get("context") else line
 
     close_highlight()

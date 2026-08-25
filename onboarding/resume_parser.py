@@ -395,11 +395,7 @@ class ResumeParser:
         for heading, cases in evidence_sections(data.cases):
             lines += ["", f"## {heading}"]
             for case in cases:
-                # A zone-of-responsibility block is something employment has. A
-                # certificate or a talk has no ongoing duties.
-                lines += self._render_case(
-                    case, data.target_market,
-                    include_zone=normalise_kind(case.get("type")) == "employment")
+                lines += self._render_case(case)
 
         # ── Tools ─────────────────────────────────────────────────────────
         # `tools:` rather than a bare line: a key is what lets this content be
@@ -427,7 +423,7 @@ class ResumeParser:
 
         return "\n".join(lines).lstrip("\n")
 
-    def _render_case(self, case: dict, target_market: str, include_zone: bool) -> list:
+    def _render_case(self, case: dict) -> list:
         # Built by the frame, in ONE place, so the reader can be built from the same
         # one — profile_frame.record_name / parse_record_name. Two changes landed
         # here on 2026-08-26.
@@ -454,87 +450,36 @@ class ResumeParser:
         if case.get("domain"):
             lines.append(f"domain: {case['domain']}")
 
-        highlights = case.get("highlights") or []
-        responsibilities = case.get("responsibilities") or []
-
-        # Rendered whenever it exists, not only for a case with nothing else. The old
-        # condition silently dropped the prose of any case that also had bullets, which
-        # is the ordinary shape of a hand-written project entry.
         ctx = case.get("context")
-        wrote_case_prose = bool(ctx)
         if ctx:
             lines.append(f"Context: {ctx}")
         for key, value in (case.get("notes") or {}).items():
             lines.append(f"{key}: {value}")
 
-        # The HEADING is an employment convention — an award or a certificate has
-        # no ongoing duties, so it gets no "Zone of Responsibility" line. The
-        # CONTENT is not a convention; it is what the person typed.
+        # Every group is bounded, and every boundary declares what the group IS.
         #
-        # Until 2026-08-18 the two were gated together, so every kind except
-        # employment lost its bullets on save — silently, with no error and no
-        # re-homing. The wizard's tag editor writes into `responsibilities` for
-        # EVERY card regardless of kind (see WizardOverlay's setField), so this
-        # was not a rare shape: found live on an Awards entry whose six bullets
-        # sat in candidate.json and in the mirror, and never reached the file.
+        # What stood here (2026-08-26) was two renderings for one level of the
+        # cascade: `responsibilities` written as bare bullets under an English
+        # heading the frame borrowed from CIS résumé custom, and `highlights`
+        # written as `####` groups whose first one got no boundary at all. The kind
+        # of a group was carried by whether that heading appeared — so a gate on
+        # target_market removed it and the same bullets became achievements, and a
+        # first unnamed group with prose of its own overwrote the record's prose
+        # because nothing separated the two levels.
         #
-        # Unlabelled bullets straight under the entry are already how an unnamed
-        # group is written here, and md_parse reads them back as one — so the
-        # content survives through a path that already exists, and the file grows
-        # no new shape. Round trip pinned in tests/test_candidate_md_roundtrip.py.
-        # The same split again, one gate further out. The comment above describes
-        # heading and content being gated together and fixed — and they still were,
-        # by target_market: a profile reading as western or global lost every
-        # responsibility bullet on save, silently, exactly like the Awards entry did.
-        # Nobody has hit it because all 13 live profiles read as `cis`, which makes it
-        # a bug waiting for the first international CV rather than one that never
-        # fires. The wizard writes into `responsibilities` for a card of any kind, so
-        # there is no shape it cannot reach.
-        #
-        # A heading is a market convention. Bullets are what a person typed.
-        wrote_leading_group = False
-        if responsibilities:
-            # No longer gated on target_market (2026-08-26). That gate decided whether
-            # duties got a boundary at all, and without one the reader attributed the
-            # bullets to a highlight — so the SAME case rendered duties as duties on
-            # `cis` and as ACHIEVEMENTS on `western`. An axis that changes with the
-            # market is not an axis. `include_zone` stays: a certificate has no ongoing
-            # duties, and that is a fact about the KIND, not about where someone applies.
-            if include_zone:
-                lines += ["", "#### Zone of Responsibility"]
-            lines += [f"- {r}" for r in responsibilities]
-            wrote_leading_group = True
-
-        # A group's boundary and a group's name are two different things, and
-        # writing them as one line made the name load-bearing: a group only got a
-        # boundary when the model had named it, so two unnamed groups came back as
-        # one (reproduced: 2 in, 1 out). And the name, invented by the model, was
-        # a heading in a person's own file — the same "string IS the slot" the
-        # frame removed from `##` and never removed from here.
-        #
-        # So: `####` is the boundary and carries nothing; `label:` is the name,
-        # written as content among content, next to `Context:` and `url:`. The
-        # first group needs no separator — bullets straight under the entry
-        # already read back as one unnamed group — but a named one does, because
-        # its `label:` has to attach to a group rather than to the entry.
-        for index, h in enumerate(highlights):
-            label, h_ctx, results = h.get("label"), h.get("context"), (h.get("results") or [])
-            # `wrote_leading_group` matters for the same reason `index > 0` does:
-            # the bullets above already occupy the entry's first unnamed group, so
-            # a first highlight without a label needs a boundary or the two read
-            # back as one group and the next save writes them merged.
-            # `wrote_case_prose` joins the other two for the same reason: the record
-            # has already written a `Context:` at ITS level, and a first unnamed group
-            # writing another one puts two prose lines under one heading. The reader
-            # cannot tell them apart without a boundary, so the second overwrote the
-            # first — reproduced live: snaggd lost the sentence saying what it is.
-            if index > 0 or label or wrote_leading_group or wrote_case_prose:
-                lines += ["", "####"]
-            if label:
-                lines.append(f"label: {label}")
-            if h_ctx:
-                lines.append(f"Context: {h_ctx}")
-            lines += [f"- {r}" for r in results]
+        # Now: profile_frame.groups_of() reads either shape off disk and hands back
+        # one list; group_heading() writes the frame's own word for the kind; the
+        # source's own name for the section rides below as `label:`, content among
+        # content. `include_zone` and `target_market` are gone from this function —
+        # a market may choose the words on a heading, it may not decide whether a
+        # category exists.
+        for group in frame.groups_of(case):
+            lines += ["", frame.group_heading(group["kind"])]
+            if group["label"]:
+                lines.append(f"label: {group['label']}")
+            if group["context"]:
+                lines.append(f"Context: {group['context']}")
+            lines += [f"- {bullet}" for bullet in group["bullets"]]
 
         return lines
 

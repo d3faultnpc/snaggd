@@ -25,6 +25,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import onboarding.profile_frame as _frame  # noqa: E402
+
 # Every shape to_md can emit, including the hand-written keys and headings it has
 # never heard of. Modelled on a real profile.
 PROFILE_MD = """# Fintech PM
@@ -174,11 +176,13 @@ def run():
           work["role"] == "Product Manager" and work["period"] == "2020 — 2026"
           and work["domain"] == "fintech")
     check("its url survives", work["url"] == "https://example.com")
-    check("Zone of Responsibility becomes responsibilities, not a highlight",
-          work["responsibilities"] == ["roadmap", "discovery"])
-    check("a highlight keeps its label, context and results",
-          work["highlights"] == [{"label": "Storefront MVP", "context": "built from zero",
-                                  "results": ["30% conversion lift"]}])
+    check("the CIS heading is read as the declared kind, not as a name",
+          work["groups"][0]["kind"] == "duties"
+          and work["groups"][0]["bullets"] == ["roadmap", "discovery"])
+    check("a named group keeps its kind, its name, its prose and its bullets",
+          work["groups"][1] == {"kind": "achievement", "label": "Storefront MVP",
+                                "context": "built from zero",
+                                "bullets": ["30% conversion lift"]})
     check("education is typed from its heading", by_company["Some University"]["type"] == "education")
     check("a project is typed from its heading", by_company["Side Thing"]["type"] == "project")
     # The distinction three headings could not hold: a diploma and a requalification
@@ -278,7 +282,7 @@ def run():
     unnamed = ResumeParser(None).to_md(ResumeData(
         identity={"name": "Test Person"},
         cases=[{"type": "project",
-                "highlights": [{"label": None, "context": "Did a thing.", "results": []}]}],
+                "groups": [{"kind": "achievement", "context": "Did a thing."}]}],
     ))
     check("an unnamed entry renders a bare heading, not a note to the reader",
           "###" in unnamed and "MISSING" not in unnamed)
@@ -299,30 +303,45 @@ def run():
         md = ResumeParser(None).to_md(ResumeData(
             identity={"name": "Test Person"}, cases=cases))
         back = parse_candidate_md(md)["cases"][0]
-        return md, (back.get("highlights") or [])
+        return md, (back.get("groups") or [])
 
     _two = [{"type": "employment", "company": "Example Corp", "role": "PM",
-             "highlights": [{"results": ["a", "b"]}, {"results": ["c"]}]}]
+             "groups": [{"kind": "achievement", "bullets": ["a", "b"]},
+                        {"kind": "achievement", "bullets": ["c"]}]}]
     _md, _hl = _groups(_two)
     check("two unnamed groups come back as two, not as one", len(_hl) == 2)
     check("and the second one's bullet did not join the first",
-          _hl[0]["results"] == ["a", "b"] and _hl[1]["results"] == ["c"])
+          _hl[0]["bullets"] == ["a", "b"] and _hl[1]["bullets"] == ["c"])
 
+    # REVERSED 2026-08-26. This asserted `"####" not in _md` — a single unnamed group
+    # was written with no boundary at all, on the reasoning that bare bullets under
+    # the entry already read back as one group. True, and it cost data: with nothing
+    # between the record's level and the group's, a group carrying prose of its own
+    # wrote a second `Context:` under the same heading, and the reader — which decides
+    # a prose line's level by whether a `####` has been seen — attributed it to the
+    # record and overwrote what was there. Reproduced live: snaggd lost the sentence
+    # saying what it is. Every group is bounded now; the economy was not worth it.
     _one = [{"type": "employment", "company": "Example Corp", "role": "PM",
-             "highlights": [{"results": ["a", "b"]}]}]
+             "groups": [{"kind": "achievement", "bullets": ["a", "b"]}]}]
     _md, _hl = _groups(_one)
-    check("a single unnamed group needs no boundary line at all", "####" not in _md)
+    check("even a single group is bounded, so its level is never in doubt",
+          "####" in _md)
     check("and still reads back as one group", len(_hl) == 1)
 
     _named = [{"type": "employment", "company": "Example Corp", "role": "PM",
-               "highlights": [{"label": "Storefront MVP", "results": ["a"]}]}]
+               "groups": [{"kind": "achievement", "label": "Storefront MVP",
+                           "bullets": ["a"]}]}]
     _md, _hl = _groups(_named)
     check("a group's name is content, not a heading",
           "#### Storefront MVP" not in _md and "label: Storefront MVP" in _md)
     check("and it comes back attached to its group",
           len(_hl) == 1 and _hl[0].get("label") == "Storefront MVP")
+    # Same property as before, against the DECLARATION rather than a hardcoded pair:
+    # the frame's words may stand on an h4 line, the source's may not. The vocabulary
+    # grew from one borrowed literal to three declared kinds, so this reads it from
+    # profile_frame and cannot drift away from what the renderer actually writes.
     check("the only text ever written after #### is the frame's own",
-          all(l.strip() in ("####", "#### Zone of Responsibility")
+          all(l.strip() in {f"#### {k}" for k in _frame.GROUP_KINDS} | {"####"}
               for l in _md.splitlines() if l.startswith("####")))
 
     # A file saved before the split still reads, and one save converts it —
@@ -333,15 +352,16 @@ def run():
                "#### Zone of Responsibility\n- own the roadmap\n")
     _read = parse_candidate_md(_legacy)["cases"][0]
     check("the old shape still names its group",
-          (_read.get("highlights") or [{}])[0].get("label") == "Storefront MVP")
-    check("and the frame's own heading still means responsibilities",
-          _read.get("responsibilities") == ["own the roadmap"])
+          (_read.get("groups") or [{}])[0].get("label") == "Storefront MVP")
+    check("and the retired CIS heading still means duties",
+          [g for g in _read["groups"] if g["kind"] == "duties"][0]["bullets"]
+          == ["own the roadmap"])
     _converted = ResumeParser(None).to_md(
         ResumeData(**parse_candidate_md(_legacy)), existing_content=_legacy)
     check("one save rewrites it into the new shape",
           "#### Storefront MVP" not in _converted and "label: Storefront MVP" in _converted)
     check("without losing anything on the way",
-          (parse_candidate_md(_converted)["cases"][0].get("highlights") or [{}])[0]
+          (parse_candidate_md(_converted)["cases"][0].get("groups") or [{}])[0]
           .get("label") == "Storefront MVP")
 
     # ── Skills is read in both shapes it exists in ────────────────────────
@@ -398,18 +418,19 @@ def run():
     # rather than borrows from CIS résumé custom is a separate change; keeping the
     # boundary is what stops the data being wrong in the meantime.
     check("the boundary that carries the category is written on every market",
-          "Zone of Responsibility" in western_md)
+          "#### duties" in western_md)
     western_case = parse_candidate_md(western_md)["cases"][0]
+    duties = [g for g in western_case["groups"] if g["kind"] == "duties"]
     check("and duties come back as duties, not as achievements",
-          set(western_case.get("responsibilities") or []) ==
-          {"owned the roadmap", "ran weekly reviews"})
+          len(duties) == 1
+          and set(duties[0]["bullets"]) == {"owned the roadmap", "ran weekly reviews"})
 
     cis = ResumeData(
         identity={"name": "C"}, target_market="cis",
         cases=[{"type": "employment", "company": "Acme", "role": "PM",
                 "responsibilities": ["owned the roadmap"]}])
-    check("a CIS employment entry still gets the heading",
-          "Zone of Responsibility" in ResumeParser(None).to_md(cis))
+    check("a CIS employment entry declares the same kind, in the same words",
+          "#### duties" in ResumeParser(None).to_md(cis))
 
     # ── A hand edit sticks, including a deletion ──────────────────────────
     # The wizard opens on merge_over_json(candidate.md, candidate.json). Until

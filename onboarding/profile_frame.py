@@ -546,3 +546,111 @@ def parse_record_name(text: str) -> tuple:
     parts = [p for p in parts if p]
     slots = {slot: value for slot, value in zip(READ_SLOTS, parts) if value}
     return slots, parts[len(READ_SLOTS):]
+
+
+# ─── h4: what a group inside a record IS ─────────────────────────────────────
+#
+# Declared 2026-08-26, and the last thing the cascade was missing. h2 has had a
+# declared vocabulary since the frame existed (KIND_HEADINGS); h3 has a declared
+# shape (RECORD_SLOTS) with the words left to the source. h4 had neither: what a
+# group MEANT was carried by whether one specific English string appeared on its
+# heading line, and that string was a CIS résumé convention printed into a file
+# regardless of whose résumé it was — then gated on target_market, so the same
+# bullets were duties for one candidate and achievements for another.
+#
+# The defect was never that h4 carried a word. `## Work Experience` is the frame's
+# word too, printed over a section a Russian CV called «Опыт работы», and nobody
+# calls that an imposition — it is a CLASSIFICATION, and a classification has to be
+# ours or no consumer can rely on it. What was wrong is that one word stood for two
+# kinds, was borrowed from one market, and was assigned by sniffing for a metric
+# (extraction rule D) instead of being read off the section the source itself wrote.
+#
+# So h4 gets the same two-part shape a record already has: a KIND from the frame,
+# and a NAME from the source. `#### duties` with `label: Зона ответственности`
+# under it — the classification is ours, the words stay theirs.
+#
+# Why three kinds and not two. A CIS résumé prints «Обязанности» and «Достижения»
+# as separate sections; a western CV often prints one undifferentiated list under a
+# job. Forcing that list into either bucket invents a distinction the document does
+# not make, which is the same fabrication rule D performs today. `unsorted` records
+# that the source drew no line — a fact about the résumé, not a gap in it.
+GROUP_KINDS: tuple = ("duties", "achievement", "unsorted")
+
+# What a group is called when the source drew no line of its own.
+DEFAULT_GROUP_KIND = "unsorted"
+
+# Read tolerantly, write strictly — the same stance the record heading takes. Every
+# profile on disk before today carries the literal below (74 of 114 h4 headings in
+# the 20-CV corpus); the rest are bare `####`, which is an unnamed achievement group.
+# One save converts a file, so this is one legacy form and not a table of them.
+RETIRED_GROUP_HEADINGS: dict = {"Zone of Responsibility": "duties"}
+
+
+def normalise_group_kind(raw) -> str:
+    """Anything outside the declared vocabulary becomes the default rather than
+    reaching a consumer as an unknown. Same stance as normalise_kind for records."""
+    value = str(raw or "").strip().lower()
+    return value if value in GROUP_KINDS else DEFAULT_GROUP_KIND
+
+
+def group_heading(kind: str) -> str:
+    """The h4 line for a group of this kind — the frame's word, never the source's."""
+    return f"#### {normalise_group_kind(kind)}"
+
+
+def group_kind_for_heading(text: str) -> str:
+    """The kind a `####` line declares, reading legacy files as well as current ones.
+
+    A bare `####` is an unnamed achievement group: that is what it has meant since
+    2026-08-17, when the group's name moved off this line into `label:` below it.
+    A line carrying anything else is a file written before the name moved, and its
+    text is the group's NAME, not its kind — the caller keeps it as `label`.
+    """
+    label = str(text or "").strip()
+    if not label:
+        return "achievement"
+    if label in RETIRED_GROUP_HEADINGS:
+        return RETIRED_GROUP_HEADINGS[label]
+    if label.lower() in GROUP_KINDS:
+        return label.lower()
+    return "achievement"
+
+
+def groups_of(case: dict) -> list:
+    """A record's h4 groups, in render order, read from either shape on disk.
+
+    THE one place that understands the pre-2026-08-26 shape, so nothing else has to.
+    A case used to carry two fields for what is one level of the cascade:
+    `responsibilities` (a bare list, its kind implied by the CIS heading the renderer
+    printed above it) and `highlights` (dicts, kind implied by the ABSENCE of that
+    heading). Two encodings of one thing, and the discriminant was an English string
+    that a market gate could remove — which is how the same bullets were duties for
+    one candidate and achievements for another.
+
+    Returns dicts of {kind, label, context, bullets}: `kind` is the frame's
+    classification, `label` is the source's own name for the section and may be None.
+    """
+    case = case or {}
+    declared = case.get("groups")
+    if declared:
+        out = []
+        for group in declared:
+            out.append({
+                "kind": normalise_group_kind(group.get("kind")),
+                "label": group.get("label") or None,
+                "context": group.get("context") or None,
+                "bullets": [b for b in (group.get("bullets") or []) if str(b).strip()],
+            })
+        return out
+
+    # Legacy. Duties first, because that is the order the renderer wrote them in and
+    # a migration must not reshuffle a person's own document.
+    out = []
+    if case.get("responsibilities"):
+        out.append({"kind": "duties", "label": None, "context": None,
+                    "bullets": [b for b in case["responsibilities"] if str(b).strip()]})
+    for h in case.get("highlights") or []:
+        out.append({"kind": "achievement", "label": h.get("label") or None,
+                    "context": h.get("context") or None,
+                    "bullets": [b for b in (h.get("results") or []) if str(b).strip()]})
+    return out
