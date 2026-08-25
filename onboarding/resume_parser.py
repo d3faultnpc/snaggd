@@ -160,6 +160,11 @@ def _typed_contact_line(raw: str) -> str:
     return raw
 
 
+# How many bullets a group keeps when the profile is over the token ceiling. Three
+# was the old cap for duties and is kept, but it now applies to every group alike.
+_MAX_BULLETS_UNDER_PRESSURE = 3
+
+
 class ResumeParser:
     SUPPORTED_TYPES = {
         ".pdf":  "application/pdf",
@@ -484,15 +489,29 @@ class ResumeParser:
         return lines
 
     def _shorten_for_token_guard(self, data: ResumeData) -> ResumeData:
+        """Fit a large profile under the ceiling without dropping a whole record.
+
+        Rewritten 2026-08-26, and it had to be: it still read `highlights` and
+        `responsibilities`, which the cascade replaced with `groups` earlier the
+        same day. It matched nothing, trimmed nothing and raised nothing — a guard
+        that had quietly stopped guarding, found only by sweeping for readers of
+        the old shape.
+
+        Both kinds are trimmed the same. The old code shortened a highlight's prose
+        but capped only duties, on the reading that achievements carry the numbers
+        and duties are filler. That is a preference about someone else's CV, and
+        the canon is monotone: one shape, one rule, every axis alike.
+        """
         import copy
         trimmed = copy.deepcopy(data)
         for case in trimmed.cases:
-            for h in (case.get("highlights") or []):
-                ctx = h.get("context")
+            for group in (case.get("groups") or []):
+                ctx = group.get("context")
                 if ctx and ". " in ctx:
-                    h["context"] = ctx.split(". ")[0].strip().rstrip(".") + "."
-            if case.get("responsibilities"):
-                case["responsibilities"] = case["responsibilities"][:3]
+                    group["context"] = ctx.split(". ")[0].strip().rstrip(".") + "."
+                bullets = group.get("bullets") or []
+                if len(bullets) > _MAX_BULLETS_UNDER_PRESSURE:
+                    group["bullets"] = bullets[:_MAX_BULLETS_UNDER_PRESSURE]
         return trimmed
 
     # ── Extraction methods ────────────────────────────────────────────────────
