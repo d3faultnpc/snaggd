@@ -27,8 +27,8 @@
 
      Before this can ship it needs calibration (it runs high — 7 of 10 clear a
      threshold of 55 where the bands cleared 2) and a decision about averaging
-     repeated calls. See .claude/working-notes/tz-2026-08-30-scoring-calibration.md
-     in the snaggd-app repository. -->
+     repeated calls. The calibration work is tracked outside this repository, with the
+     application that consumes it. -->
 
 Read this vacancy against the candidate and report, for each axis, how much of what the posting asked for is actually covered — and how much this posting leans on that axis. You do not compute a total. There is no overall score in your answer, and inventing one is an error.
 
