@@ -410,6 +410,102 @@ class LLMAgent:
     # made twice. It is in git history if the idea is ever revisited; what it must
     # not be is a live path pretending to be maintained.
 
+    def score_vacancy_judgement(self, vacancy_text: str) -> dict:
+        """The scorer as one judgement, with the number coming from the model.
+
+        The track this project abandoned when the axes landed, brought back to be
+        measured rather than remembered. It was abandoned partly for zero-scores
+        that were later found to be a property of the model and fixed elsewhere —
+        so half its sentence was served for someone else's crime, and it has never
+        been run since the fix.
+
+        Experiment, not an option. Selected by SNAGGD_SCORER=judgement, lives on
+        the scoring/judgement branch, and is expected to die there: the likely
+        destination is a mix — a freer judgement INSIDE each axis with the
+        arithmetic still in code — and that is a change to the axes scorer, not a
+        third strategy beside it. See tz-2026-08-28 for the measurement this
+        exists to produce.
+
+        Differences from the axes path, all deliberate:
+          - `match` is taken from the reply. That is the whole point, and it is
+            why the guard test that forbids it is scoped to the axes path rather
+            than to the process.
+          - `axes` comes back empty. Nothing downstream requires it (llm_cover
+            reads it with `or {}`), and an empty dict is the truth: this scorer
+            did not grade axes.
+          - `basis` takes the anchors' place in what the writer is given. Both are
+            the same kind of observation — what this posting asked, and what
+            answered it — so the letter keeps the per-vacancy hook either way.
+        """
+        prompt = self._load_prompt("judgement_scoring.md")
+        declared = sorted(self._declared_stop_categories())
+        blocks = ("BLOCKED (this candidate's own list — categories of business and "
+                  "named employers, the entire vocabulary available to you): "
+                  f"{', '.join(declared)}"
+                  if declared else
+                  "BLOCKED: this candidate declared nothing. stop_match is null.")
+        content = self._chat_completion(
+            model=self.model,
+            max_tokens=900,
+            call_type="score",
+            messages=[
+                {"role": "system", "content": self._system("score")},
+                {"role": "user", "content": f"{prompt}\n\n{blocks}\n\nVACANCY:\n{vacancy_text[:_MAX_VACANCY_CHARS]}"},
+            ],
+        )
+        call_meta = last_call_snapshot()
+        result = self._parse_json((content or "{}").strip(), fallback={})
+
+        # The guard the arithmetic used to provide. A model that has seen a
+        # thousand scoring prompts will occasionally answer 454, -5, or "紙 67" —
+        # all three are real replies from this project's own history. With the
+        # number now coming from the reply, out-of-range is not clamped to a
+        # neighbouring value: a reply that cannot be trusted about the range
+        # cannot be trusted about the judgement either, and a missing score is
+        # not a low one.
+        raw_match = result.get("match")
+        score = raw_match if isinstance(raw_match, int) and 0 <= raw_match <= 100 else None
+        if score is None and raw_match is not None:
+            print(f"   ⚠️ judgement scorer returned an unusable match ({raw_match!r}) — no score")
+
+        # A number with nothing behind it is the failure mode this prompt is most
+        # likely to produce, so it is checked rather than trusted: `basis` is what
+        # the model says it counted, and a high score asserted without one is not
+        # a judgement, it is a guess wearing one.
+        basis = [b for b in (result.get("basis") or []) if isinstance(b, dict)]
+        if score is not None and score >= 50 and not basis:
+            print(f"   ⚠️ judgement scorer gave {score} with an empty basis — not trusting it")
+            score = None
+
+        # The same validator the axes path uses, not a second reading of the
+        # field: a block must name a category the person actually declared, and
+        # the rule about that is one rule, not one per scorer.
+        stop = self._validated_block(result)
+        signals = [str(s).strip() for s in (result.get("signals") or []) if str(s).strip()][:8]
+        return {
+            "score": score,
+            "scoring_format": "judgement",
+            # Empty on purpose — this scorer graded nothing. Written out rather
+            # than omitted so the History screen and the log see a shape they
+            # already know how to read.
+            "axes": {}, "axes_in_play": [], "axes_neutral": [],
+            "non_compensable": [], "role_fit": None,
+            "matched_skills": [], "matched_skills_dropped": 0,
+            "signals": signals,
+            "stop_match": stop.get("stop_match"),
+            "stop_basis": stop.get("stop_basis"),
+            "stop_evidence": stop.get("stop_evidence"),
+            "stop_suppressed": stop.get("stop_suppressed"),
+            # The experiment's own record. `counted_unnamed` is the measured
+            # quantity: evidence read out of work that never names what was asked
+            # — the thing an axis cannot see, because an axis reads the vocabulary.
+            "basis": basis,
+            "gaps": [str(g) for g in (result.get("gaps") or [])][:10],
+            "counted_unnamed": [u for u in (result.get("counted_unnamed") or []) if isinstance(u, dict)],
+            "confidence": result.get("confidence"),
+            "call_meta": call_meta,
+        }
+
     def score_vacancy(self, vacancy_text: str) -> dict:
         """Returns {score, axes, matched_skills, signals, stop_match, ...}.
 
@@ -422,6 +518,9 @@ class LLMAgent:
         The list of blocked categories comes from the `stop_categories:` line in
         candidate.md, already in the system prompt — no extra parameters needed.
         """
+        if os.getenv("SNAGGD_SCORER", "").strip().lower() == "judgement":
+            return self.score_vacancy_judgement(vacancy_text)
+
         prompt = self._load_prompt("match_scoring.md")
         # Passed in, not left to survive the projection. The block vocabulary used
         # to reach the model only because it sat in a section the scorer happened
@@ -659,6 +758,23 @@ class LLMAgent:
             parts.append(
                 f"Skills overlap — weave these naturally, do NOT enumerate or list:\n"
                 f"  {', '.join(skills)}"
+            )
+        # Anchors only, never the grade beside them: the anchor says what the
+        # posting asked about, the grade says how convinced we are, and only the
+        # first is this call's business (same line the score is kept out on).
+        # Axes in play only — an axis the posting never raised has an anchor
+        # saying so ("сертификаты не требуются"), which is true and useless to
+        # someone writing to that employer.
+        axes = match_context.get("axes") or {}
+        in_play = match_context.get("axes_in_play") or []
+        anchored = [(a, (axes.get(a) or {}).get("anchor", "").strip())
+                    for a in in_play if (axes.get(a) or {}).get("anchor", "").strip()]
+        if anchored:
+            lines = "\n".join(f"  {axis} — {anchor}" for axis, anchor in anchored)
+            parts.append(
+                "What this posting actually asked about, in its own terms — use it to "
+                "decide WHICH of the candidate's cases to open with, not as phrases to "
+                f"reuse:\n{lines}"
             )
         if not parts:
             return ""

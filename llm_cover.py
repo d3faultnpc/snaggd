@@ -106,6 +106,10 @@ class LLMCover:
         # person names themselves as. Carried, not applied — see core.axes.ROLE_FIT.
         self.last_role_fit: dict | None = None
         self.last_scoring_format: Optional[str] = None
+        # What the judgement scorer says it counted: what the posting asked,
+        # and what answered it. Empty under the axes scorer, which says the
+        # same thing through per-axis anchors instead.
+        self.last_basis: list = []
         # What the call itself did: provider generation id and token counts.
         # None on a cache hit, and that is the truth about a cache hit — there
         # was no call. Never written into self.cache for the same reason.
@@ -178,6 +182,7 @@ class LLMCover:
         self.last_matched_skills_dropped = score_data.get("matched_skills_dropped", 0)
         self.last_role_fit = score_data.get("role_fit")
         self.last_scoring_format = score_data.get("scoring_format")
+        self.last_basis = score_data.get("basis") or []
         self.last_call_meta = score_data.get("call_meta", None)
         self.last_signals = score_data.get("signals", [])
 
@@ -237,10 +242,28 @@ class LLMCover:
         # business and used to be handed to it anyway — see _build_match_hint in
         # core/llm_agent.py. Dropped at the producer too, so the contract and the
         # consumer cannot drift back together by accident.
+        # Anchors, and deliberately not the grades beside them. An anchor is the
+        # scorer's note of what THIS posting asked about, in the posting's own
+        # terms ("product discovery, Agile, оценка сроков") — an observation,
+        # the same category as signals. A grade is our judgement of how well the
+        # person answers it, which is the doubt the line above keeps out.
+        #
+        # Why the writer needs them: measured 2026-08-27, six of ten letters
+        # opened with the same case across ten unrelated industries. The prompt's
+        # tiebreak for "which case opens" reads the PROFILE (prefer the case with
+        # more metrics) and nothing about the vacancy, so the strongest bullet won
+        # every time. The anchors are the per-vacancy hook that was computed,
+        # recorded and then thrown away before the letter was written.
         match_context = {
             "matched_skills": self.last_matched_skills,
             "stop_match": self.last_stop_match,
             "signals": self.last_signals,
+            "axes": self.last_axes,
+            "axes_in_play": self.last_axes_in_play,
+            # Empty under the axes scorer, populated under the judgement one —
+            # _build_match_hint falls back to it when there are no anchors, so
+            # the writer gets the same kind of hook whichever scorer ran.
+            "basis": self.last_basis,
         }
 
         try:
@@ -273,18 +296,31 @@ class LLMCover:
         self.last_matched_skills_dropped = 0
         self.last_role_fit = None
         self.last_scoring_format = None
+        self.last_basis = []
         self.last_call_meta = None
         self.last_signals = []
 
     def _hash_text(self, text: str) -> str:
-        """Cache key: compound hash of (cover_model, llm_model, profile, vacancy_text).
+        """Cache key: compound hash of (scorer, cover_model, llm_model, profile, vacancy_text).
 
         Any change to model, candidate profile, or vacancy text produces a new key.
         Stale entries from old models or profiles are ignored automatically.
+
+        The scorer joined the key on 2026-08-28, and its absence was a real defect
+        rather than a gap this experiment invented. Everything else that changes
+        the answer was already here; which scorer produced it is the thing that
+        changes it MOST, and two scorers sharing a key means the second one to see
+        a vacancy silently inherits the first one's number — reported, logged and
+        acted on as its own. Read from the environment rather than from the agent
+        because it is the same switch score_vacancy() reads, and a key derived
+        from a different source than the behaviour it keys is a key that can
+        disagree with it.
         """
         cover_model = self._agent.cover_model if self._agent else ""
         llm_model = self._agent.model if self._agent else ""
-        compound = f"{cover_model}|{llm_model}|{self._profile_hash}|{text}"
+        import os as _os
+        scorer = _os.getenv("SNAGGD_SCORER", "").strip().lower() or "axes"
+        compound = f"{scorer}|{cover_model}|{llm_model}|{self._profile_hash}|{text}"
         return hashlib.md5(compound.encode('utf-8')).hexdigest()[:16]
 
     def _compute_profile_hash(self) -> str:
@@ -344,6 +380,7 @@ class LLMCover:
         self.last_non_compensable = []
         self.last_matched_skills_dropped = 0
         self.last_scoring_format = None
+        self.last_basis = []
         if len(entry) >= 7:
             self.last_score = entry[3]
             self.last_matched_skills = entry[4]

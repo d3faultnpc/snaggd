@@ -46,6 +46,28 @@ def run():
           agent._build_match_hint({"score": 99, "signals": ["a"]})
           == agent._build_match_hint({"signals": ["a"]}))
 
+    # The same line, drawn one axis lower. An anchor is what the posting asked
+    # about; a grade is how convinced we are that the person answers it. The
+    # first is the writer's business and the second is the verdict under another
+    # name — which is exactly how a verdict comes back once the score itself is
+    # blocked at the door.
+    print("\nAxis anchors travel; the grades beside them do not")
+    axed = agent._build_match_hint({
+        "signals": ["fintech"],
+        "axes": {
+            "skills": {"grade": "weak", "anchor": "product discovery, Agile"},
+            "education": {"grade": "neutral", "anchor": "образование не требуется"},
+        },
+        "axes_in_play": ["skills"],
+    })
+    check("the anchor of an axis in play reaches the writer",
+          "product discovery, Agile" in axed)
+    check("its grade does not", "weak" not in axed)
+    check("an axis the posting never raised stays out",
+          "образование не требуется" not in axed)
+    check("no axes, no section", "posting actually asked about"
+          not in agent._build_match_hint({"signals": ["a"]}))
+
     print()
     print(f"{'❌ ' + str(len(failures)) + ' failed' if failures else '✅ all passed'}")
     return 1 if failures else 0
