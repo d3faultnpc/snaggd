@@ -103,6 +103,13 @@ check(f"core/llm_agent.py defines no module-level names beyond its documented se
 _expected_llm_agent_class_members = {
     "model", "cover_model", "api_key", "client",
     "generate_cover", "score_vacancy", "fill_form", "ask_modal_action", "answer_question",
+    # The abandoned track, brought back to be measured. Behind SNAGGD_SCORER=
+    # judgement, on the scoring/judgement branch, and expected to leave the same
+    # way split scoring did — through this list, with the finding recorded beside
+    # the call that replaced it. Declared here rather than exempted: an
+    # experiment that can add members without saying so is how the surface this
+    # test protects stops meaning anything.
+    "score_vacancy_judgement",
     "_chat_completion", "_system", "_build_system_prompt", "_build_match_hint",
     # Added 2026-08-21 with the per-call projection. A map from call type to the
     # kind of reader it speaks as — local, and about this repo's own prompts;
