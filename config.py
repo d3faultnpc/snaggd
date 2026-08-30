@@ -179,7 +179,29 @@ SELECTORS = {
         'span:has-text("Добавить сопроводительное")',
         'a:has-text("Добавить сопроводительное")',           # original fallback
     ],
-    'chatik_input': '[data-qa="chatik-new-message-text"]',  # "Сообщение" textarea, confirmed via DOM probe 2026-05-27
+    # The "Сообщение" textarea — the field a cover letter is actually typed into,
+    # since clicking "Добавить сопроводительное" creates no separate input.
+    #
+    # A cascade since 2026-08-29, and the reason is a live incident: hh renamed
+    # this address, `chatik-new-message-text` stopped existing, and ten
+    # applications in one run were submitted with no cover letter at all. The
+    # code did the honest thing — said "textarea not found" and did not pretend —
+    # but a single-address selector for the most load-bearing field in the whole
+    # flow had no way to survive a rename.
+    #
+    # Order is deliberate. The wrapper is chatik's own component and names it;
+    # the bare `text-input` beneath is generic enough to belong to something else
+    # on a page that is not this one, so it is last and only ever reached inside
+    # a scope that is already the chat. The retired address stays first: it costs
+    # one miss and covers an hh version that has not rolled forward yet.
+    # Measured 2026-08-29 in a live chat: wrapper <div> 845x64, textarea inside it
+    # data-qa="text-input", placeholder "Сообщение", 781x36.
+    'chatik_input': [
+        '[data-qa="chatik-new-message-text"]',
+        '[data-qa="chatik-message-input"] textarea',
+        'textarea[data-qa="text-input"]',
+        'textarea[placeholder="Сообщение"]',
+    ],
     # Cover letter textarea that appears after clicking "Добавить сопроводительное"
     # Cascade: try specific data-qa first, fall back to placeholder text
     'chatik_cover_input': [

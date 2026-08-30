@@ -10,8 +10,9 @@ from typing import Optional
 from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
 from adapters.hh.detector import FormDetector
-from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, find_chat_link,
-                             find_topmost_dialog, find_visible, is_data_collector, iter_visible)
+from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_SELECTORS,
+                             find_chat_link, find_topmost_dialog, find_visible,
+                             is_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult
 from config import CONFIG, SELECTORS
@@ -21,6 +22,58 @@ from core.selector import threshold_selector
 from utils.filters import StopFilters, load_stop_filters
 
 _DEBUG_DIR = Path(os.getenv("DEBUG_DIR", Path(__file__).parent.parent.parent / "debug_screenshots"))
+
+# Every dialog on screen, in stacking order, with the address of everything
+# pressable inside each. The single-modal capture beside this one stops at the
+# first selector that matches anything and returns the first element in
+# DOCUMENT order, so a stack of two hands back the LOWER dialog — which on
+# 2026-08-27 was the layer we already understood, while the layer that actually
+# took the click (a "Сохранить изменения?" confirm hh raised over its own
+# profile survey) went unrecorded and had to be reconstructed from a person's
+# screenshot.
+#
+# Roots only, same filter find_topmost_dialog() uses: a dialog nested inside
+# another is a part, not a layer. Last entry is the topmost, on the same
+# document-order assumption that function already runs on.
+#
+# Controls are distilled beside the markup deliberately. The next step for a
+# layer we do not yet handle is pressing the right thing in it, and that needs
+# an address — `data-qa`, `name`, the option's own text — not a picture. Text
+# is carried too, but as a label for a human reading the capture: a selector
+# built on Russian button text is exactly what this project does not do.
+_LAYERS_JS = """(selector) => {
+    const all = Array.from(document.querySelectorAll(selector));
+    const roots = all.filter(el => !all.some(o => o !== el && o.contains(el)));
+    const onscreen = roots.filter(el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0;
+    });
+    return onscreen.map((el, i) => ({
+        index: i,
+        topmost: i === onscreen.length - 1,
+        dataQa: el.getAttribute('data-qa'),
+        role: el.getAttribute('role'),
+        zIndex: getComputedStyle(el).zIndex,
+        text: (el.innerText || '').trim().slice(0, 400),
+        controls: Array.from(el.querySelectorAll(
+            'button, [role="button"], a[href], input, textarea, select'))
+            .filter(c => {
+                const r = c.getBoundingClientRect();
+                return r.width > 0 && r.height > 0;
+            })
+            .slice(0, 60)
+            .map(c => ({
+                tag: c.tagName.toLowerCase(),
+                type: c.getAttribute('type'),
+                dataQa: c.getAttribute('data-qa'),
+                name: c.getAttribute('name'),
+                value: c.getAttribute('value'),
+                checked: c.checked === true,
+                text: (c.innerText || c.value || '').trim().slice(0, 80),
+            })),
+        html: el.outerHTML.slice(0, 20000),
+    }));
+}"""
 
 
 class HHAdapter(SiteAdapter):
@@ -619,7 +672,8 @@ class HHAdapter(SiteAdapter):
                                   "not applying with a CV this profile did not choose",
                         'scenario': 'skip'}
             if choice != "submitted":
-                self._dismiss_blocking_modal(current_page, index=index)
+                self._dismiss_blocking_modal(current_page, index=index,
+                                            debug=debug, session_dir=session_dir)
 
             # Immediate-apply (no form)
             try:
@@ -734,7 +788,8 @@ class HHAdapter(SiteAdapter):
                 # would find a form that is not there.
                 continue
 
-            self._dismiss_blocking_modal(page, index=index)
+            self._dismiss_blocking_modal(page, index=index,
+                                         debug=debug, session_dir=session_dir)
 
             # Every modal step as it was PRESENTED, before anything is filled or
             # clicked. Snapshots used to exist only at outcomes, so a
@@ -813,7 +868,8 @@ class HHAdapter(SiteAdapter):
                         goal_reached=False
                     ), first_form_type
                 if retry_choice != "submitted":
-                    self._dismiss_blocking_modal(page, index=index)
+                    self._dismiss_blocking_modal(page, index=index,
+                                                 debug=debug, session_dir=session_dir)
                 form_info = self.detector.detect(page)
                 form_type = form_info.form_type
                 if form_type == FormType.UNKNOWN:
@@ -851,7 +907,12 @@ class HHAdapter(SiteAdapter):
                                      # per-vacancy sequence number, purely a GUI
                                      # grouping key. Handlers pass it through as
                                      # emit(vacancy_id=str(vacancy_seq), ...).
-                                     vacancy_seq=index)
+                                     vacancy_seq=index,
+                                     # Where a handler may write diagnostics of its
+                                     # own. None outside debug, which is what makes
+                                     # a dump call at a failure site safe to leave
+                                     # in place unconditionally.
+                                     session_dir=session_dir)
             # questions_cover_sent no longer exists (session 56) — questions.py's
             # cover-shaped answers go through the generic fill_form() path, not
             # HH's native cover mechanism, so they were never real grounds for
@@ -933,7 +994,8 @@ class HHAdapter(SiteAdapter):
 
     # ── Modal dismissal ───────────────────────────────────────────────────────
 
-    def _close_data_collector(self, page, dialog, vid) -> bool:
+    def _close_data_collector(self, page, dialog, vid, *,
+                              debug: bool = False, session_dir=None) -> bool:
         """Closes one of hh's profile-enrichment surveys without answering it.
 
         These open over the vacancy right after the apply click — "Какой формат
@@ -952,6 +1014,17 @@ class HHAdapter(SiteAdapter):
         So: recognised by address, closed by its own X, model not consulted.
         A survey hh insists on showing is hh's problem, not an application step.
         """
+        # The survey's own markup, before anything is clicked. It was missing
+        # from every capture of the 2026-08-27 run — the snapshots bracket this
+        # function (the apply modal before, the delivered-resume page after) and
+        # the survey itself sits in the gap, so the only record of what it
+        # contained was a person's screenshot. That gap is why the question
+        # "which element took the click" could not be answered from artifacts.
+        # Debug-only, same stance as every other capture here: these carry the
+        # person's own profile fields as hh renders them.
+        if debug and session_dir:
+            self._debug_snapshot(page, session_dir, "02a_data_collector_presented")
+
         for _ in range(4):  # the survey is a wizard; X closes it, but be sure
             close_btn = find_visible(page, DATA_COLLECTOR_CLOSE)
             if close_btn is None:
@@ -959,6 +1032,14 @@ class HHAdapter(SiteAdapter):
             try:
                 close_btn.click()
             except Exception as e:
+                # The interesting one. On 2026-08-27 this fired as "Element is
+                # not attached to the DOM" after hh raised a SECOND layer over
+                # the survey (a "Сохранить изменения?" confirm, which is not in
+                # the additionalDataCollector vocabulary and therefore not
+                # addressable by DATA_COLLECTOR_CLOSE). Capture before saying
+                # anything: this is the only moment that layer is on screen.
+                if debug and session_dir:
+                    self._debug_snapshot(page, session_dir, "02b_data_collector_stuck")
                 self._say(f"   ⚠️ Couldn't close hh's profile survey: {e}", level="warn",
                           gui_message="Couldn't close a pop-up hh.ru showed", vacancy_id=vid)
                 break
@@ -1083,7 +1164,8 @@ class HHAdapter(SiteAdapter):
         page.wait_for_timeout(1500)
         return "submitted"
 
-    def _dismiss_blocking_modal(self, page, index: int = None) -> bool:
+    def _dismiss_blocking_modal(self, page, index: int = None, *,
+                                debug: bool = False, session_dir=None) -> bool:
         """LLM-guided dismissal of unexpected blocking modals before form detection.
 
         Detects role="dialog" overlays that appear after Apply click (e.g. "другая страна"
@@ -1108,7 +1190,8 @@ class HHAdapter(SiteAdapter):
             # hh's own profile survey — close it, never answer it. See
             # _close_data_collector for why this does not go to the model.
             if is_data_collector(dialog):
-                return self._close_data_collector(page, dialog, vid)
+                return self._close_data_collector(page, dialog, vid,
+                                                  debug=debug, session_dir=session_dir)
 
             # The resume chooser is a known component, not an unrecognised
             # pop-up, and on the classic apply path it is the ONLY thing in the
@@ -1209,10 +1292,14 @@ class HHAdapter(SiteAdapter):
 
     @staticmethod
     def _debug_snapshot(page, session_dir: Path, label: str) -> None:
-        """Save screenshot + HTML + data-qa list for a debug session.
+        """Save screenshot + HTML + data-qa list + dialog layers for a debug session.
 
         `{label}.html` is ALWAYS the full page body. When a modal is on screen
-        its own markup is additionally written to `{label}_modal.html`.
+        its own markup is additionally written to `{label}_modal.html` — the
+        FIRST one the selector cascade matches in document order, which for a
+        stack of two is the lower dialog. `{label}_layers.html` is the answer to
+        that: every dialog on screen in stacking order, with the address of
+        everything pressable in each. See _LAYERS_JS.
 
         It used to be one or the other, modal preferred — and that lost exactly
         the context a diagnosis needs. Concretely (2026-08-11): the capture of a
@@ -1249,6 +1336,36 @@ class HHAdapter(SiteAdapter):
                 # _dismiss_blocking_modal only looks for role/magritte-alert.
                 (session_dir / f"{label}_modal.html").write_text(
                     f"<!-- matched by: {sel} -->\n" + modal.inner_html(), encoding="utf-8")
+
+            # Written only when something is actually stacked or a dialog is on
+            # screen at all — an empty file per snapshot would bury the captures
+            # that matter under the ones that do not. See _LAYERS_JS.
+            try:
+                layers = page.evaluate(_LAYERS_JS, ", ".join(MODAL_SELECTORS))
+            except Exception as e:
+                layers = []
+                print(f"   ⚠️ debug_snapshot [{label}] layers unreadable: {e}")
+            if layers:
+                lines = [f"<!-- {len(layers)} dialog layer(s) on screen, "
+                         f"last is topmost -->"]
+                for layer in layers:
+                    lines.append(
+                        f"\n<!-- ── layer {layer['index']}"
+                        f"{' (TOPMOST)' if layer['topmost'] else ''}"
+                        f" · data-qa={layer['dataQa']!r} role={layer['role']!r}"
+                        f" z-index={layer['zIndex']} ── -->")
+                    lines.append(f"<!-- text: {layer['text']!r} -->")
+                    lines.append("<!-- controls: -->")
+                    for c in layer["controls"]:
+                        lines.append(
+                            f"<!--   {c['tag']}"
+                            f"{'[' + c['type'] + ']' if c['type'] else ''}"
+                            f" data-qa={c['dataQa']!r} name={c['name']!r}"
+                            f" value={c['value']!r} checked={c['checked']}"
+                            f" text={c['text']!r} -->")
+                    lines.append(layer["html"])
+                (session_dir / f"{label}_layers.html").write_text(
+                    "\n".join(lines), encoding="utf-8")
 
             data_qa = page.evaluate("""() => {
                 const els = document.querySelectorAll('[data-qa]');

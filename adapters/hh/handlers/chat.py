@@ -11,6 +11,21 @@ except Exception:  # playwright always present in practice; never fail the impor
     _PlaywrightTimeout = ()
 
 
+def _first_match(scope, selectors):
+    """First element matching a cascade, visible or not.
+
+    find_visible() is the right tool wherever the element has to be usable, and
+    this is the one place it is not: the send-confirmation check reads "is the
+    text still sitting in the box", and there an element that exists but is not
+    visible is not the same answer as no element at all.
+    """
+    for selector in ([selectors] if isinstance(selectors, str) else selectors):
+        element = scope.query_selector(selector)
+        if element is not None:
+            return element
+    return None
+
+
 def _is_timeout(exc: Exception) -> bool:
     """Did this wait time out (the thing is absent), or fail some other way?
 
@@ -76,6 +91,24 @@ class ChatHandler(BaseHandler):
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.CHAT_INTERFACE
 
+    @staticmethod
+    def _dump_frame(scope, session_dir, label: str) -> None:
+        """Write a frame's own HTML beside the run's snapshots. Debug only.
+
+        Never raises: a diagnostic that can break a live application is worse
+        than no diagnostic. Silent when there is no debug directory, which is
+        also what makes it safe to call unconditionally at a failure site.
+        """
+        if not session_dir:
+            return
+        try:
+            from pathlib import Path
+            path = Path(session_dir) / f"{label}_frame.html"
+            path.write_text(scope.content(), encoding="utf-8")
+            print(f"   📸 [{label}] frame HTML → {path.parent.name}/{path.name}")
+        except Exception as exc:  # noqa: BLE001 — reported, never fatal
+            print(f"   ⚠️ frame dump [{label}] failed: {exc}")
+
     def verify_submission(self, page) -> bool:
         if not self._cover_typed:
             # No cover typed (applied_via_chat_no_cover path).
@@ -93,7 +126,7 @@ class ChatHandler(BaseHandler):
             return True  # frame gone = navigated away after send = success
 
         try:
-            inp = chatik_frame.query_selector(SELECTORS['chatik_input'])
+            inp = _first_match(chatik_frame, SELECTORS['chatik_input'])
             if inp is None:
                 return True  # input element removed = React rebuilt UI after send = success
             if inp.input_value().strip() == "":
@@ -204,6 +237,20 @@ class ChatHandler(BaseHandler):
         # 5. Find cover letter textarea (separate from "Сообщение" field)
         cover_input = self._find_cover_input(chatik_scope)
         if not cover_input:
+            # The frame's own markup, from the handle we already hold.
+            #
+            # This is the one blind spot the debug snapshots structurally cannot
+            # cover: chatik renders inside a cross-domain iframe, so the page-level
+            # dump reaches `chatik-root` and stops. On 2026-08-29 that cost a whole
+            # run — ten applications submitted with no cover letter, and the only
+            # evidence of why was a screenshot, because hh had renamed the field's
+            # data-qa and nothing on disk could say so.
+            #
+            # Playwright has no such limit: `scope` IS the frame here, and its
+            # content() crosses the boundary the snapshotter cannot. Written only
+            # when the field is missing — a working run has nothing to explain —
+            # and only under debug, since it carries the conversation.
+            self._dump_frame(chatik_scope, kwargs.get("session_dir"), "cover_input_missing")
             self._narrate(reporter, "   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover",
                           gui_message="[OK] applied via chat — couldn't add a cover letter",
                           vacancy_id=vid)
@@ -413,8 +460,8 @@ class ChatHandler(BaseHandler):
         Falls back to chatik_cover_input cascade in case HH ever adds a separate field.
         """
         # Primary: the verified "Сообщение" textarea — the cover letter input post-panel-open
-        el = scope.query_selector(SELECTORS['chatik_input'])
-        if el and el.is_visible():
+        el = find_visible(scope, SELECTORS['chatik_input'])
+        if el:
             return el
 
         # Fallback cascade (unverified — for possible future HH versions)
@@ -535,8 +582,8 @@ class ChatHandler(BaseHandler):
                 return rounds, "empty_llm_answer"
 
             # Find "Сообщение" input inside iframe and type answer
-            msg_input = scope.query_selector(SELECTORS['chatik_input'])
-            if not msg_input or not msg_input.is_visible():
+            msg_input = find_visible(scope, SELECTORS['chatik_input'])
+            if not msg_input:
                 self._narrate(reporter, "   ⚠️ HR-bot: 'Сообщение' input not found in chatik iframe — skipping")
                 return rounds, "input_not_found"
 
