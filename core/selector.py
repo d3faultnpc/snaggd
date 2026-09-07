@@ -69,10 +69,22 @@ def threshold_selector(*, match_score, min_score, stop_match, stop_basis,
             gui_line=f"Dry run — would score {match_score}%, not applying", actor="llm",
         )
 
-    # `is not None` guards the case where scoring produced nothing at all: a
-    # missing score is not a low one, and treating it as below the threshold
-    # would report a failure to measure as a measurement.
-    if match_score is not None and match_score < min_score:
+    # A score that was never computed is not a low one — and it is not a passing
+    # one either. This guard used to say only the first half: `is not None` kept a
+    # missing score from failing the comparison, and it then fell through to the
+    # apply below. On 2026-09-03 seven applications reached real employers with no
+    # match ever computed, because not-knowing was read as consent. So it gets its
+    # own outcome instead of borrowing either answer — and unlike the threshold,
+    # this one says nothing about the match at all, only that there isn't one.
+    if match_score is None:
+        return Verdict(
+            apply=False, status="skipped_no_score", scenario="skip",
+            reason="Scoring produced no result — not applying without a match",
+            log_line="   ⏭ No score computed — skipping (an absent score, not a low one)",
+            gui_line="[SKIP] couldn't measure this one — not applying",
+        )
+
+    if match_score < min_score:
         return Verdict(
             apply=False, status="skipped_score", scenario="skip",
             reason=f"Score {match_score} below threshold {min_score}",

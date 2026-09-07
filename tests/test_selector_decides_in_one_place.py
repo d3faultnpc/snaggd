@@ -51,8 +51,16 @@ check("exactly on the threshold applies — the comparison is <, not <=",
       _decide(match_score=65).apply)
 check("above it applies", _decide(match_score=80).apply)
 
-check("no score at all is not a low score: a failure to measure is not a "
-      "measurement", _decide(match_score=None).apply)
+# This check asserted the opposite until 2026-09-06 — that an unscored vacancy
+# applies — and it was not a slip: "a failure to measure is not a measurement" is
+# true, and the conclusion drawn from it was that such a vacancy must not be
+# reported as below the threshold. It must not be applied to either, and that half
+# was missing. Seven applications went out under it.
+_v = _decide(match_score=None)
+check("no score at all is its own outcome — neither a low score nor a pass",
+      not _v.apply and _v.status == "skipped_no_score")
+check("and it says so in a sentence History can show",
+      _v.reason == "Scoring produced no result — not applying without a match")
 
 
 # ── Order ────────────────────────────────────────────────────────────────────

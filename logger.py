@@ -72,8 +72,14 @@ class Logger:
         query_id = _extract_vacancy_id(url)
         for entry in applied_log:
             status = entry.get("status")
-            if status in ("dry_run", "skipped_llm_unavailable", "needs_debug_review"):
-                continue  # retryable: scored-only, transient LLM failure, or ambiguous execution failure
+            if status in ("dry_run", "skipped_llm_unavailable", "needs_debug_review",
+                          "skipped_no_score"):
+                # retryable: scored-only, transient LLM failure, ambiguous execution
+                # failure, or — since 2026-09-06 — a scorer that returned nothing.
+                # The last one belongs here for the same reason as the second: the
+                # vacancy was never judged, and marking it processed forever would
+                # retire it on the strength of a failure to measure it.
+                continue
             if entry.get("url") == url:
                 return status
             if query_id:
