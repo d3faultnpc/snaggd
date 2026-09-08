@@ -7,9 +7,14 @@ name: tests
 # prompt change that would have sent applications into a category the profile
 # refuses. All three were found locally, none of them by anything automatic.
 #
-# Browsers are deliberately NOT installed. Nothing here drives a page: the
-# tests read captured HTML and synthetic fixtures. `playwright` is installed
-# because importing `adapters.hh` pulls it in, not because it is used.
+# Three of these tests DO drive a page — test_apply_click_detection,
+# test_dom_first_match and test_vacancy_text_extraction call
+# chromium.launch(headless=True) and run selectors against captured HTML. They
+# reach no network; they need a real DOM because selector logic cannot be
+# checked without one, and selector fragility is this project's largest known
+# risk. So Chromium is installed. This header claimed the opposite until
+# 2026-09-08, which is why the workflow was red from its first run and nobody
+# looked: it said the failures were impossible.
 
 on:
   push:
@@ -31,6 +36,25 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # Keyed on requirements.txt because that is what pins the playwright
+      # version, and the browser build has to match the driver that launches it.
+      - name: Cache Chromium
+        id: cache-browser
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ubuntu-latest-playwright-${{ hashFiles('requirements.txt') }}
+
+      - name: Install Chromium
+        if: steps.cache-browser.outputs.cache-hit != 'true'
+        run: python -m playwright install --with-deps chromium
+
+      # This repository is public, so this log is public. --ci prints which file
+      # and which line, never the matched text: a scanner that echoes its finding
+      # into a public log performs the leak it exists to prevent.
+      - name: Scan for sensitive data
+        run: python scripts/check_sensitive.py --ci
 
       - name: Run the engine's tests
         # Plain scripts, not pytest — each returns non-zero on failure and

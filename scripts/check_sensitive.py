@@ -120,6 +120,11 @@ def _git_tracked_files() -> list:
 
 
 def main():
+    # --ci prints WHERE, never WHAT. A public repository has public Actions logs,
+    # so a scanner that echoes the line it matched would publish the very thing it
+    # exists to catch — the first real hit would be a leak performed by the guard.
+    # Locally there is no such audience, so the default still shows the line.
+    quiet = "--ci" in sys.argv
     print("Scanning for sensitive data (git-tracked files only)...\n")
     total_issues = 0
     files_checked = 0
@@ -133,7 +138,10 @@ def main():
             rel = path.relative_to(ROOT)
             print(f"  {rel}")
             for lineno, label, snippet in issues:
-                print(f"    L{lineno} [{label}]: {snippet}")
+                if quiet:
+                    print(f"    L{lineno} [{label}]")
+                else:
+                    print(f"    L{lineno} [{label}]: {snippet}")
                 total_issues += 1
             print()
 
@@ -143,6 +151,9 @@ def main():
         return 0
     else:
         print(f"\n{total_issues} issue(s) found. DO NOT push until resolved.")
+        if quiet:
+            print("Content withheld on purpose — this log is public. "
+                  "Run `python scripts/check_sensitive.py` locally to see the lines.")
         return 1
 
 

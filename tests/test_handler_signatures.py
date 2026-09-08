@@ -51,17 +51,35 @@ check("BaseHandler.process() ABC no longer declares cover_letter",
 # main.py resolves --profile at module level (pre-existing design, #31's
 # profile resolution law) — needs a real --profile arg, a bare import isn't
 # representative of how the CLI is actually invoked.
+# The profile is BUILT here rather than borrowed from the machine. Reading
+# `list_profiles()[0]` made this test pass only where someone had already done
+# real work: CI has no profiles at all, because `data/` is gitignored, so the
+# index raised IndexError — and the `finally` below then referenced a variable
+# whose assignment came after the raising line, replacing the real cause with a
+# NameError. That is what the engine's CI reported, every run, since it was added.
+#
+# A test that needs an environment makes its own, or skips saying why.
+import tempfile
+import profiles as _profiles_mod
+
+_saved_argv = list(sys.argv)
+_saved_profiles_dir = _profiles_mod.PROFILES_DIR
+_tmp_home = tempfile.TemporaryDirectory()
 try:
-    from profiles import list_profiles as _list_profiles
-    _real_profile = _list_profiles()[0]
-    _saved_argv = sys.argv
-    sys.argv = ["main.py", "--profile", _real_profile, "--dry-run"]
+    _fake_profiles = Path(_tmp_home.name) / "profiles"
+    (_fake_profiles / "ci").mkdir(parents=True)
+    (_fake_profiles / "ci" / "candidate.md").write_text("# ci\n", encoding="utf-8")
+    _profiles_mod.PROFILES_DIR = _fake_profiles
+
+    sys.argv = ["main.py", "--profile", "ci", "--dry-run"]
     import main  # noqa: F401
     check("main.py (CLI entrypoint) imports cleanly with a real --profile", True)
 except Exception as e:
     check(f"main.py (CLI entrypoint) imports cleanly with a real --profile — {e}", False)
 finally:
     sys.argv = _saved_argv
+    _profiles_mod.PROFILES_DIR = _saved_profiles_dir
+    _tmp_home.cleanup()
 
 try:
     import api  # noqa: F401
