@@ -45,8 +45,26 @@ ALLOWED_PATTERNS = [
     r'\.gitignore',          # gitignore mentions data paths
     r'CONTEXT\.md',          # architecture docs mention patterns
     r'README\.md',           # readme may have examples
-    r'CHANGELOG\.md',          # changelog may reference author info
+    r'CHANGELOG\.md',        # changelog may reference author info
+    r'SECURITY\.md',         # publishes a contact address on purpose
 ]
+
+# Values that LOOK sensitive and are reserved for documentation by standard.
+# Without these the script reported 10 findings on a clean `main` and printed
+# "DO NOT push" on every single run — a check that always fails teaches you to
+# ignore it, which is worse than not having it. All ten were RFC 2606 example
+# domains and an all-zero placeholder phone number, in the engine's own tests.
+PLACEHOLDER_VALUES = [
+    r'@example\.(com|org|net)$',        # RFC 2606 reserved for documentation
+    r'^https?://t\.me/example$',
+    r'^\+7[\s\-]?\(?900\)?[\s\-]?0{3}[\s\-]?0{2}[\s\-]?0{2}$',
+]
+
+
+def _is_placeholder(value: str) -> bool:
+    """True when a match is a documented placeholder, not a real secret."""
+    value = value.strip()
+    return any(re.search(pv, value) for pv in PLACEHOLDER_VALUES)
 
 
 def should_skip(path: Path) -> bool:
@@ -70,12 +88,17 @@ def check_file(path: Path) -> List[Tuple[int, str, str]]:
     for lineno, line in enumerate(content.splitlines(), 1):
         for pattern, label in SENSITIVE_PATTERNS:
             matches = re.findall(pattern, line)
-            if matches:
-                # Check if this file is in allowed list
-                path_str = str(path)
-                if any(re.search(ap, path_str) for ap in ALLOWED_PATTERNS):
-                    continue
-                issues.append((lineno, label, line.strip()[:120]))
+            if not matches:
+                continue
+            # Check if this file is in allowed list
+            path_str = str(path)
+            if any(re.search(ap, path_str) for ap in ALLOWED_PATTERNS):
+                continue
+            # A match made only of documented placeholders is not a finding.
+            real = [m if isinstance(m, str) else "".join(m) for m in matches]
+            if all(_is_placeholder(m) for m in real):
+                continue
+            issues.append((lineno, label, line.strip()[:120]))
     return issues
 
 
