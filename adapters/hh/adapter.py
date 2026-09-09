@@ -15,8 +15,10 @@ from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_
                              is_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult, cover_delivery_of
+from adapters.hh.call_envelopes import CALL_ENVELOPES, NOT_A_VACANCY_CALL
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
+from utils.call_ledger import CallLedger, set_ledger
 from utils.helpers import random_delay
 from core.selector import threshold_selector
 from utils.filters import StopFilters, load_stop_filters
@@ -98,6 +100,14 @@ class HHAdapter(SiteAdapter):
         self._reporter = reporter
         self._unverified_count = 0
         self._seen_descriptions: dict = {}  # desc_hash → vacancy_id; resets per session
+        # The call ledger for the run in progress, and the summary of the last
+        # finished one. The summary is READ OFF THIS OBJECT rather than off the
+        # module global: the global exists only so that llm_agent, four modules
+        # away, can reach the ledger without anything being threaded through
+        # every call — reading it back from a frame that does not own the run is
+        # the ambient-state mistake this project has already paid for once.
+        self._ledger = None
+        self.last_call_summary: Optional[dict] = None
 
     def _say(self, message: str, level: str = "info", gui_message: str = None,
              actor: str = "scan", vacancy_id: str = None,
@@ -156,6 +166,13 @@ class HHAdapter(SiteAdapter):
         applied_log = logger.load_applied_log()
         initial_count = len(applied_log)
         self._unverified_count = 0
+
+        # What this run's chain of LLM calls did, per scenario. Envelopes are
+        # measured, not guessed — see adapters/hh/call_envelopes.py. Set on the
+        # module global because the calls are made far from here; cleared below.
+        self._ledger = CallLedger(CALL_ENVELOPES, NOT_A_VACANCY_CALL)
+        self.last_call_summary = None
+        set_ledger(self._ledger)
 
         # self._data_dir, not CONFIG.data_dir: the API serves several profiles from
         # one process and resolves the active one per request, so the import-time
@@ -280,6 +297,12 @@ class HHAdapter(SiteAdapter):
                 continue
 
             print(f"\n{'='*50}")
+            # One segment per vacancy. Opened here rather than at the dedup
+            # check above on purpose: a vacancy skipped because it was already
+            # applied to opens no page and makes no call, and counting it would
+            # dilute every scenario it is not part of.
+            if self._ledger is not None:
+                self._ledger.begin_vacancy()
             self._say(f"[{self.name()}] VACANCY #{index}: {title}",
                       vacancy_id=str(index), position=title)
             print(f"URL: {url}")
@@ -314,6 +337,14 @@ class HHAdapter(SiteAdapter):
                 search_source=search_source,
                 **result.get('details', {}),
             )
+            # Closed against the same two facts the record is filed under, so
+            # what the instrument counts and what History shows can never be
+            # about different things.
+            if self._ledger is not None:
+                self._ledger.end_vacancy(
+                    result.get('scenario', 'unknown'),
+                    (result.get('details') or {}).get('form_type'),
+                )
             # Skip-scenario results (dedup hit after page open, blocked by filters) do not
             # count toward the per-session application budget — only genuine attempts do.
             if result.get('scenario') != 'skip':
@@ -342,6 +373,23 @@ class HHAdapter(SiteAdapter):
         logger.log_daily(f"[{self.name()}] Session ended: {termination_reason} — {termination_detail}")
         self._say(f"🏁 [{self.name()}] Session ended: {termination_reason} — {termination_detail}",
                   gui_message=f"Run finished — {termination_detail}")
+
+        # Kept on the adapter, cleared from the global. An exception escaping
+        # this method skips both, and that is harmless by construction: notes
+        # taken outside a vacancy segment are dropped, the only call type that
+        # fires outside a run is on the ignore list, and the next run installs
+        # its own ledger before opening a vacancy.
+        self.last_call_summary = self._ledger.run_summary()
+        summary = self.last_call_summary
+        if summary["breaches"]:
+            # Not a stop. A run outside its envelope has usually still applied —
+            # it just cost more than the scenario says it should, and which entry
+            # ate the difference is the thing worth saying out loud.
+            for b in summary["breaches"]:
+                self._say(f"   📐 {b['scenario']}: {b['n']}× {b['got']} "
+                          f"(expected {b['want']})", level="warn")
+        self._ledger = None
+        set_ledger(None)
         return new_entries
 
     def verify(self) -> bool:

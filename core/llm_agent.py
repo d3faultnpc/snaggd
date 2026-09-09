@@ -15,6 +15,7 @@ import httpx
 from openai import OpenAI
 
 from config import CONFIG
+from utils import call_ledger as _ledger
 
 _PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 
@@ -195,6 +196,10 @@ def _note_call(*, model: str, max_tokens: int, finish_reason: str | None,
                      call_type=call_type, temperature=temperature, json_repaired=False,
                      generation_id=generation_id, tokens_prompt=tokens_prompt,
                      tokens_completion=tokens_completion)
+    # The other half of the pair opened in _chat_completion. Truncation is its
+    # own outcome rather than a success: the answer arrived and part of it is
+    # missing, which is a different thing to be counting than either.
+    _ledger.note_outcome(call_type, "truncated" if finish_reason == _TRUNCATED else "ok")
     if finish_reason == _TRUNCATED:
         print(f"   ⚠️  reply cut off at max_tokens={max_tokens} "
               f"(model={model}, call={call_type or '?'}) — the tail is lost, not malformed")
@@ -347,6 +352,11 @@ class LLMAgent:
         if _SESSION_REPORTER is not None and _gui_msg is not None:
             _SESSION_REPORTER.emit(_gui_msg, actor="llm")
         temperature = _temperature_for(call_type)
+        # Recorded BEFORE the call, not after. An attempt with no outcome is
+        # how a failure becomes countable: ten of 240 measured vacancies spent
+        # a score call that raised, and a ledger told only about successes
+        # would have recorded no call at all for a chain that paid for one.
+        _ledger.note_attempt(call_type)
         resp = self.client.chat.completions.create(
             model=model, messages=messages, max_tokens=max_tokens, temperature=temperature,
         )

@@ -4,6 +4,7 @@ import time
 from typing import Tuple, List, Optional
 from pathlib import Path
 from config import CONFIG
+from utils import call_ledger as _ledger
 
 from core.llm_agent import LLMAgent
 
@@ -142,6 +143,12 @@ class LLMCover:
 
         if text_hash in self.cache:
             print("   📋 Using cached score")
+            # In the shape, because the chain needed a score; `cached` in the
+            # outcomes, because nobody paid for it. Folding the two together is
+            # what would make a healthy run look like a broken one — 4 of 240
+            # measured vacancies scored from cache and showed a cover call with
+            # no score beside it.
+            _ledger.note_cache_hit("score")
             self.last_signals = self._restore_score_from_cache(self.cache[text_hash])
             # Cleared, not left over: without this the record for a cached score
             # would carry the id and token counts of whatever vacancy was scored
@@ -234,6 +241,7 @@ class LLMCover:
 
         if cover_key in self.cover_cache:
             print("   📋 Using cached cover")
+            _ledger.note_cache_hit("cover")
             cover_entry = self.cover_cache[cover_key]
             self.last_cover_template_name = cover_entry[1]
             return cover_entry[0]
