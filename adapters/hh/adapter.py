@@ -1324,6 +1324,11 @@ class HHAdapter(SiteAdapter):
                 print(f"   ⚠️ Modal: couldn't read its buttons ({e})")
 
             if not buttons:
+                # A dialog is on screen, it is not one of the known components,
+                # and it holds nothing addressable. The one node that already
+                # asks the model cannot even ask here — there is no list to
+                # choose from.
+                jam("blocking_modal", "a dialog is in the way and offers no addressable control")
                 return False
 
             self._say(f"   🔲 Blocking modal: \"{modal_text[:80]}\"",

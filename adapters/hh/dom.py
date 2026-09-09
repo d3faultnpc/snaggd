@@ -51,7 +51,17 @@ def find_visible(scope, selectors: Union[str, Iterable[str]], visible_only: bool
                     fallback = element
             # `wait_for_selector`-free by design: callers that need to wait do it
             # themselves; this helper only reads the DOM as it stands right now.
-        except Exception:
+        except Exception as e:
+            # Said out loud, not swallowed. A selector that RAISES is a broken
+            # selector — a malformed cascade entry, or a scope that went away —
+            # and it is not the same thing as an address that matched nothing.
+            # Silently continuing made the two indistinguishable in the one
+            # helper every caller shares, which is the same disease the
+            # detector's own probes had (2026-09-09 audit). Control flow is
+            # deliberately unchanged: the cascade still moves on, because the
+            # next address may well answer.
+            print(f"   ⚠️ selector {selector!r} could not be evaluated ({e}) — "
+                  "moving on down the cascade")
             continue
     return None if visible_only else fallback
 

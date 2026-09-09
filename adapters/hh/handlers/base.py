@@ -8,6 +8,7 @@ from typing import Optional
 from ..dom import (find_topmost_dialog, find_visible, is_employer_question_field,
                    is_in_data_collector, iter_visible)
 from config import SELECTORS
+from utils.navigation import jam
 
 class FormType(Enum):
     """HH application form types."""
@@ -376,6 +377,11 @@ class BaseHandler(ABC):
             if any(kw in label for kw in keywords):
                 return btn, "wording"
 
+        # Both tiers missed. The docstring above explains why a third tier was
+        # deliberately NOT a model picking a button — that argument stands, and
+        # this is not it: nothing is asked and nothing is clicked, the node is
+        # only named so it can be counted.
+        jam("action_button", "neither an address nor a known wording matched")
         return None, None
 
     def _find_cover_field(self, page, extra_selectors: list = None, reject=None):
@@ -410,4 +416,5 @@ class BaseHandler(ABC):
                 if reject is not None and reject(el):
                     continue
                 return el
+        jam("cover_field", f"{len(selectors)} address(es) tried, none held a usable box")
         return None

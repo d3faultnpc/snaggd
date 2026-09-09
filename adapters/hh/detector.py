@@ -3,6 +3,7 @@ from .handlers.base import FormType, FormInfo
 from .dom import (MODAL_SELECTORS, find_chat_link, find_topmost_dialog,
                   find_visible, iter_visible)
 from config import SELECTORS, FORM_KEYWORDS
+from utils.navigation import jam
 
 class FormDetector:
     """DOM-based form type detector (no LLM)."""
@@ -231,5 +232,9 @@ class FormDetector:
         # 6. Fallback for single unknown field
         if info.input_count == 1:
             return FormType.COVER_ONLY
-        
+
+        # Every known shape has been ruled out. UNKNOWN is what the caller has
+        # always received here and still does — what is new is that the page
+        # nobody could name is now counted under its own node.
+        jam("form_type", f"{info.input_count} input(s), none of the known shapes matched")
         return FormType.UNKNOWN

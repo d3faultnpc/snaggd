@@ -2,6 +2,7 @@ from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options
                    coerce_answers, is_free_text_option, norm_option)
 from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
+from utils.navigation import jam
 
 class HHModalHandler(BaseHandler):
     """
@@ -559,6 +560,12 @@ class HHModalHandler(BaseHandler):
         if btn is not None and how == "wording":
             print("   ℹ️ Navigation button matched by wording, not by address — "
                   "hh ships no data-qa on this one")
+        elif btn is None:
+            # _find_action_button has already jammed under its own node. This one
+            # is separate on purpose: the same miss inside hh's response modal
+            # and inside an employer's questionnaire are different problems with
+            # different fixes, and a single counter would average them together.
+            jam("nav_button", "hh's response modal offered no control this code could name")
         return btn
 
     def verify_submission(self, page) -> bool:

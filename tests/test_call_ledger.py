@@ -144,8 +144,12 @@ check("but never reported as a deviation — there is nothing to deviate from",
 led = ledger()
 one(led, "chat_cover_sent", "chat_interface", "score", "cover")
 flat = repr(led.run_summary())
-check("the run row is counts and scenario names, nothing else",
-      set(led.run_summary()) == {"vacancies", "calls", "shapes", "outcomes", "breaches"})
+# Pinned deliberately: this set IS the shape of a row in public.runs, and a
+# field added here without a migration is a field that silently never lands.
+# `jams` joined on 2026-09-10 with migration 20260910030000.
+check("the run row is counts, scenario names and node names, nothing else",
+      set(led.run_summary()) == {"vacancies", "calls", "shapes", "outcomes",
+                                 "breaches", "jams"})
 for forbidden in ("http", "hh.ru", "vacancy_id", "cover_text", "company"):
     check(f"the run row carries no {forbidden}", forbidden not in flat)
 

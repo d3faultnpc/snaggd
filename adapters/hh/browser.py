@@ -10,6 +10,7 @@ from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext
 from config import CONFIG, SELECTORS
 
 from .dom import find_visible, iter_visible
+from utils.navigation import jam
 
 class HHBrowser:
     # data_dir: the PROFILE's own directory. Previously absent, which meant
@@ -642,6 +643,7 @@ class HHBrowser:
                         continue
 
             if not apply_button:
+                jam("apply_button", "no address in the cascade matched a visible control")
                 self._say("   ❌ 'Apply' button not found",
                           gui_message="[BLCK] couldn't find the Apply button",
                           vacancy_id=self._vacancy_gui_id())

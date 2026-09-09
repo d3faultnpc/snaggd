@@ -98,6 +98,7 @@ class CallLedger:
         self._shapes: dict = {}
         self._outcomes: Counter = Counter()
         self._breaches: list = []
+        self._jams: Counter = Counter()
         self._vacancies = 0
         self._calls = 0
         self._current: Optional[list] = None
@@ -153,6 +154,16 @@ class CallLedger:
                 entry[1] = outcome if outcome in OUTCOMES else "ok"
                 return
 
+    def note_jam(self, node: str) -> None:
+        """A decision node could not decide. Counted per run rather than per
+        vacancy: which node jams and how often is the question, and a jam is
+        rare enough that a per-vacancy breakdown would be mostly zeroes.
+
+        Counted outside a vacancy segment too — a node can jam during a search
+        page or a login, and dropping those would flatter the numbers.
+        """
+        self._jams[node or "unknown"] += 1
+
     def note_cache_hit(self, call_type: str) -> None:
         """The chain needed this call and nobody paid for it. In the shape,
         because the chain needed it; `cached` in the outcomes, because that is
@@ -177,6 +188,10 @@ class CallLedger:
             "outcomes": {k: self._outcomes[k] for k in OUTCOMES if self._outcomes[k]},
             "breaches": [{"scenario": s, "got": g, "want": w, "n": n}
                          for (s, g, w), n in breaches.most_common()],
+            # Which decision nodes could not decide, and how often. Empty is the
+            # healthy answer and the common one; a name appearing here is where
+            # the navigator will be worth plugging in first.
+            "jams": dict(self._jams.most_common()),
         }
 
 
@@ -209,3 +224,8 @@ def note_outcome(call_type: str, outcome: str) -> None:
 def note_cache_hit(call_type: str) -> None:
     if _LEDGER is not None:
         _LEDGER.note_cache_hit(call_type)
+
+
+def note_jam(node: str) -> None:
+    if _LEDGER is not None:
+        _LEDGER.note_jam(node)

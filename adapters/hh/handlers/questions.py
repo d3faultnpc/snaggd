@@ -4,6 +4,7 @@ from ..dom import find_visible
 from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
                    coerce_answers, is_free_text_option, norm_option)
 from config import CONFIG, SELECTORS
+from utils.navigation import jam
 
 
 # One normaliser for both handlers now — this was a local copy here and a bare
@@ -226,6 +227,12 @@ class QuestionsHandler(BaseHandler):
                     break
 
             if not clicked and not match_found:
+                # The Каргономика failure, 2026-09-09: the model answered a radio
+                # group with the literal words of the free-text option instead of
+                # the `open:` form, and the only element carrying those words is
+                # excluded from comparison by design. Score 88, application lost.
+                jam("option_match", f"radio group offered {len(grp['options'])} option(s), "
+                                    "the answer matched none of them")
                 print(f"   ⚠️ Radio '{name}': no match for '{answer[:60]}'")
                 ambiguous_reasons.append(f"radio_no_match[{name}]: '{answer[:60]}'")
 
@@ -293,6 +300,8 @@ class QuestionsHandler(BaseHandler):
                     free_el = next(((i, inp, opt) for i, inp, opt in elems
                                     if is_free_text_option(opt)), None)
                     if free_el is None:
+                        jam("option_match", f"checkbox group offered {len(elems)} option(s), "
+                                            "none matched and none is free text")
                         print(f"   ⚠️ Checkbox group '{question[:50]}': no option matched "
                               f"and no free-text option exists")
                         ambiguous_reasons.append(
@@ -354,7 +363,14 @@ class QuestionsHandler(BaseHandler):
         return result
 
     def verify_submission(self, page) -> bool:
-        return self._poll_for_success(page, timeout_s=5)
+        ok = self._poll_for_success(page, timeout_s=5)
+        if not ok:
+            # Not the same as "it failed": the page never showed a marker this
+            # code knows. The caller already downgrades to applied_unverified —
+            # 41 records on the live profile carry that status and none of them
+            # says which of the two it was.
+            jam("submission_verified", "no success marker appeared within 5s")
+        return ok
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -475,6 +491,7 @@ class QuestionsHandler(BaseHandler):
             except Exception as e:
                 print(f"   ⚠️ Submit click failed ({e}) — reporting as no-submit")
 
+        jam("submit_button", f"{filled_count} answer(s) filled and nothing to submit them with")
         return ProcessResult(
             success=False, status="skipped_no_submit",
             reason=f"Filled {filled_count} questions, submit button not found",

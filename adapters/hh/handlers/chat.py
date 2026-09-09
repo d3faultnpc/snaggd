@@ -4,6 +4,7 @@ from .base import BaseHandler, FormType, ProcessResult
 from ..dom import find_chat_link, find_visible
 
 from config import SELECTORS
+from utils.navigation import jam
 
 try:
     from playwright.sync_api import TimeoutError as _PlaywrightTimeout
@@ -217,6 +218,13 @@ class ChatHandler(BaseHandler):
                     is_terminal=True,
                     goal_reached=True
                 ))
+            # Jammed here rather than inside _find_add_cover_btn, and the
+            # distinction is the whole design: that lookup misses legitimately
+            # whenever the letter already went out in an earlier layer — 30 of
+            # the 33 misses measured over three weeks were exactly that. Only
+            # the caller knows whether the button was NEEDED. A jam belongs
+            # where the need is known, not where the lookup happened.
+            jam("add_cover_button", "the letter had not been sent and the control to send it was absent")
             self._narrate(reporter, "   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter",
                           gui_message="[OK] applied via chat — no cover letter option here",
                           vacancy_id=vid)
@@ -250,6 +258,9 @@ class ChatHandler(BaseHandler):
             # content() crosses the boundary the snapshotter cannot. Written only
             # when the field is missing — a working run has nothing to explain —
             # and only under debug, since it carries the conversation.
+            # The 2026-08-29 shape: the button was there, the field behind it
+            # was not. Ten applications went out with no letter that evening.
+            jam("cover_input", "the cover control opened and no field appeared behind it")
             self._dump_frame(chatik_scope, kwargs.get("session_dir"), "cover_input_missing")
             self._narrate(reporter, "   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover",
                           gui_message="[OK] applied via chat — couldn't add a cover letter",
