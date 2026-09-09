@@ -315,6 +315,10 @@ class ChatHandler(BaseHandler):
                     status="applied_via_chat",
                     reason="Auto-read employer: cover letter sent via chatik",
                     scenario="chat_cover_sent",
+                    # Which of the three routes delivered it. A length alone
+                    # cannot answer "was a letter delivered" for a record whose
+                    # terminal layer is not the one that delivered — see
+                    # hh_modal.py's own note and adapter.py's cover_delivery.
                     # The letter itself, not only its length. It is what was
                     # actually sent on the person's behalf, and until now it lived
                     # only in cover_cache.json — keyed by vacancy and profile hash,
@@ -322,7 +326,8 @@ class ChatHandler(BaseHandler):
                     # changed. Vacancy TEXT is deliberately NOT stored (there is a
                     # link, and hh keeps its own archive); the letter has no such
                     # second home.
-                    details={'cover_length': len(cover_letter),
+                    details={'cover_delivered': 'chat',
+                             'cover_length': len(cover_letter),
                              'cover_text': cover_letter},
                     is_terminal=True,
                     goal_reached=True

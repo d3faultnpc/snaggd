@@ -14,7 +14,7 @@ from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_
                              find_chat_link, find_topmost_dialog, find_visible,
                              is_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
-from adapters.hh.handlers.base import FormType, ProcessResult
+from adapters.hh.handlers.base import FormType, ProcessResult, cover_delivery_of
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
 from utils.helpers import random_delay
@@ -764,7 +764,24 @@ class HHAdapter(SiteAdapter):
         first_form_type = 'unknown'
         result = None
         prev_form_type = None
-        cover_sent_in_modal = False
+        # Whether a cover letter was delivered, where, and the letter — carried
+        # across layers because the layer that delivers is often not the layer
+        # that ends the loop. hh_modal.py sends the cover and hands the loop on
+        # to chatik (is_terminal=False), and the record is assembled from the
+        # terminal result, so that delivery used to be recorded nowhere: on the
+        # live profile, cover_length was present on exactly the 396 records that
+        # went through chatik and absent from all 54 that went through the modal
+        # — where the letter is not even optional.
+        #
+        # One carrier, two readers. The record's fact is "was it delivered and
+        # where"; the chat handler's question is narrower — "did an earlier
+        # layer already send it", which it uses to decide whether to hunt for
+        # the button at all — and that is this same fact filtered to 'modal'.
+        # It used to be a separate boolean set off the hh_modal_cover_sent
+        # status; deriving it changes no behaviour (that status is produced at
+        # exactly one place, under `if filled`) and removes the second answer to
+        # a question that must have one.
+        cover_delivery = None
 
         for layer in range(MAX_LAYERS):
             # The chooser first, and its answer is acted on rather than logged.
@@ -900,7 +917,9 @@ class HHAdapter(SiteAdapter):
             handler = self.handlers.get_handler(form_type)
             result = handler.process(page, vacancy_text=vacancy_text,
                                      vacancy_id=vacancy_id, llm_cover=self.llm_cover,
-                                     cover_sent_via_modal=cover_sent_in_modal,
+                                     cover_sent_via_modal=bool(
+                                         cover_delivery
+                                         and cover_delivery.get('cover_delivered') == 'modal'),
                                      reporter=self._reporter,
                                      # Distinct from vacancy_id above (HH's own id,
                                      # used for cache keys) — this is the run's
@@ -913,13 +932,17 @@ class HHAdapter(SiteAdapter):
                                      # a dump call at a failure site safe to leave
                                      # in place unconditionally.
                                      session_dir=session_dir)
+            # The delivery, from whichever layer performed it. Each of the three
+            # routes that can send a cover names itself in its own details
+            # (hh_modal.py, chat.py, cover_only.py); nothing else may claim one.
+            #
             # questions_cover_sent no longer exists (session 56) — questions.py's
             # cover-shaped answers go through the generic fill_form() path, not
             # HH's native cover mechanism, so they were never real grounds for
-            # this flag. Only hh_modal.py's own selector-recognized cover step
-            # (a real HH data-qa field, not a keyword guess) still sets it.
-            if result.status == "hh_modal_cover_sent":
-                cover_sent_in_modal = True
+            # claiming a cover was delivered, and it still does not claim one.
+            declared = cover_delivery_of(result.details)
+            if declared:
+                cover_delivery = declared
 
             # needs_debug_review: ambiguous mid-form failure (see handlers'
             # _flag_for_debug_review) — an LLM answer that couldn't be applied,
@@ -989,6 +1012,13 @@ class HHAdapter(SiteAdapter):
                 is_terminal=True,
                 goal_reached=False
             )
+
+        # The delivery is a fact about the vacancy, not about the layer that
+        # happened to end the loop, so it is written onto whatever result is
+        # being returned. Last, deliberately: an earlier layer's delivery is
+        # authoritative over a terminal layer that says nothing about one.
+        if cover_delivery:
+            result.details = {**(result.details or {}), **cover_delivery}
 
         return result, first_form_type
 

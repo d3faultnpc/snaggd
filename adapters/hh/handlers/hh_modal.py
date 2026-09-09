@@ -129,7 +129,22 @@ class HHModalHandler(BaseHandler):
                 status="hh_modal_cover_sent",
                 reason=f"Cover letter submitted via modal, button: '{button_text}'",
                 scenario="hh_modal_with_cover",
-                details={'button_text': button_text},
+                # is_terminal=False below means this result is NOT the one the
+                # record is built from — adapter.py assembles it from the layer
+                # that ends the loop, which for this route is chatik, one layer
+                # on. So the delivery that happens HERE left no trace at all:
+                # of 921 records on the live profile, cover_length was present
+                # on exactly the 396 that went through chatik, and the modal
+                # route — where the cover is not even optional — had none.
+                # Carried across layers by the loop now; see adapter.py's
+                # cover_delivery. The letter itself for the same reason the
+                # other two routes keep it: it is what was sent on the person's
+                # behalf, and cover_cache.json is keyed by profile hash and
+                # loses it whenever the profile changes.
+                details={'button_text': button_text,
+                         'cover_delivered': 'modal',
+                         'cover_length': len(cover_letter),
+                         'cover_text': cover_letter},
                 is_terminal=False,
                 goal_reached=False
             )

@@ -80,6 +80,37 @@ def is_free_text_option(option_text: str) -> bool:
     return norm_option(option_text) in FREE_TEXT_OPTIONS
 
 
+# ── Cover delivery, shared by the three routes that can perform one ──────────
+# hh offers three places a cover letter can actually be sent, and which one a
+# vacancy uses is hh's choice, not ours: the response modal (where the letter is
+# mandatory), chatik, and the post-apply cover form. All three are real; what
+# was missing was a single fact saying which one delivered, and the evidence.
+#
+# Naming them here rather than letting each handler describe itself: a route
+# nobody can enumerate is a route the record cannot be checked against, and
+# "was a letter delivered" was being answered from the status string, which is
+# produced by whichever layer ended the loop rather than by whichever layer
+# delivered. See adapters/hh/adapter.py's cover_delivery for the carry.
+COVER_ROUTES = ("modal", "chat", "cover_only")
+
+_DELIVERY_KEYS = ("cover_delivered", "cover_length", "cover_text")
+
+
+def cover_delivery_of(details: Optional[dict]) -> Optional[dict]:
+    """The delivery this layer declared, with its evidence — or None.
+
+    Fails closed on the claim, not on the absence: a route this module cannot
+    name reads as "nothing was delivered here". A misspelled route silently
+    claiming a letter reached an employer is the failure worth being strict
+    about; a real delivery losing its name is caught by the handler tests.
+    """
+    if not details:
+        return None
+    if details.get("cover_delivered") not in COVER_ROUTES:
+        return None
+    return {k: details[k] for k in _DELIVERY_KEYS if k in details}
+
+
 def coerce_answers(answers: dict) -> dict:
     """fill_form() promises one string per field. checkbox_group is the one
     exception — its answer is a list — and a model that returns a list for

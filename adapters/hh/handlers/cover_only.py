@@ -86,7 +86,8 @@ class CoverOnlyHandler(BaseHandler):
                 # changed. Vacancy TEXT is deliberately NOT stored (there is a
                 # link, and hh keeps its own archive); the letter has no such
                 # second home.
-                details={'cover_length': len(cover_letter),
+                details={'cover_delivered': 'cover_only',
+                         'cover_length': len(cover_letter),
                          'cover_text': cover_letter},
                 is_terminal=True,
                 goal_reached=True
