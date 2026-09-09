@@ -1,4 +1,5 @@
-from .base import BaseHandler, FormType, ProcessResult
+from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
+                   coerce_answers, is_free_text_option, norm_option)
 from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 
@@ -228,7 +229,10 @@ class HHModalHandler(BaseHandler):
                 option = self._extract_radio_option_text(inp)
                 if question:
                     if question not in checkbox_groups:
-                        checkbox_groups[question] = {"idx": f"cbgroup_{len(checkbox_groups)}", "question": question, "elements": []}
+                        checkbox_groups[question] = {"idx": f"cbgroup_{len(checkbox_groups)}",
+                                                     "question": question,
+                                                     "name": inp.get_attribute("name") or "",
+                                                     "elements": []}
                     checkbox_groups[question]["elements"].append((i, inp, option or f"option_{i}"))
             else:
                 # Salary fields are included here (unlike the cover-textarea
@@ -270,7 +274,7 @@ class HHModalHandler(BaseHandler):
             print("   ⚠️ LLM unavailable — cannot answer this modal's fields")
             return 0, []
         try:
-            answers = self._agent.fill_form(vacancy_text, fields)
+            answers = coerce_answers(self._agent.fill_form(vacancy_text, fields))
         except Exception as e:
             print(f"   ⚠️ LLM fill_form error: {e}")
             return 0, []
@@ -301,13 +305,13 @@ class HHModalHandler(BaseHandler):
                 free_text = answer[5:].strip()
                 target = "open"
             else:
-                target = answer.strip().lower()
+                target = norm_option(answer)
             clicked = False
             match_found = False
             for idx, el, val, opt_text in grp["elements"]:
                 is_open = val == "open"
                 matches_open = is_open and free_text is not None
-                matches_text = not is_open and opt_text.strip().lower() == target
+                matches_text = not is_open and norm_option(opt_text) == target
                 if matches_open or matches_text:
                     match_found = True
                     try:
@@ -350,55 +354,63 @@ class HHModalHandler(BaseHandler):
                         print(f"   ⚠️ Checkbox error: {e}")
                         ambiguous_reasons.append(f"checkbox_error[{question[:30]}]: {e}")
             else:
-                answer = answers.get(grp["idx"], "").strip()
-                if not answer:
-                    continue
-                # Same "Свой вариант" recognition as questions.py — checkbox
-                # groups don't carry a value=="open" attribute the way radio
-                # inputs do, so this matches by the option's own display text.
-                free_text = None
-                if answer.lower().startswith("open:"):
-                    free_text = answer[5:].strip()
-                    target = "open"
-                else:
-                    target = answer.strip().lower()
-                clicked = False
-                match_found = False
-                for i, inp, opt_text in elems:
-                    norm_opt = opt_text.strip().lower()
-                    is_free = norm_opt in ("свой вариант", "другое", "other")
-                    matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
-                    matches_opt = not is_free and norm_opt == target
-                    if matches_free or matches_opt:
-                        match_found = True
+                # Multi-select, read through the shared matcher — see
+                # base.choose_checkbox_options and questions.py's twin of this
+                # block. Both used to treat a checkbox group as single-choice.
+                answer = answers.get(grp["idx"], "")
+                opts = [opt for _, _, opt in elems]
+                chosen, free_text = choose_checkbox_options(answer, opts)
+                ticked = 0
+
+                for pos in chosen:
+                    i, inp, opt_text = elems[pos]
+                    try:
+                        inp.check()
+                        self._wait_and_random_delay(page, 400, 800)
+                        if not inp.is_checked():
+                            ambiguous_reasons.append(
+                                f"checkbox_group_tick_refused[{question[:30]}]: "
+                                f"{ticked}/{len(chosen)} applied")
+                            break
+                        ticked += 1
+                    except Exception as e:
+                        print(f"   ⚠️ Checkbox group error: {e}")
+                        ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
+                        break
+
+                if ticked == 0 and free_text:
+                    free_el = next(((i, inp, opt) for i, inp, opt in elems
+                                    if is_free_text_option(opt)), None)
+                    if free_el is None:
+                        ambiguous_reasons.append(
+                            f"checkbox_group_no_match[{question[:30]}]: '{str(answer)[:60]}'")
+                    else:
+                        i, inp, opt_text = free_el
                         try:
                             inp.check()
                             self._wait_and_random_delay(page, 400, 800)
-                            if is_free and free_text:
-                                try:
-                                    ta = inp.evaluate_handle("""el => {
-                                        const body = el.closest('[data-qa="task-body"]');
-                                        if (!body) return null;
-                                        for (const ta of body.querySelectorAll('textarea')) {
-                                            if (ta.offsetParent !== null) return ta;
-                                        }
-                                        return null;
-                                    }""")
-                                    ta_el = ta.as_element()
-                                    if ta_el and ta_el.is_visible():
-                                        ta_el.type(free_text, delay=10)
-                                    else:
-                                        ambiguous_reasons.append(f"checkbox_group_open_no_textarea[{question[:30]}]")
-                                except Exception as e:
-                                    ambiguous_reasons.append(f"checkbox_group_open_textarea_error[{question[:30]}]: {e}")
-                            filled_count += 1
-                            clicked = True
+                            ta = page.query_selector(f'textarea[name="{grp["name"]}_text"]') \
+                                if grp.get("name") else None
+                            if ta is None or not ta.is_visible():
+                                ta = self._visible_textarea_in_group(inp)
+                            if ta is not None and ta.is_visible():
+                                ta.type(free_text, delay=10)
+                                ticked += 1
+                            else:
+                                ambiguous_reasons.append(
+                                    f"checkbox_group_open_no_textarea[{question[:30]}]")
                         except Exception as e:
-                            print(f"   ⚠️ Checkbox group error: {e}")
-                            ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
-                        break
-                if not clicked and not match_found:
-                    ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
+                            ambiguous_reasons.append(
+                                f"checkbox_group_click_error[{question[:30]}]: {e}")
+
+                if ticked:
+                    filled_count += 1
+                elif not str(answer).strip():
+                    ambiguous_reasons.append(f"checkbox_group_no_answer[{question[:30]}]")
+                elif not any(question[:30] in r and r.startswith("checkbox_group_")
+                             for r in ambiguous_reasons):
+                    ambiguous_reasons.append(
+                        f"checkbox_group_no_match[{question[:30]}]: '{str(answer)[:60]}'")
 
         for i, sel, label, options, name in select_fields:
             answer = answers.get(f"select_{i}", "").strip()
@@ -471,6 +483,22 @@ class HHModalHandler(BaseHandler):
             # answer it was never asked to give.
             print(f"   ⚠️ Couldn't read a field's label ({e}) — the field will be skipped")
             return ""
+
+    def _visible_textarea_in_group(self, inp):
+        """The group's free-text box, found by walking its block. Fallback for
+        when `<name>_text` does not resolve."""
+        try:
+            handle = inp.evaluate_handle("""el => {
+                const body = el.closest('[data-qa="task-body"]');
+                if (!body) return null;
+                for (const ta of body.querySelectorAll('textarea')) {
+                    if (ta.offsetParent !== null) return ta;
+                }
+                return null;
+            }""")
+            return handle.as_element()
+        except Exception:
+            return None
 
     def _extract_radio_option_text(self, inp) -> str:
         """Finds the visible option text for a radio/checkbox input."""

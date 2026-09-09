@@ -1,3 +1,5 @@
+import json
+import re
 from abc import ABC, abstractmethod
 from enum import Enum
 from dataclasses import dataclass
@@ -57,6 +59,122 @@ class ProcessResult:
     is_terminal: bool = True    # stop the goal-directed loop after this result
     goal_reached: bool = False  # application successfully submitted
     next_hint: Optional[str] = None  # optional hint for next handler selection
+
+# ── Option matching, shared by every handler that reads a choice group ───────
+# Lived twice, inline, in questions.py and hh_modal.py, and had already drifted:
+# one normalised nbsp and multi-space, the other did a bare .strip().lower().
+# 2026-09-09.
+
+FREE_TEXT_OPTIONS = ("свой вариант", "другое", "other")
+
+
+def norm_option(s: str) -> str:
+    """Normalize option text for comparison: nbsp, multi-space, space-before-punct."""
+    s = (s or "").replace('\u00a0', ' ')
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(r'\s+([.,!?;:])', r'\1', s)
+    return s.strip().lower()
+
+
+def is_free_text_option(option_text: str) -> bool:
+    return norm_option(option_text) in FREE_TEXT_OPTIONS
+
+
+def coerce_answers(answers: dict) -> dict:
+    """fill_form() promises one string per field. checkbox_group is the one
+    exception — its answer is a list — and a model that returns a list for
+    something else must not take the run down on the next `.strip()`.
+    """
+    out = {}
+    for k, v in (answers or {}).items():
+        if str(k).startswith("cbgroup_") or isinstance(v, str):
+            out[k] = v
+        elif isinstance(v, (list, tuple)):
+            out[k] = ", ".join(str(x) for x in v)
+        else:
+            out[k] = "" if v is None else str(v)
+    return out
+
+
+def choose_checkbox_options(answer, options: list[str]) -> tuple[list[int], Optional[str]]:
+    """Which of `options` a checkbox-group answer asks for, plus any free text.
+
+    Returns (indices into `options`, free_text or None).
+
+    A checkbox group is multi-select — that is what the control means — so the
+    answer may name several options. It is also the LLM's output, which is the
+    part of this that cannot be relied on to hold a format, so this reads
+    several shapes rather than one:
+
+      * a real list (the declared format, a JSON array)
+      * one exact option, which is what single-choice-looking groups still give
+      * several options run together in one string
+      * "open: <text>" for a genuine free-text answer
+
+    Splitting on commas would be the obvious way to read the third shape and is
+    wrong: option texts contain commas of their own. Measured 2026-09-09 on one
+    live form — "Цифровые продукты (SaaS, сервисы, приложения)" splits into three
+    fragments that are not options, and "Одежда, обувь, аксессуары" into two. So
+    matching runs the other way round: each option is looked for INSIDE the
+    answer, longest first, and a match consumes its span so a shorter option
+    cannot match the same words again.
+
+    Free text is a last resort, never a way to say several things: a model that
+    lists real option names after "open:" is asking for those options, and gets
+    them ticked instead of recited into a comment box.
+    """
+    real = [(i, norm_option(o)) for i, o in enumerate(options) if not is_free_text_option(o)]
+
+    def by_exact(values) -> list[int]:
+        out = []
+        for v in values:
+            nv = norm_option(v if isinstance(v, str) else str(v))
+            for i, no in real:
+                if no and no == nv and i not in out:
+                    out.append(i)
+                    break
+        return out
+
+    if isinstance(answer, (list, tuple)):
+        return sorted(by_exact(answer)), None
+
+    text = (answer or "").strip() if isinstance(answer, str) else ""
+    if not text:
+        return [], None
+
+    free_text = None
+    if text.lower().startswith("open:"):
+        free_text = text[5:].strip()
+        text = free_text
+
+    if text.startswith("[") and text.endswith("]"):
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, list) and parsed:
+            picked = sorted(by_exact(parsed))
+            if picked:
+                return picked, None
+
+    # Longest option first, each match consuming its span.
+    picked: list[int] = []
+    remaining = norm_option(text)
+    for i, no in sorted(real, key=lambda t: -len(t[1])):
+        if not no:
+            continue
+        m = re.search(rf'(?<!\w){re.escape(no)}(?!\w)', remaining)
+        if m:
+            picked.append(i)
+            remaining = remaining[:m.start()] + " " + remaining[m.end():]
+    if picked:
+        return sorted(picked), None
+
+    # Nothing on the page was named. Only now is this genuinely free text — and
+    # a bare answer with no "open:" prefix counts, since the group may have no
+    # free-text option at all and the caller has to see the text to report it.
+    return [], (free_text if free_text is not None else text)
+
 
 class BaseHandler(ABC):
     """Base class for form handlers."""

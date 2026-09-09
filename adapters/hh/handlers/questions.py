@@ -1,17 +1,14 @@
-import re
 from pathlib import Path
 
 from ..dom import find_visible
-from .base import BaseHandler, FormType, ProcessResult
+from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
+                   coerce_answers, is_free_text_option, norm_option)
 from config import CONFIG, SELECTORS
 
 
-def _norm(s: str) -> str:
-    """Normalize option text for comparison: nbsp, multi-space, space-before-punct."""
-    s = s.replace(' ', ' ')
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'\s+([.,!?;:])', r'\1', s)
-    return s.strip().lower()
+# One normaliser for both handlers now — this was a local copy here and a bare
+# .strip().lower() in hh_modal.py, and the two had already drifted apart.
+_norm = norm_option
 
 
 class QuestionsHandler(BaseHandler):
@@ -76,6 +73,13 @@ class QuestionsHandler(BaseHandler):
                         checkbox_groups[question] = {
                             "idx": f"cbgroup_{len(checkbox_groups)}",
                             "question": question,
+                            # hh names a group's free-text box `<input name>_text`
+                            # for checkboxes exactly as it does for radios — the
+                            # radio path has always addressed it that way, the
+                            # checkbox path used to scan the block for "the first
+                            # visible textarea" instead. Same element, weaker
+                            # address; the scan stays as the fallback.
+                            "name": inp.get_attribute("name") or "",
                             "elements": [],
                             "has_free_text": False,
                         }
@@ -132,7 +136,7 @@ class QuestionsHandler(BaseHandler):
         answers: dict[str, str] = {}
         if fields and self._agent is not None:
             try:
-                answers = self._agent.fill_form(vacancy_text, fields)
+                answers = coerce_answers(self._agent.fill_form(vacancy_text, fields))
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
         elif fields and self._agent is None:
@@ -244,58 +248,94 @@ class QuestionsHandler(BaseHandler):
                 else:
                     print(f"   ⏭ Checkbox '{question[:50]}': unchecked ({answer or 'no answer'})")
             else:
-                # Mutually exclusive group — pick exactly one option
-                answer = answers.get(grp["idx"], "").strip()
-                if not answer:
-                    print(f"   ⏭ Checkbox group '{question[:50]}': no answer")
-                    continue
-                free_text = None
-                if answer.lower().startswith("open:"):
-                    free_text = answer[5:].strip()
-                    target = "open"
-                else:
-                    target = _norm(answer)
-                clicked = False
-                match_found = False
-                for i, inp, opt_text in elems:
-                    norm_opt = _norm(opt_text)
-                    is_free = norm_opt in ("свой вариант", "другое", "other")
-                    matches_free = is_free and (free_text is not None or target in ("свой вариант", "другое", "other"))
-                    matches_opt = not is_free and norm_opt == target
-                    if matches_free or matches_opt:
-                        match_found = True
+                # A multi-select group. It was read as mutually exclusive until
+                # 2026-09-09 — "pick exactly one option", compared as one whole
+                # string — which is not what a checkbox is. On a live form that
+                # cost the whole application: the model answered a "выберите не
+                # более 3-х" question with three options, nothing matched,
+                # nothing was ticked, and hh rejected a form whose other twelve
+                # answers were already written. Measured over three runs against
+                # the same page: two of three ended with nothing ticked here.
+                answer = answers.get(grp["idx"], "")
+                opts = [opt for _, _, opt in elems]
+                chosen, free_text = choose_checkbox_options(answer, opts)
+                ticked = 0
+
+                for pos in chosen:
+                    i, inp, opt_text = elems[pos]
+                    try:
+                        inp.check()
+                        page.wait_for_timeout(400)
+                        # Read the box back instead of trusting the click. This
+                        # is also how the "не более N вариантов" cap is honoured
+                        # without parsing N out of Russian prose: hh stops
+                        # accepting ticks past its own limit, and a tick that
+                        # did not take says so.
+                        if not inp.is_checked():
+                            print(f"   ⚠️ Checkbox group '{question[:50]}': "
+                                  f"'{opt_text[:40]}' did not take — stopping (limit reached?)")
+                            ambiguous_reasons.append(
+                                f"checkbox_group_tick_refused[{question[:30]}]: "
+                                f"{ticked}/{len(chosen)} applied")
+                            break
+                        ticked += 1
+                        print(f"   ✅ Checkbox group '{question[:50]}': {opt_text}")
+                    except Exception as e:
+                        print(f"   ⚠️ Checkbox group click error: {e}")
+                        ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
+                        break
+
+                if ticked == 0 and free_text:
+                    # Genuinely none of the options fit. Only reachable when the
+                    # answer named no option at all — a list of real option names
+                    # is ticked above, never recited into the comment box, which
+                    # is what used to happen and what nothing flagged.
+                    free_el = next(((i, inp, opt) for i, inp, opt in elems
+                                    if is_free_text_option(opt)), None)
+                    if free_el is None:
+                        print(f"   ⚠️ Checkbox group '{question[:50]}': no option matched "
+                              f"and no free-text option exists")
+                        ambiguous_reasons.append(
+                            f"checkbox_group_no_match[{question[:30]}]: '{str(answer)[:60]}'")
+                    else:
+                        i, inp, opt_text = free_el
                         try:
                             inp.check()
                             page.wait_for_timeout(600)
-                            if is_free and free_text:
-                                try:
-                                    ta = inp.evaluate_handle("""el => {
-                                        const body = el.closest('[data-qa="task-body"]');
-                                        if (!body) return null;
-                                        for (const ta of body.querySelectorAll('textarea')) {
-                                            if (ta.offsetParent !== null) return ta;
-                                        }
-                                        return null;
-                                    }""")
-                                    ta_el = ta.as_element()
-                                    if ta_el and ta_el.is_visible():
-                                        ta_el.type(free_text, delay=10)
-                                        print(f"   ✅ Checkbox group '{question[:50]}': Свой вариант + text")
-                                    else:
-                                        print(f"   ⚠️ Checkbox group '{question[:50]}': Свой вариант — textarea not found")
-                                except Exception as e:
-                                    print(f"   ⚠️ Свой вариант textarea: {e}")
+                            ta = page.query_selector(f'textarea[name="{grp["name"]}_text"]') \
+                                if grp.get("name") else None
+                            if ta is None or not ta.is_visible():
+                                ta = self._visible_textarea_in_group(inp)
+                            if ta is not None and ta.is_visible():
+                                ta.type(free_text, delay=10)
+                                ticked += 1
+                                print(f"   ✅ Checkbox group '{question[:50]}': {opt_text} + text")
                             else:
-                                print(f"   ✅ Checkbox group '{question[:50]}': {opt_text}")
-                            filled_count += 1
-                            clicked = True
+                                print(f"   ⚠️ Checkbox group '{question[:50]}': "
+                                      f"{opt_text} ticked, textarea not found")
+                                ambiguous_reasons.append(
+                                    f"checkbox_group_open_no_textarea[{question[:30]}]")
                         except Exception as e:
                             print(f"   ⚠️ Checkbox group click error: {e}")
-                            ambiguous_reasons.append(f"checkbox_group_click_error[{question[:30]}]: {e}")
-                        break
-                if not clicked and not match_found:
-                    print(f"   ⚠️ Checkbox group '{question[:50]}': no match for '{answer[:60]}'")
-                    ambiguous_reasons.append(f"checkbox_group_no_match[{question[:30]}]: '{answer[:60]}'")
+                            ambiguous_reasons.append(
+                                f"checkbox_group_click_error[{question[:30]}]: {e}")
+
+                if ticked:
+                    filled_count += 1
+                elif not str(answer).strip():
+                    # No answer for a group is not the silent `continue` it used
+                    # to be: if the group turns out to be required, this is the
+                    # thing that rejects the form, and it should be readable
+                    # before the submit rather than inferred after it.
+                    print(f"   ⏭ Checkbox group '{question[:50]}': no answer")
+                    ambiguous_reasons.append(f"checkbox_group_no_answer[{question[:30]}]")
+                elif not any(r.startswith(("checkbox_group_no_match[",
+                                           "checkbox_group_click_error[",
+                                           "checkbox_group_open_no_textarea[",
+                                           "checkbox_group_tick_refused["))
+                             and question[:30] in r for r in ambiguous_reasons):
+                    ambiguous_reasons.append(
+                        f"checkbox_group_no_match[{question[:30]}]: '{str(answer)[:60]}'")
 
         self._narrate(reporter, f"   ✅ Filled {filled_count}/{total} questions",
                       gui_message=f"[OK] answered {filled_count}/{total} questions", vacancy_id=vid)
@@ -346,6 +386,25 @@ class QuestionsHandler(BaseHandler):
             # answer it was never asked to give.
             print(f"   ⚠️ Couldn't read a field's label ({e}) — the field will be skipped")
             return ""
+
+    def _visible_textarea_in_group(self, inp):
+        """The group's free-text box, found by walking its block.
+
+        Fallback for when `<name>_text` does not resolve — a group whose input
+        carries no name attribute, or a markup shape we have not seen.
+        """
+        try:
+            handle = inp.evaluate_handle("""el => {
+                const body = el.closest('[data-qa="task-body"]');
+                if (!body) return null;
+                for (const ta of body.querySelectorAll('textarea')) {
+                    if (ta.offsetParent !== null) return ta;
+                }
+                return null;
+            }""")
+            return handle.as_element()
+        except Exception:
+            return None
 
     def _extract_radio_option_text(self, inp) -> str:
         try:
