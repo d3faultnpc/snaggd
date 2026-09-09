@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -56,10 +57,31 @@ class Logger:
 
     def save_applied_log(self, log_data: List[Dict[str, Any]]) -> None:
         """Saves applied_log.json — only the portion beyond the read-only
-        dedup baseline (see load_applied_log) when dedup_source_path is set."""
+        dedup baseline (see load_applied_log) when dedup_source_path is set.
+
+        Written to a sibling temp file and renamed over the target, rather than
+        opened "w" in place. `open(path, "w")` empties the file first and then
+        takes ~45 ms to refill it at today's 1.2 MB, and this runs once per
+        logged vacancy — so a run spends that window truncated, repeatedly.
+        Anything that ends the process inside it (the app quit, a kill, a host
+        panic) leaves half-written JSON, and _read_json_list turns a
+        JSONDecodeError into an EMPTY LIST without saying so. The next run
+        would then see no history at all: dedup resets and the crawler walks
+        every vacancy in the log again.
+
+        os.replace() is atomic within one filesystem, and the temp file is a
+        sibling, so a reader sees either the whole old file or the whole new
+        one and never a third state. Measured 2026-09-09, when the merge of the
+        two archived profiles took this file from 434 KB to 1.2 MB and made the
+        window three times wider.
+        """
         to_save = log_data[self._dedup_baseline_count:] if self.dedup_source_path else log_data
-        with open(self.applied_log_path, "w", encoding="utf-8") as f:
+        tmp = self.applied_log_path.parent / (self.applied_log_path.name + ".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(to_save, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.applied_log_path)
     
     def is_processed(self, url: str, applied_log: List[Dict[str, Any]]) -> Optional[str]:
         """Returns existing status if vacancy was already processed, else None.
