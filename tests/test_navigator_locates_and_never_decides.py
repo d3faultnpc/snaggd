@@ -32,7 +32,7 @@ def check(label, condition):
 
 with patch.dict("os.environ", {"LLM_API_KEY": "test"}):
     with patch("core.llm_agent.OpenAI"):
-        from adapters.hh.navigator import make_navigator, knows, _CONTEXT
+        from adapters.hh.navigator import make_navigator, knows, _CONTEXT, _PURPOSE
         from adapters.hh.dom import SAVE_SHAPED, DATA_COLLECTOR_CLOSE
         from utils.navigation import NODES, jam, set_navigator
         from utils.call_ledger import CallLedger, set_ledger
@@ -94,10 +94,29 @@ check("and it names the second dialog, which is what both real failures were",
 check("nothing in the context asks the model what to do",
       "what should" not in ctx and "decide" not in ctx)
 
-# ── a node with no directions is not asked about ─────────────────────────────
-check("only the node with a closed vocabulary has directions", knows("data_collector_close"))
-check("every other declared node has none, so it is left as jammed as it was",
-      not any(knows(n) for n in NODES if n != "data_collector_close"))
+# ── which nodes have directions, and which deliberately do not ───────────────
+WITH_DIRECTIONS = {"data_collector_close", "add_cover_button", "cover_input"}
+check("the closed-vocabulary node has directions", knows("data_collector_close"))
+check("so do the two where letters have actually been lost",
+      knows("add_cover_button") and knows("cover_input"))
+check(f"and no others, so every remaining node is left as jammed as it was "
+      f"(has directions: {sorted(n for n in NODES if knows(n))})",
+      {n for n in NODES if knows(n)} == WITH_DIRECTIONS)
+
+# The open-vocabulary half. "None of these" has to be an allowed answer, or a
+# claw with no way out picks the closest-looking control on a real employer's
+# form — which is a guess wearing the clothes of a decision.
+for node in ("add_cover_button", "cover_input"):
+    purpose = _PURPOSE[node]
+    check(f"{node}: refusing is offered as an answer", "or none" in purpose)
+    ctx = _CONTEXT[node].lower()
+    check(f"{node}: the context says the application is already submitted, "
+          f"so the cost of refusing is named", "already" in ctx)
+    check(f"{node}: nothing asks the model what to do",
+          "what should" not in ctx and "decide" not in ctx)
+check("the letter-bearing nodes say what a wrong pick costs",
+      "real employer" in _CONTEXT["add_cover_button"]
+      and "wrong box" in _CONTEXT["cover_input"])
 check("a node with no directions returns nothing rather than improvising",
       make_navigator(_Agent(0))("action_button", "", CANDIDATES) is None)
 
@@ -150,6 +169,48 @@ check("canon runs before anyone is asked — the close address is a cascade, not
       isinstance(DATA_COLLECTOR_CLOSE, list) and len(DATA_COLLECTOR_CLOSE) >= 2)
 check("the jam is what the navigator hangs off, not a new path",
       'jam("data_collector_close"' in adapter_src)
+
+# ── the budget, which is a ceiling on runaway and not a throttle ─────────────
+# A site that renamed one address makes every vacancy ask once, and THAT run
+# should finish: abandoning a person's applications to save a few cents is the
+# wrong trade. What the budget catches is several nodes broken at once, each
+# vacancy asking three or four times, a bill compounding while nobody watches.
+from utils.navigation import navigator_spend
+
+set_navigator(make_navigator(_Agent(0)), budget=2)
+try:
+    spent = [jam("data_collector_close", "x", candidates=CANDIDATES) for _ in range(4)]
+    spend = navigator_spend()
+finally:
+    set_navigator(None)
+check("the first questions inside the budget are asked", spent[:2] == [0, 0])
+check("and everything past it is not", spent[2:] == [None, None])
+check("the count stops at the budget rather than running on", spend == (2, 2))
+
+set_navigator(make_navigator(_Agent(0)))
+try:
+    unlimited = [jam("data_collector_close", "x", candidates=CANDIDATES) for _ in range(5)]
+    spend = navigator_spend()
+finally:
+    set_navigator(None)
+check("no budget means no ceiling — a run with no navigator has neither",
+      unlimited == [0] * 5 and spend == (5, 0))
+
+check("the count resets with each registration, so a budget is per run",
+      navigator_spend() == (0, 0))
+
+adapter_src2 = (_ENGINE / "adapters/hh/adapter.py").read_text(encoding="utf-8")
+check("the loop stops on a spent budget rather than the jam doing it",
+      'termination_reason = "navigator_budget_spent"' in adapter_src2)
+check("and says why, which is the difference from a run that quietly costs triple",
+      "stopping rather than paying to relearn the same thing" in adapter_src2)
+
+# The click belongs to the path that was already going to click it. Doing it in
+# the navigator branch too is how a chat gets two messages instead of one.
+chat_src = (_ENGINE / "adapters/hh/handlers/chat.py").read_text(encoding="utf-8")
+_branch = chat_src[chat_src.index('jam("add_cover_button"'):][:900]
+check("the cover control is handed to the existing path, not clicked twice",
+      "add_cover = elements[picked]" in _branch and ".click(" not in _branch)
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

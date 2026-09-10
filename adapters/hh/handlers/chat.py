@@ -1,7 +1,7 @@
 import time
 
 from .base import BaseHandler, FormType, ProcessResult
-from ..dom import find_chat_link, find_visible
+from ..dom import TYPEABLE, addressable_controls, find_chat_link, find_visible
 
 from config import SELECTORS
 from utils.navigation import jam
@@ -224,8 +224,22 @@ class ChatHandler(BaseHandler):
             # the 33 misses measured over three weeks were exactly that. Only
             # the caller knows whether the button was NEEDED. A jam belongs
             # where the need is known, not where the lookup happened.
-            jam("add_cover_button", "the letter had not been sent and the control to send it was absent",
-                scope=chatik_scope)
+            candidates, elements = addressable_controls(chatik_scope)
+            picked = jam("add_cover_button",
+                         "the letter had not been sent and the control to send it was absent",
+                         scope=chatik_scope, candidates=candidates)
+            if picked is not None:
+                # Handed to the existing path rather than clicked here. The
+                # lines below already click this control, wait, and look for the
+                # field behind it — and clicking it twice is how a chat gets two
+                # messages instead of one, which this handler has paid for
+                # before (session 56, the duplicate-message investigation).
+                add_cover = elements[picked]
+                self._narrate(reporter,
+                              f"   directions name the cover control: "
+                              f"{candidates[picked].get('label') or candidates[picked].get('data_qa')!r}",
+                              vacancy_id=vid)
+        if not add_cover:
             self._narrate(reporter, "   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter",
                           gui_message="[OK] applied via chat — no cover letter option here",
                           vacancy_id=vid)
@@ -261,8 +275,16 @@ class ChatHandler(BaseHandler):
             # and only under debug, since it carries the conversation.
             # The 2026-08-29 shape: the button was there, the field behind it
             # was not. Ten applications went out with no letter that evening.
-            jam("cover_input", "the cover control opened and no field appeared behind it",
-                scope=chatik_scope)
+            fields, field_els = addressable_controls(chatik_scope, selector=TYPEABLE)
+            picked = jam("cover_input", "the cover control opened and no field appeared behind it",
+                         scope=chatik_scope, candidates=fields)
+            if picked is not None:
+                cover_input = field_els[picked]
+                self._narrate(reporter,
+                              f"   typing into the field the directions named: "
+                              f"{fields[picked].get('label') or fields[picked].get('data_qa')!r}",
+                              vacancy_id=vid)
+        if cover_input is None:
             self._dump_frame(chatik_scope, kwargs.get("session_dir"), "cover_input_missing")
             self._narrate(reporter, "   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover",
                           gui_message="[OK] applied via chat — couldn't add a cover letter",

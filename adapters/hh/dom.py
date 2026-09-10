@@ -276,3 +276,50 @@ def find_chat_link(scope):
     """
     from config import SELECTORS
     return find_visible(scope, SELECTORS['chat_link'])
+
+
+# Controls a navigator may be shown. Lives here because two callers need it and
+# because "what can this scope address" is a DOM question, not an adapter one.
+PRESSABLE = 'button, [role="button"], a[href]'
+TYPEABLE = 'textarea, input[type="text"], input:not([type]), [contenteditable="true"]'
+
+
+def addressable_controls(*surfaces, selector: str = PRESSABLE):
+    """Everything of `selector` on the surfaces given, as (descriptions, elements).
+
+    Index-aligned and deliberately split: the first list is what a model is
+    shown, the second is what the caller clicks. The model never receives an
+    element and never names one — it picks a number out of what it was offered,
+    which is what makes its answer unable to reach a control nobody offered.
+
+    Several surfaces because a layer on top is usually the problem: hh's confirm
+    over its own profile survey is a different dialog with its own dismiss
+    control, and no address belonging to the surface underneath can reach it.
+
+    Duplicates by (label, address) are dropped. hh renders the same address more
+    than once on a page — the reason dom.py exists at all — and a menu listing
+    the same button three times asks the model to choose between identical
+    options.
+    """
+    seen, descriptions, elements = set(), [], []
+    for surface in [s for s in surfaces if s is not None]:
+        for el in iter_visible(surface, selector):
+            try:
+                label = (el.inner_text() or "").strip()
+                data_qa = el.get_attribute("data-qa")
+                if not label:
+                    # Icon-only controls carry no text, and a close X usually is
+                    # one — so without this the single most useful option is the
+                    # least legible one on the menu.
+                    label = (el.get_attribute("aria-label")
+                             or el.get_attribute("placeholder") or data_qa or "")
+                key = (label, data_qa)
+                if key in seen:
+                    continue
+                seen.add(key)
+            except Exception:
+                continue
+            descriptions.append({"index": len(descriptions),
+                                 "label": label[:80], "data_qa": data_qa})
+            elements.append(el)
+    return descriptions, elements

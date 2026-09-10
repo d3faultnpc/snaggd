@@ -134,9 +134,10 @@ class HHModalHandler(BaseHandler):
                 # record is built from — adapter.py assembles it from the layer
                 # that ends the loop, which for this route is chatik, one layer
                 # on. So the delivery that happens HERE left no trace at all:
-                # of 921 records on the live profile, cover_length was present
-                # on exactly the 396 that went through chatik, and the modal
-                # route — where the cover is not even optional — had none.
+                # as of 2026-09-09 the live profile's 921 records carried
+                # cover_length on exactly the 396 that went through chatik, and
+                # on none of the modal route's — where the cover is not even
+                # optional.
                 # Carried across layers by the loop now; see adapter.py's
                 # cover_delivery. The letter itself for the same reason the
                 # other two routes keep it: it is what was sent on the person's

@@ -2,9 +2,14 @@
 
 hh offers three places a cover can actually be sent, and it picks: the response
 modal (where the letter is mandatory), chatik, and the post-apply cover form.
-Only chatik ever left evidence. On the live profile, 921 records carried
-cover_length on exactly the 396 that went through chatik, and on none of the 54
-that went through the modal.
+Only chatik ever left evidence. As of 2026-09-09 the live profile's 921 records
+carried cover_length on exactly the 396 that went through chatik, and on none of
+the 54 that went through the modal.
+
+Dated on purpose. The first version of this line said "32 of 510 applications"
+and was stale within a day, because the denominator moves every time anyone
+runs the thing. A measurement is a fact about a moment; written without one it
+becomes a claim about now, and then it is wrong.
 
 Not a forgotten field — a structural one. hh_modal.py returns is_terminal=False
 so the loop continues to chatik for the terminal status, and adapter.py builds

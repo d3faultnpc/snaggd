@@ -11,15 +11,16 @@ from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
 from adapters.hh.detector import FormDetector
 from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_SELECTORS, SAVE_SHAPED,
+                             addressable_controls,
                              find_chat_link, find_topmost_dialog, find_visible,
-                             is_data_collector, iter_visible)
+                             is_data_collector, is_in_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult, cover_delivery_of
 from adapters.hh.call_envelopes import CALL_ENVELOPES, NOT_A_VACANCY_CALL
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
 from utils.call_ledger import CallLedger, set_ledger
-from utils.navigation import jam, set_jam_observer
+from utils.navigation import jam, navigator_spend, set_jam_observer
 from utils.helpers import random_delay
 from core.selector import threshold_selector
 from utils.filters import StopFilters, load_stop_filters
@@ -334,6 +335,24 @@ class HHAdapter(SiteAdapter):
                           gui_message="Reached today's run limit")
                 termination_reason = "max_vacancies_reached"
                 termination_detail = f"{processed_count} vacancies processed"
+                break
+            asked, budget = navigator_spend()
+            if budget and asked >= budget:
+                # A run that has asked this many times is not having a bad day,
+                # it is running against a site that changed under it in more
+                # than one place. Carrying on would spend the rest of the budget
+                # learning the same thing again on every remaining vacancy.
+                #
+                # Stopping WITH A REASON, which is the whole point: the
+                # alternative this replaces is a run that quietly costs three
+                # times what it should and reports "done".
+                self._say(f"⏹ [{self.name()}] Asked for directions {asked} times — "
+                          "stopping rather than paying to relearn the same thing",
+                          level="warn",
+                          gui_message="hh.ru has changed in several places — stopping this run "
+                                      "rather than running up a bill on it")
+                termination_reason = "navigator_budget_spent"
+                termination_detail = f"{asked} navigator calls in {processed_count} vacancies"
                 break
             if skip_count >= CONFIG.max_skips:
                 self._say(f"⏹ [{self.name()}] Skip limit: {skip_count}",
@@ -1238,7 +1257,8 @@ class HHAdapter(SiteAdapter):
         # close button stale and one swallowing the click, and neither is
         # reachable from DATA_COLLECTOR_CLOSE because the confirm hh shows is
         # not in the additionalDataCollector vocabulary at all.
-        candidates, elements = self._addressable_controls(page)
+        candidates, elements = addressable_controls(
+            find_visible(page, DATA_COLLECTOR_MARKER), find_topmost_dialog(page))
         picked = jam("data_collector_close",
                      f"hh's own survey is on screen and would not close "
                      f"({failures} click(s) refused)",
@@ -1273,44 +1293,6 @@ class HHAdapter(SiteAdapter):
                   gui_message="A hh.ru survey wouldn't close — leaving it as-is",
                   vacancy_id=vid)
         return False
-
-    @staticmethod
-    def _addressable_controls(page):
-        """Everything pressable on the surfaces currently in the way.
-
-        Returns (descriptions, elements) — the first for the model, the second
-        for the caller, index-aligned. The model is never handed an element and
-        never names one: it picks a number out of what it was shown, which is
-        why its answer cannot reach a control nobody offered.
-
-        Both the survey and whatever sits over it, because a layer on top is
-        exactly what has gone wrong both times: it is a different dialog with
-        its own dismiss control, and hh does not put it in the survey's own
-        vocabulary.
-        """
-        seen, descriptions, elements = set(), [], []
-        surfaces = [s for s in (find_visible(page, DATA_COLLECTOR_MARKER),
-                                find_topmost_dialog(page)) if s is not None]
-        for surface in surfaces:
-            for el in iter_visible(surface, 'button, [role="button"], a[href]'):
-                try:
-                    label = (el.inner_text() or "").strip()
-                    data_qa = el.get_attribute("data-qa")
-                    if not label:
-                        # Icon-only controls carry no text — and the close X is
-                        # usually one of them, so without this the single most
-                        # useful option is the least legible on the menu.
-                        label = el.get_attribute("aria-label") or data_qa or ""
-                    key = (label, data_qa)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                except Exception:
-                    continue
-                descriptions.append({"index": len(descriptions),
-                                     "label": label[:80], "data_qa": data_qa})
-                elements.append(el)
-        return descriptions, elements
 
     def _handle_resume_chooser(self, page, vid) -> Optional[str]:
         """The resume chooser as its own step of the apply loop.

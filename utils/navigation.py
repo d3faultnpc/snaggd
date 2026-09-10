@@ -111,9 +111,16 @@ def set_jam_observer(fn) -> None:
 # therefore needs a switch — and the switch is that app's business, not the
 # engine's. A fork gets a working navigator and decides for itself.
 _NAVIGATOR = None
+# How many times the claw has asked for directions this run, and how many times
+# it may. The count is here rather than on the ledger because the loop has to
+# read it between vacancies to decide whether to carry on, and reading the
+# ledger from a frame that does not own the run is the ambient-state mistake
+# this project keeps paying for.
+_ASKED = 0
+_BUDGET = 0
 
 
-def set_navigator(fn) -> None:
+def set_navigator(fn, budget: int = 0) -> None:
     """Once per session, by whoever decides the claw may ask for directions.
 
     fn(node, detail, candidates) -> index into candidates, or None.
@@ -123,9 +130,19 @@ def set_navigator(fn) -> None:
     the caller did not offer. That is the same contract ask_modal_action has
     used since it was written, and the reason it is the one LLM call on this
     path that has never clicked something unexpected.
+
+    `budget` is how many questions this run may ask. NOT a throttle on a run
+    that is merely having a bad day: a site that renamed one address makes every
+    vacancy ask once, and the whole point of asking is to carry that run to the
+    end rather than abandon a person's applications. It is set high enough for
+    that on purpose, and catches the other thing — several nodes broken at once,
+    each vacancy asking three or four times, a bill that compounds while nobody
+    is watching. 0 means unlimited, which is what a run with no navigator has.
     """
-    global _NAVIGATOR
+    global _NAVIGATOR, _ASKED, _BUDGET
     _NAVIGATOR = fn
+    _ASKED = 0
+    _BUDGET = max(0, int(budget))
 
 
 def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional[object]:
@@ -166,6 +183,13 @@ def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional
 
     if _NAVIGATOR is None or not candidates:
         return None
+    global _ASKED
+    if _BUDGET and _ASKED >= _BUDGET:
+        # Said every time rather than once: the loop stops on its own terms and
+        # this line is what tells the person which node spent the run.
+        print(f"   navigator budget spent ({_ASKED}/{_BUDGET}) — not asking about {node}")
+        return None
+    _ASKED += 1
     try:
         picked = _NAVIGATOR(node, detail, candidates)
     except Exception as e:
@@ -181,3 +205,9 @@ def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional
         return None
     print(f"   navigator picked #{picked} of {len(candidates)} at {node}")
     return picked
+
+
+def navigator_spend() -> tuple:
+    """(asked, budget) for this run. Read by the loop between vacancies, which
+    is the only frame entitled to decide that a run has cost enough."""
+    return _ASKED, _BUDGET
