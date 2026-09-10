@@ -643,7 +643,8 @@ class HHBrowser:
                         continue
 
             if not apply_button:
-                jam("apply_button", "no address in the cascade matched a visible control")
+                jam("apply_button", "no address in the cascade matched a visible control",
+                    scope=self.vacancy_page)
                 self._say("   ❌ 'Apply' button not found",
                           gui_message="[BLCK] couldn't find the Apply button",
                           vacancy_id=self._vacancy_gui_id())

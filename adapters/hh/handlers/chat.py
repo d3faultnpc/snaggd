@@ -224,7 +224,8 @@ class ChatHandler(BaseHandler):
             # the 33 misses measured over three weeks were exactly that. Only
             # the caller knows whether the button was NEEDED. A jam belongs
             # where the need is known, not where the lookup happened.
-            jam("add_cover_button", "the letter had not been sent and the control to send it was absent")
+            jam("add_cover_button", "the letter had not been sent and the control to send it was absent",
+                scope=chatik_scope)
             self._narrate(reporter, "   ℹ️ 'Добавить сопроводительное' not found — application submitted without cover letter",
                           gui_message="[OK] applied via chat — no cover letter option here",
                           vacancy_id=vid)
@@ -260,7 +261,8 @@ class ChatHandler(BaseHandler):
             # and only under debug, since it carries the conversation.
             # The 2026-08-29 shape: the button was there, the field behind it
             # was not. Ten applications went out with no letter that evening.
-            jam("cover_input", "the cover control opened and no field appeared behind it")
+            jam("cover_input", "the cover control opened and no field appeared behind it",
+                scope=chatik_scope)
             self._dump_frame(chatik_scope, kwargs.get("session_dir"), "cover_input_missing")
             self._narrate(reporter, "   ⚠️ Cover letter textarea not found after clicking 'Добавить' — skipping cover",
                           gui_message="[OK] applied via chat — couldn't add a cover letter",

@@ -75,6 +75,23 @@ NODES = {
 }
 
 
+# Set for a debug run only, by whoever owns the loop. A jam is the one moment
+# worth a full capture — it is the moment the claw could not name what it was
+# looking at — and until now it produced a single line of stdout, mixed in with
+# two dozen other kinds of warning. The mechanism that answers "what was on
+# screen" already exists and was simply never pointed here.
+#
+# Never set outside debug, so a customer's run cannot be slowed down by it and
+# cannot write a page carrying their own profile fields to disk.
+_OBSERVER = None
+
+
+def set_jam_observer(fn) -> None:
+    """Once per session, by whoever owns the loop. None clears it."""
+    global _OBSERVER
+    _OBSERVER = fn
+
+
 def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
     """The claw could not decide at `node`. Records it and returns None.
 
@@ -95,4 +112,12 @@ def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
         print(f"   ⚠️  jam at undeclared node {node!r} — declare it in utils/navigation.NODES")
     call_ledger.note_jam(node)
     print(f"   🧭 jam at {node}: {detail or NODES.get(node, 'no decision could be made')}")
+    if _OBSERVER is not None:
+        try:
+            _OBSERVER(node, detail, scope)
+        except Exception as e:
+            # An observer is a diagnostic. It may cost an observation, never a
+            # run — the same stance call_meta_of() takes on a missing usage
+            # block, and the same one billing takes on an unreachable quota.
+            print(f"   ⚠️  jam observer failed ({e}) — the jam itself is unaffected")
     return None

@@ -565,7 +565,8 @@ class HHModalHandler(BaseHandler):
             # is separate on purpose: the same miss inside hh's response modal
             # and inside an employer's questionnaire are different problems with
             # different fixes, and a single counter would average them together.
-            jam("nav_button", "hh's response modal offered no control this code could name")
+            jam("nav_button", "hh's response modal offered no control this code could name",
+                scope=page)
         return btn
 
     def verify_submission(self, page) -> bool:

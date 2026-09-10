@@ -19,6 +19,7 @@ from adapters.hh.call_envelopes import CALL_ENVELOPES, NOT_A_VACANCY_CALL
 from config import CONFIG, SELECTORS
 from llm_cover import LLMCover
 from utils.call_ledger import CallLedger, set_ledger
+from utils.navigation import jam, set_jam_observer
 from utils.helpers import random_delay
 from core.selector import threshold_selector
 from utils.filters import StopFilters, load_stop_filters
@@ -108,6 +109,11 @@ class HHAdapter(SiteAdapter):
         # the ambient-state mistake this project has already paid for once.
         self._ledger = None
         self.last_call_summary: Optional[dict] = None
+        # Debug-run capture state. Initialised here, not only in run(), because a
+        # node can jam before the first vacancy is open — a search page that
+        # never loaded is exactly the kind of thing worth a capture.
+        self._jam_seq = 0
+        self._jam_dir = None
 
     def _say(self, message: str, level: str = "info", gui_message: str = None,
              actor: str = "scan", vacancy_id: str = None,
@@ -173,6 +179,38 @@ class HHAdapter(SiteAdapter):
         self._ledger = CallLedger(CALL_ENVELOPES, NOT_A_VACANCY_CALL)
         self.last_call_summary = None
         set_ledger(self._ledger)
+
+        # A jam is the one moment in a run worth a full capture: it is the
+        # moment the claw could not name what it was looking at. Until this was
+        # wired it produced one line of stdout, mixed into two dozen other kinds
+        # of warning, and answering "what was on screen" meant reproducing it.
+        #
+        # `{label}_layers.html` — every dialog in stacking order with the address
+        # of everything pressable in each — already existed and was simply never
+        # pointed here. It is also, exactly, the candidate list a navigator will
+        # need, so pointing it here now says whether that data is good enough
+        # before anything depends on it.
+        #
+        # Debug only, and structurally so: nothing registers this on a customer's
+        # run, which is what keeps a page carrying their own profile fields off
+        # disk.
+        if debug and session_dir_base:
+            self._jam_seq = 0
+
+            def _observe_jam(node, detail, scope):
+                self._jam_seq += 1
+                page = scope if hasattr(scope, "query_selector_all") else None
+                if page is None:
+                    page = self.browser.get_current_page()
+                if page is None:
+                    return
+                label = f"jam{self._jam_seq:02d}_{node}"
+                self._debug_snapshot(page, self._jam_dir or session_dir_base, label)
+                print(f"   🧭 captured what the claw could see: {label}_layers.html")
+
+            set_jam_observer(_observe_jam)
+        else:
+            set_jam_observer(None)
 
         # self._data_dir, not CONFIG.data_dir: the API serves several profiles from
         # one process and resolves the active one per request, so the import-time
@@ -309,9 +347,11 @@ class HHAdapter(SiteAdapter):
             logger.log_daily(f"[{self.name()}] VACANCY #{index}: {title} — {url}")
 
             vac_debug_dir = None
+            self._jam_dir = None
             if debug and session_dir_base:
                 safe = "".join(c for c in title[:30] if c.isalnum() or c in " _-").strip()
                 vac_debug_dir = session_dir_base / f"{index:02d}_{safe}"
+                self._jam_dir = vac_debug_dir
 
             result = self.process_vacancy(
                 url, title, index, self.llm_cover,
@@ -341,10 +381,17 @@ class HHAdapter(SiteAdapter):
             # what the instrument counts and what History shows can never be
             # about different things.
             if self._ledger is not None:
-                self._ledger.end_vacancy(
+                shape = self._ledger.end_vacancy(
                     result.get('scenario', 'unknown'),
                     (result.get('details') or {}).get('form_type'),
                 )
+                if debug and shape:
+                    # Printed per vacancy rather than only summarised at the end:
+                    # a chain that changed shape on vacancy #3 is worth seeing on
+                    # vacancy #3, next to the snapshots of that vacancy, not in a
+                    # tally thirty vacancies later.
+                    ok = "" if shape["expected"] else "  ← вне вилки"
+                    print(f"   📐 {shape['key']}: {shape['shape']}{ok}")
             # Skip-scenario results (dedup hit after page open, blocked by filters) do not
             # count toward the per-session application budget — only genuine attempts do.
             if result.get('scenario') != 'skip':
@@ -390,6 +437,7 @@ class HHAdapter(SiteAdapter):
                           f"(expected {b['want']})", level="warn")
         self._ledger = None
         set_ledger(None)
+        set_jam_observer(None)
         return new_entries
 
     def verify(self) -> bool:
@@ -1328,7 +1376,8 @@ class HHAdapter(SiteAdapter):
                 # and it holds nothing addressable. The one node that already
                 # asks the model cannot even ask here — there is no list to
                 # choose from.
-                jam("blocking_modal", "a dialog is in the way and offers no addressable control")
+                jam("blocking_modal", "a dialog is in the way and offers no addressable control",
+                                    scope=page)
                 return False
 
             self._say(f"   🔲 Blocking modal: \"{modal_text[:80]}\"",

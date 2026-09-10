@@ -381,7 +381,7 @@ class BaseHandler(ABC):
         # deliberately NOT a model picking a button — that argument stands, and
         # this is not it: nothing is asked and nothing is clicked, the node is
         # only named so it can be counted.
-        jam("action_button", "neither an address nor a known wording matched")
+        jam("action_button", "neither an address nor a known wording matched", scope=scope)
         return None, None
 
     def _find_cover_field(self, page, extra_selectors: list = None, reject=None):
@@ -416,5 +416,5 @@ class BaseHandler(ABC):
                 if reject is not None and reject(el):
                     continue
                 return el
-        jam("cover_field", f"{len(selectors)} address(es) tried, none held a usable box")
+        jam("cover_field", f"{len(selectors)} address(es) tried, none held a usable box", scope=page)
         return None

@@ -132,6 +132,66 @@ check("and is no longer swallowed in silence",
       any("could not be evaluated" in str(c) for c in _p.call_args_list))
 check("a cascade that matched nothing still returns None", out is None)
 
+# ── the debug observer ──────────────────────────────────────────────────────
+# A jam is the one moment worth a full capture, and until it was wired it
+# produced a single line of stdout mixed into two dozen other kinds of warning.
+# The observer is debug-only and structurally so: nothing registers it on a
+# customer's run, which is what keeps a page carrying their own profile fields
+# off disk.
+from utils.navigation import set_jam_observer
+
+seen = []
+set_jam_observer(lambda node, detail, scope: seen.append((node, scope)))
+try:
+    sentinel = object()
+    jam("cover_input", "no field behind the control", scope=sentinel)
+finally:
+    set_jam_observer(None)
+check("the observer is told which node jammed", seen and seen[0][0] == "cover_input")
+check("and is handed the surface the decision was made on, not the page behind it",
+      seen and seen[0][1] is sentinel)
+
+set_jam_observer(None)
+check("with no observer, a jam is unchanged", jam("cover_input") is None)
+
+
+def _explodes(node, detail, scope):
+    raise RuntimeError("capture failed")
+
+
+set_jam_observer(_explodes)
+try:
+    led = CallLedger()
+    set_ledger(led)
+    out = jam("form_type")
+finally:
+    set_ledger(None)
+    set_jam_observer(None)
+check("an observer that throws costs the observation, never the run", out is None)
+check("and the jam is still counted", led.run_summary()["jams"] == {"form_type": 1})
+
+# Every jam that has a surface to offer, offers it. Without this the capture
+# falls back to the current page — which for chatik is the wrong side of a
+# cross-domain iframe, the exact blind spot that cost the 2026-08-29 diagnosis.
+_no_scope_ok = {"form_type"}  # classification has only its own collected signals
+for p_ in (_ENGINE / "adapters").rglob("*.py"):
+    src = p_.read_text(encoding="utf-8")
+    # Parentheses are BALANCED rather than matched to the first ")": two of these
+    # calls carry a nested paren in their own message — "answer(s) filled",
+    # "address(es) tried" — and a first-paren scan reported both as missing a
+    # scope they had. A checker that cries wolf gets its own exception list, and
+    # then it is not a checker.
+    for m in re.finditer(r'\bjam\(\s*["\']([a-z_]+)["\']', src):
+        i, depth = src.index("(", m.start()), 0
+        for j in range(i, min(i + 600, len(src))):
+            depth += (src[j] == "(") - (src[j] == ")")
+            if depth == 0:
+                break
+        node, rest = m.group(1), src[m.end():j]
+        if node in _no_scope_ok:
+            continue
+        check(f"{p_.name}: jam at {node} hands over its scope", "scope=" in rest)
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 if sum(results) != len(results):

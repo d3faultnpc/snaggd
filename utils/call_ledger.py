@@ -107,7 +107,7 @@ class CallLedger:
     def begin_vacancy(self) -> None:
         self._current = []
 
-    def end_vacancy(self, scenario: str, form_type: Optional[str] = None) -> None:
+    def end_vacancy(self, scenario: str, form_type: Optional[str] = None) -> Optional[dict]:
         """Closes the segment and files it under `scenario|form_type`.
 
         Both halves, because the measurement needs both: `chat_cover_sent` over
@@ -116,7 +116,7 @@ class CallLedger:
         three-call run a deviation is how an instrument gets switched off.
         """
         if self._current is None:
-            return
+            return None
         calls, self._current = self._current, None
         self._vacancies += 1
         self._calls += len(calls)
@@ -135,6 +135,10 @@ class CallLedger:
         if accepted and got not in accepted:
             self._breaches.append({"scenario": key, "got": got,
                                    "want": " or ".join(accepted)})
+
+        # Returned so a debug run can show the shape beside the vacancy that
+        # produced it. None of the callers on a normal run read this.
+        return {"key": key, "shape": got, "expected": not accepted or got in accepted}
 
     # ── call events, reported by llm_agent and llm_cover ────────────────────
     def note_attempt(self, call_type: str) -> None:
