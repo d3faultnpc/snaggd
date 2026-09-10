@@ -107,6 +107,9 @@ _CALL_TEMPERATURE = {
     "requirements": _STRUCTURED_TEMPERATURE,
     "fill_form": _STRUCTURED_TEMPERATURE,
     "modal_action": _STRUCTURED_TEMPERATURE,
+    # Locating a control has a right answer on the page. Nothing to be creative
+    # about, and a re-roll that picks a different control is the failure mode.
+    "navigate": _STRUCTURED_TEMPERATURE,
     "resume_parse": _STRUCTURED_TEMPERATURE,
     "cover": _PROSE_TEMPERATURE,
     "answer_question": _PROSE_TEMPERATURE,
@@ -645,6 +648,49 @@ class LLMAgent:
             return {"action": "skip"}
         except Exception:
             return {"action": "skip"}
+
+    def locate_control(self, purpose: str, context: str, candidates: list[dict]) -> "int | None":
+        """Which of these controls is the one described. Index, or None.
+
+        Deliberately the same contract as ask_modal_action, which is the one LLM
+        call on the apply path that has never clicked something unexpected: the
+        caller finds the controls and can already address every one of them, so
+        the answer cannot name anything that was not offered, and an answer
+        outside the range is discarded by the caller.
+
+        It LOCATES and does not decide. `purpose` is set by the node, not by the
+        model — "which control dismisses this without saving" is a question with
+        a right answer on the page; "what should I do here" is not, and asking it
+        is how a profile survey got its Save button pressed on 2026-08-11.
+
+        `context` is what the caller already knows about the surface. On hh's own
+        profile surveys that is a closed dictionary of 47 keys captured from a
+        real page, so the model is told what it is looking at and asked only
+        where it is.
+
+        No candidate context, no profile, ~50 output tokens — this is the cheap
+        call it has to be to fire on any vacancy without being felt.
+        """
+        prompt = (
+            f"{context}\n\n"
+            f"Task: {purpose}\n\n"
+            f"Controls: {json.dumps(candidates, ensure_ascii=False)}\n\n"
+            'Reply with JSON only: {"index": N} for the control that matches, '
+            'or {"index": null} if none of them does. Choosing wrongly is worse '
+            "than choosing nothing."
+        )
+        try:
+            content = self._chat_completion(
+                model=self.model,
+                max_tokens=50,
+                call_type="navigate",
+                messages=[{"role": "user", "content": prompt}],
+            )
+            result = self._parse_json((content or "{}").strip(), fallback={})
+            idx = result.get("index")
+            return idx if isinstance(idx, int) else None
+        except Exception:
+            return None
 
     def answer_question(self, question: str) -> str:
         content = self._chat_completion(

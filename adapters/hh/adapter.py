@@ -10,7 +10,7 @@ from typing import Optional
 from adapters.base import SiteAdapter
 from adapters.hh.browser import HHBrowser
 from adapters.hh.detector import FormDetector
-from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_SELECTORS,
+from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_SELECTORS, SAVE_SHAPED,
                              find_chat_link, find_topmost_dialog, find_visible,
                              is_data_collector, iter_visible)
 from adapters.hh.handlers import FormHandlers
@@ -1232,15 +1232,85 @@ class HHAdapter(SiteAdapter):
         # edit a person's actual resume gave up without the jam being counted or
         # anything about the screen being kept — and the second layer, which is
         # what both measured failures were, has never once landed on disk.
-        jam("data_collector_close",
-            f"hh's own survey is on screen and would not close ({failures} click(s) refused)",
-            scope=page)
+        # What the claw can address right now, across BOTH surfaces: the survey
+        # itself and whatever hh raised over it. That second one is the whole
+        # point — both measured failures were a layer on top, one making the
+        # close button stale and one swallowing the click, and neither is
+        # reachable from DATA_COLLECTOR_CLOSE because the confirm hh shows is
+        # not in the additionalDataCollector vocabulary at all.
+        candidates, elements = self._addressable_controls(page)
+        picked = jam("data_collector_close",
+                     f"hh's own survey is on screen and would not close "
+                     f"({failures} click(s) refused)",
+                     scope=page, candidates=candidates)
+        if picked is not None:
+            chosen = elements[picked]
+            label = (candidates[picked].get("label") or "").lower()
+            if any(w in label for w in SAVE_SHAPED):
+                # The 2026-08-11 answer. Refused rather than clicked, and said
+                # out loud: a navigator that picks a Save button is a navigator
+                # whose question was understood as "what do I do here".
+                self._say(f"   refused the navigator's pick — {candidates[picked].get('label')!r} "
+                          "saves to the profile", level="warn", vacancy_id=vid)
+            elif not is_in_data_collector(chosen):
+                self._say("   refused the navigator's pick — it is outside hh's own survey",
+                          level="warn", vacancy_id=vid)
+            else:
+                try:
+                    chosen.click(timeout=2000)
+                    page.wait_for_timeout(1200)
+                except Exception as e:
+                    self._say(f"   the navigator's pick would not click either ({e})",
+                              level="warn", vacancy_id=vid)
+                if find_visible(page, DATA_COLLECTOR_MARKER) is None:
+                    self._say("   hh's own profile survey — closed on the navigator's directions",
+                              gui_message="Skipped a hh.ru profile survey — it isn't part of the application",
+                              vacancy_id=vid)
+                    return True
         self._say("   ⚠️ hh's profile survey has no close button — leaving it alone "
                   "(it may block the form; this is the case to look at if the flow stalls)",
                   level="warn",
                   gui_message="A hh.ru survey wouldn't close — leaving it as-is",
                   vacancy_id=vid)
         return False
+
+    @staticmethod
+    def _addressable_controls(page):
+        """Everything pressable on the surfaces currently in the way.
+
+        Returns (descriptions, elements) — the first for the model, the second
+        for the caller, index-aligned. The model is never handed an element and
+        never names one: it picks a number out of what it was shown, which is
+        why its answer cannot reach a control nobody offered.
+
+        Both the survey and whatever sits over it, because a layer on top is
+        exactly what has gone wrong both times: it is a different dialog with
+        its own dismiss control, and hh does not put it in the survey's own
+        vocabulary.
+        """
+        seen, descriptions, elements = set(), [], []
+        surfaces = [s for s in (find_visible(page, DATA_COLLECTOR_MARKER),
+                                find_topmost_dialog(page)) if s is not None]
+        for surface in surfaces:
+            for el in iter_visible(surface, 'button, [role="button"], a[href]'):
+                try:
+                    label = (el.inner_text() or "").strip()
+                    data_qa = el.get_attribute("data-qa")
+                    if not label:
+                        # Icon-only controls carry no text — and the close X is
+                        # usually one of them, so without this the single most
+                        # useful option is the least legible on the menu.
+                        label = el.get_attribute("aria-label") or data_qa or ""
+                    key = (label, data_qa)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                except Exception:
+                    continue
+                descriptions.append({"index": len(descriptions),
+                                     "label": label[:80], "data_qa": data_qa})
+                elements.append(el)
+        return descriptions, elements
 
     def _handle_resume_chooser(self, page, vid) -> Optional[str]:
         """The resume chooser as its own step of the apply loop.

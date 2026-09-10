@@ -103,6 +103,12 @@ check(f"core/llm_agent.py defines no module-level names beyond its documented se
 _expected_llm_agent_class_members = {
     "model", "cover_model", "api_key", "client",
     "generate_cover", "score_vacancy", "fill_form", "ask_modal_action", "answer_question",
+    # Directions for a claw that ran out of addresses (2026-09-10). Same contract
+    # as ask_modal_action and deliberately so: the caller supplies the controls it
+    # already found, the model returns an index into them, and an answer outside
+    # that range is discarded — so this method cannot name anything the caller did
+    # not offer. It locates and never decides; see adapters/hh/navigator.py.
+    "locate_control",
     # The abandoned track, brought back to be measured. Behind SNAGGD_SCORER=
     # judgement, on the scoring/judgement branch, and expected to leave the same
     # way split scoring did — through this list, with the finding recorded beside

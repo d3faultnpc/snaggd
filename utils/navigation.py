@@ -98,7 +98,37 @@ def set_jam_observer(fn) -> None:
     _OBSERVER = fn
 
 
-def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
+# The navigator, if anything plugged one in. Nothing here decides whether it
+# runs: it runs when it exists, and the engine ships no implementation of its
+# own registration. That is the same shape as set_relay_fallback,
+# set_session_reporter, set_ledger and set_jam_observer — four hooks in this
+# codebase that are off by default because nothing is plugged into them, not
+# because a flag says so.
+#
+# It matters which side registers this one. The ledger is registered by the
+# adapter, because observation is harmless and should always run. The navigator
+# is registered by the commercial app, because it changes what the claw does and
+# therefore needs a switch — and the switch is that app's business, not the
+# engine's. A fork gets a working navigator and decides for itself.
+_NAVIGATOR = None
+
+
+def set_navigator(fn) -> None:
+    """Once per session, by whoever decides the claw may ask for directions.
+
+    fn(node, detail, candidates) -> index into candidates, or None.
+
+    An index rather than an element: the model chooses among things the caller
+    already found and can already address, so its answer cannot name anything
+    the caller did not offer. That is the same contract ask_modal_action has
+    used since it was written, and the reason it is the one LLM call on this
+    path that has never clicked something unexpected.
+    """
+    global _NAVIGATOR
+    _NAVIGATOR = fn
+
+
+def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional[object]:
     """The claw could not decide at `node`. Records it and returns None.
 
     Returning None rather than raising is deliberate and is what keeps this
@@ -106,10 +136,17 @@ def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
     it was returning before, and adding this line changes nothing about which
     branch runs.
 
-    `scope` is accepted and unused. It is the Page or Frame the decision was
-    being made in, and it is threaded now so that step three has the thing it
-    needs — what the claw could address at the moment it stopped — without
-    revisiting twelve call sites to add an argument.
+    `scope` is the Page or Frame the decision was being made in. Nothing here
+    reads it; the debug observer does, to capture what was on screen.
+
+    `candidates` is what the caller could address at the moment it stopped —
+    supplied by the caller rather than gathered here, because the caller is the
+    one that knows its own DOM. With none supplied there is nothing to choose
+    between and the navigator is not asked, whatever is registered.
+
+    Returns the navigator's choice — an index into `candidates` — or None. Every
+    call site handles None already, because None is what this returned before
+    anything could answer.
     """
     if node not in NODES:
         # Loud, because a counter under a name nobody declared is a jam that
@@ -126,4 +163,21 @@ def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
             # run — the same stance call_meta_of() takes on a missing usage
             # block, and the same one billing takes on an unreachable quota.
             print(f"   ⚠️  jam observer failed ({e}) — the jam itself is unaffected")
-    return None
+
+    if _NAVIGATOR is None or not candidates:
+        return None
+    try:
+        picked = _NAVIGATOR(node, detail, candidates)
+    except Exception as e:
+        # A navigator is a fallback for a claw that is already stuck. Failing to
+        # get directions leaves it exactly as stuck as it was, which is the
+        # outcome the call site is written for.
+        print(f"   navigator failed at {node} ({e}) — leaving the jam as it is")
+        return None
+    if not isinstance(picked, int) or not (0 <= picked < len(candidates)):
+        if picked is not None:
+            print(f"   navigator answered {picked!r} at {node}, which is not one of "
+                  f"the {len(candidates)} offered — ignored")
+        return None
+    print(f"   navigator picked #{picked} of {len(candidates)} at {node}")
+    return picked

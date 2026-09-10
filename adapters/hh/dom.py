@@ -109,6 +109,23 @@ DATA_COLLECTOR_MARKER = '[data-qa^="additional-data-collector__"]'
 # No wording tier, deliberately. A Russian aria-label here would be the exact
 # hardcode this sprint exists to stop adding, on the one territory where a
 # navigator is about to be the proper backstop.
+# Controls that SAVE. Taken from the survey's own localisation dictionary,
+# captured from a real page on 2026-08-27 — `editor.save` and `examples.append`
+# are the two that write to the person's resume — plus the exact label that got
+# pressed on 2026-08-11 and wrote work format, city and desired salary into a
+# real profile, three surveys in a row, silently.
+#
+# The last line of defence and nothing more: the navigator is asked which
+# control DISMISSES the survey, the answer is checked to be inside the survey,
+# and only then does this veto get a look. Wording, on purpose — a save button
+# is identified by what it says, and the alternative is finding out structurally
+# after the click.
+SAVE_SHAPED = (
+    "сохранить",
+    "добавить в мои достижения",
+    "продолжить",
+)
+
 DATA_COLLECTOR_CLOSE = [
     '[data-qa="additional-data-collector__popup-close"]',
     '[data-qa^="additional-data-collector__"] [data-qa*="close"]',
