@@ -206,7 +206,7 @@ class HHAdapter(SiteAdapter):
                     return
                 label = f"jam{self._jam_seq:02d}_{node}"
                 self._debug_snapshot(page, self._jam_dir or session_dir_base, label)
-                print(f"   🧭 captured what the claw could see: {label}_layers.html")
+                print(f"   jam capture: {label}_layers.html")
 
             set_jam_observer(_observe_jam)
         else:
@@ -390,8 +390,8 @@ class HHAdapter(SiteAdapter):
                     # a chain that changed shape on vacancy #3 is worth seeing on
                     # vacancy #3, next to the snapshots of that vacancy, not in a
                     # tally thirty vacancies later.
-                    ok = "" if shape["expected"] else "  ← вне вилки"
-                    print(f"   📐 {shape['key']}: {shape['shape']}{ok}")
+                    ok = "" if shape["expected"] else "  — outside its envelope"
+                    print(f"   shape {shape['key']}: {shape['shape']}{ok}")
             # Skip-scenario results (dedup hit after page open, blocked by filters) do not
             # count toward the per-session application budget — only genuine attempts do.
             if result.get('scenario') != 'skip':
@@ -433,7 +433,7 @@ class HHAdapter(SiteAdapter):
             # it just cost more than the scenario says it should, and which entry
             # ate the difference is the thing worth saying out loud.
             for b in summary["breaches"]:
-                self._say(f"   📐 {b['scenario']}: {b['n']}× {b['got']} "
+                self._say(f"   envelope {b['scenario']}: {b['n']}x {b['got']} "
                           f"(expected {b['want']})", level="warn")
         self._ledger = None
         set_ledger(None)

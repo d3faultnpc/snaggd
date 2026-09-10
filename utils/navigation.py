@@ -111,7 +111,7 @@ def jam(node: str, detail: str = "", *, scope=None) -> Optional[object]:
         # run, only its own observability.
         print(f"   ⚠️  jam at undeclared node {node!r} — declare it in utils/navigation.NODES")
     call_ledger.note_jam(node)
-    print(f"   🧭 jam at {node}: {detail or NODES.get(node, 'no decision could be made')}")
+    print(f"   jam at {node}: {detail or NODES.get(node, 'no decision could be made')}")
     if _OBSERVER is not None:
         try:
             _OBSERVER(node, detail, scope)
