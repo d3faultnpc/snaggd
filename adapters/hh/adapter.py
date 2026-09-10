@@ -146,6 +146,32 @@ class HHAdapter(SiteAdapter):
 
     # ── SiteAdapter interface ─────────────────────────────────────────────────
 
+    def _close_ledger(self) -> None:
+        """Ends this run's accounting and takes the process globals down with it.
+
+        One method rather than a line at each exit because run() has three, and
+        two of them — no vacancies found, and the target_url guard — used to
+        return without clearing anything. Neither is fatal on its own (the next
+        run installs its own ledger before opening a vacancy, and a note taken
+        outside a vacancy segment is dropped), but "harmless because of what
+        happens later" is the shape of every ambient-state bug this project has
+        already paid for.
+
+        Not reached when an exception escapes run(). That case stays as it was:
+        the globals outlive the run and the next one replaces them.
+        """
+        if self._ledger is not None:
+            self.last_call_summary = self._ledger.run_summary()
+            for b in self.last_call_summary["breaches"]:
+                # Not a stop. A run outside its envelope has usually still
+                # applied — it just cost more than the scenario says it should,
+                # and which entry ate the difference is worth saying out loud.
+                self._say(f"   envelope {b['scenario']}: {b['n']}x {b['got']} "
+                          f"(expected {b['want']})", level="warn")
+        self._ledger = None
+        set_ledger(None)
+        set_jam_observer(None)
+
     def run(self, logger, dry_run: bool = False, debug: bool = False,
             stop_event: Optional[threading.Event] = None,
             pause_event: Optional[threading.Event] = None,
@@ -236,6 +262,7 @@ class HHAdapter(SiteAdapter):
         if not vacancies:
             self._say(f"❌ [{self.name()}] No vacancies found", level="error",
                       gui_message="No vacancies matched your search")
+            self._close_ledger()
             return []
         # Hard safety guard (session 55 live-run incident): target_url must
         # produce exactly one vacancy matching the requested one. Stops the
@@ -263,6 +290,7 @@ class HHAdapter(SiteAdapter):
                     level="error",
                     gui_message="Safety check failed — the page that opened doesn't match the requested link, stopping",
                 )
+                self._close_ledger()
                 return []
         self._say(f"✅ [{self.name()}] Found {len(vacancies)} vacancies",
                   gui_message=f"Found {len(vacancies)} vacancies to review")
@@ -427,18 +455,7 @@ class HHAdapter(SiteAdapter):
         # taken outside a vacancy segment are dropped, the only call type that
         # fires outside a run is on the ignore list, and the next run installs
         # its own ledger before opening a vacancy.
-        self.last_call_summary = self._ledger.run_summary()
-        summary = self.last_call_summary
-        if summary["breaches"]:
-            # Not a stop. A run outside its envelope has usually still applied —
-            # it just cost more than the scenario says it should, and which entry
-            # ate the difference is the thing worth saying out loud.
-            for b in summary["breaches"]:
-                self._say(f"   envelope {b['scenario']}: {b['n']}x {b['got']} "
-                          f"(expected {b['want']})", level="warn")
-        self._ledger = None
-        set_ledger(None)
-        set_jam_observer(None)
+        self._close_ledger()
         return new_entries
 
     def verify(self) -> bool:
