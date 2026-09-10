@@ -180,6 +180,25 @@ class HHAdapter(SiteAdapter):
         self.last_call_summary = None
         set_ledger(self._ledger)
 
+        # self._data_dir, not CONFIG.data_dir: the API serves several profiles from
+        # one process and resolves the active one per request, so the import-time
+        # CONFIG default points at the flat legacy dir for every API run. Reading
+        # filters from there silently dropped the profile's own min_match — a 72%
+        # vacancy was applied to under a 75% setting on 2026-08-13, because the
+        # missing value fell back to CONFIG.min_score's default of 60.
+        stop_filters = load_stop_filters(self._data_dir)
+        if not stop_filters.is_empty():
+            self._say(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}",
+                      gui_message=f"Filters active: {stop_filters.summary()}")
+
+        session_dir_base = None
+        if debug:
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            session_dir_base = _DEBUG_DIR / f"session_{ts}"
+            session_dir_base.mkdir(parents=True, exist_ok=True)
+            self._say(f"🐛 [{self.name()}] DEBUG — snapshots in: {session_dir_base}",
+                      gui_message="Debug mode — saving detailed snapshots")
+
         # A jam is the one moment in a run worth a full capture: it is the
         # moment the claw could not name what it was looking at. Until this was
         # wired it produced one line of stdout, mixed into two dozen other kinds
@@ -212,24 +231,6 @@ class HHAdapter(SiteAdapter):
         else:
             set_jam_observer(None)
 
-        # self._data_dir, not CONFIG.data_dir: the API serves several profiles from
-        # one process and resolves the active one per request, so the import-time
-        # CONFIG default points at the flat legacy dir for every API run. Reading
-        # filters from there silently dropped the profile's own min_match — a 72%
-        # vacancy was applied to under a 75% setting on 2026-08-13, because the
-        # missing value fell back to CONFIG.min_score's default of 60.
-        stop_filters = load_stop_filters(self._data_dir)
-        if not stop_filters.is_empty():
-            self._say(f"🚫 [{self.name()}] Stop filters active: {stop_filters.summary()}",
-                      gui_message=f"Filters active: {stop_filters.summary()}")
-
-        session_dir_base = None
-        if debug:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            session_dir_base = _DEBUG_DIR / f"session_{ts}"
-            session_dir_base.mkdir(parents=True, exist_ok=True)
-            self._say(f"🐛 [{self.name()}] DEBUG — snapshots in: {session_dir_base}",
-                      gui_message="Debug mode — saving detailed snapshots")
 
         vacancies = self.get_vacancies(target_url=target_url)
         if not vacancies:
