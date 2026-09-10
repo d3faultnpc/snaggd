@@ -68,6 +68,12 @@ NODES = {
     # about.
     # ── the layer in the way ────────────────────────────────────────────────
     "blocking_modal": "which control dismisses a modal that is not part of the application",
+    # hh's own profile surveys, which are not part of an application at all and
+    # can write to the person's real resume. The one node where giving up is not
+    # a lost application but an edit nobody asked for, and the one whose
+    # vocabulary is closed — 47 keys across 4 families, captured 2026-08-27 —
+    # which makes it the only node a navigator can be accepted on offline.
+    "data_collector_close": "which control dismisses one of hh's own profile surveys without saving it",
     # ── reading an employer's own question ──────────────────────────────────
     "option_match": "which of an employer's options the answer corresponds to",
     # ── did it work ─────────────────────────────────────────────────────────

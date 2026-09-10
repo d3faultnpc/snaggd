@@ -114,6 +114,10 @@ class HHAdapter(SiteAdapter):
         # never loaded is exactly the kind of thing worth a capture.
         self._jam_seq = 0
         self._jam_dir = None
+        # How many of hh's own profile surveys this run has met. Not a jam — a
+        # survey that closes cleanly is the system working — but the number is
+        # what decides whether closing them stays the right default.
+        self._collector_seen = 0
 
     def _say(self, message: str, level: str = "info", gui_message: str = None,
              actor: str = "scan", vacancy_id: str = None,
@@ -1166,27 +1170,51 @@ class HHAdapter(SiteAdapter):
         # "which element took the click" could not be answered from artifacts.
         # Debug-only, same stance as every other capture here: these carry the
         # person's own profile fields as hh renders them.
+        self._collector_seen += 1
+        if debug:
+            # Counted and printed with the vacancy number, because the product
+            # question this decides is about FREQUENCY: hh showing its survey
+            # once in forty vacancies is a nuisance, and showing it on every one
+            # is a different product. The sequence answers that; a total does
+            # not.
+            print(f"   hh profile survey #{self._collector_seen} (vacancy {vid})")
         if debug and session_dir:
             self._debug_snapshot(page, session_dir, "02a_data_collector_presented")
 
+        # Both failures ever measured were the same shape, and it is NOT the one
+        # a second address would fix: on 2026-08-27 the button was found and then
+        # went stale ("Element is not attached to the DOM") when hh raised a
+        # second layer over the survey; on 2026-09-03 it was found and the click
+        # was swallowed by a magritte overlay that intercepts pointer events.
+        # Found both times. Unclickable both times.
+        #
+        # And the first failure ended the retry outright — `break` — so the four
+        # attempts this loop advertises were one attempt whenever it mattered.
+        # A stale handle is precisely the case a retry exists for: the element is
+        # re-found at the top of every pass, so trying again costs a lookup and
+        # can only help.
+        failures = 0
         for _ in range(4):  # the survey is a wizard; X closes it, but be sure
             close_btn = find_visible(page, DATA_COLLECTOR_CLOSE)
             if close_btn is None:
                 break
             try:
-                close_btn.click()
+                # Two seconds, not the default thirty. A close button that is on
+                # screen and not clickable within two seconds is under something,
+                # and waiting out the other twenty-eight neither clicks it nor
+                # tells us anything — on 2026-09-03 it cost half a minute of a
+                # person's run to learn what the first two seconds already knew.
+                close_btn.click(timeout=2000)
             except Exception as e:
-                # The interesting one. On 2026-08-27 this fired as "Element is
-                # not attached to the DOM" after hh raised a SECOND layer over
-                # the survey (a "Сохранить изменения?" confirm, which is not in
-                # the additionalDataCollector vocabulary and therefore not
-                # addressable by DATA_COLLECTOR_CLOSE). Capture before saying
-                # anything: this is the only moment that layer is on screen.
-                if debug and session_dir:
+                failures += 1
+                # Captured once, on the first failure: this is the only moment
+                # the second layer is on screen, and four copies of it say
+                # nothing the first does not.
+                if debug and session_dir and failures == 1:
                     self._debug_snapshot(page, session_dir, "02b_data_collector_stuck")
                 self._say(f"   ⚠️ Couldn't close hh's profile survey: {e}", level="warn",
                           gui_message="Couldn't close a pop-up hh.ru showed", vacancy_id=vid)
-                break
+                continue
             page.wait_for_timeout(1200)
             self._say("   ⏭ hh's own profile survey — closed without answering",
                       gui_message="Skipped a hh.ru profile survey — it isn't part of the application",
@@ -1200,6 +1228,13 @@ class HHAdapter(SiteAdapter):
         # No close button, or it did not take. Falling through to the model is
         # the old behaviour and carries the old risk — say so out loud rather
         # than let it happen quietly, and leave the survey alone.
+        # Now a named node. Until this line the one place in the loop that can
+        # edit a person's actual resume gave up without the jam being counted or
+        # anything about the screen being kept — and the second layer, which is
+        # what both measured failures were, has never once landed on disk.
+        jam("data_collector_close",
+            f"hh's own survey is on screen and would not close ({failures} click(s) refused)",
+            scope=page)
         self._say("   ⚠️ hh's profile survey has no close button — leaving it alone "
                   "(it may block the form; this is the case to look at if the flow stalls)",
                   level="warn",

@@ -95,7 +95,24 @@ MODAL_SELECTORS = (
 # hh.ru profile. Recognised by address so they can be closed rather than
 # interpreted; see adapter.py::_dismiss_blocking_modal.
 DATA_COLLECTOR_MARKER = '[data-qa^="additional-data-collector__"]'
-DATA_COLLECTOR_CLOSE = '[data-qa="additional-data-collector__popup-close"]'
+# The way off hh's own territory. The exact address is what has actually worked
+# (three clean closes on record); the second entry is any close-shaped control
+# inside the survey, which survives hh renaming just the popup-close leaf.
+#
+# Said plainly: this cascade fixes NONE of the failures measured so far. Both of
+# those found the button and could not click it — a stale handle once, an
+# overlay swallowing the click once — and a second address helps with neither.
+# It is here because a single-address entry is a delayed incident (the
+# 2026-09-09 audit counted 24 of them, and the seven that have cascades got
+# them only after hh broke us), not because it answers anything observed.
+#
+# No wording tier, deliberately. A Russian aria-label here would be the exact
+# hardcode this sprint exists to stop adding, on the one territory where a
+# navigator is about to be the proper backstop.
+DATA_COLLECTOR_CLOSE = [
+    '[data-qa="additional-data-collector__popup-close"]',
+    '[data-qa^="additional-data-collector__"] [data-qa*="close"]',
+]
 
 # An employer's own question field, which must never receive a cover letter.
 # Three shapes seen in captures: a field inside a task-body block, a field
