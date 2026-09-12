@@ -924,10 +924,24 @@ class HHAdapter(SiteAdapter):
         """Detect form type → run handler → repeat until terminal result or MAX_LAYERS.
 
         Replaces the old flat single-handler dispatch + ad-hoc post-handler chat check.
-        Returns (ProcessResult, first_form_type_str).
+        Returns (ProcessResult, first_form_type) — the value of the FIRST form the
+        detector named on this vacancy, or None when no layer was ever detected.
+
+        First DETECTED, not "layer 0": the resume chooser can consume layer 0
+        outright (it submits the modal and the loop `continue`s past detection),
+        and until 2026-09-12 that left this at its placeholder for the whole
+        vacancy — 4 of 34 records across two debug runs carried `unknown` for
+        forms the detector had named perfectly well one layer later. The record
+        and the call ledger both file the vacancy under this value, so those four
+        were keyed `chat_cover_sent|unknown` and judged against no envelope at all.
+
+        None rather than the string 'unknown' when nothing was detected: every
+        reader already treats absence as absence (`form_type or '-'` in the
+        ledger, `|| ''` in the app), and a string placeholder gave the ledger a
+        third key, `skip|unknown`, for what is plainly `skip|-`.
         """
         MAX_LAYERS = 5
-        first_form_type = 'unknown'
+        first_form_type = None
         result = None
         prev_form_type = None
         # Whether a cover letter was delivered, where, and the letter — carried
@@ -985,7 +999,7 @@ class HHAdapter(SiteAdapter):
             form_info = self.detector.detect(page)
             form_type = form_info.form_type
 
-            if layer == 0:
+            if first_form_type is None:
                 first_form_type = form_type.value
                 self._say("   🔹 Analysing application form...",
                           gui_message="Figuring out the application form…",
