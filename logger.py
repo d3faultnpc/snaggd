@@ -95,12 +95,17 @@ class Logger:
         for entry in applied_log:
             status = entry.get("status")
             if status in ("dry_run", "skipped_llm_unavailable", "needs_debug_review",
-                          "skipped_no_score"):
+                          "skipped_no_score", "skipped_open_error"):
                 # retryable: scored-only, transient LLM failure, ambiguous execution
                 # failure, or — since 2026-09-06 — a scorer that returned nothing.
                 # The last one belongs here for the same reason as the second: the
                 # vacancy was never judged, and marking it processed forever would
                 # retire it on the strength of a failure to measure it.
+                # skipped_open_error (2026-09-12) for the same reason one step
+                # earlier: the page never loaded — Page.goto timed out, both
+                # times on record because a VPN dropped — so nothing about the
+                # vacancy was ever seen, let alone judged. Two vacancies were
+                # retired that way in two days (137184615, 137198079).
                 continue
             if entry.get("url") == url:
                 return status
