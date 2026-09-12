@@ -76,6 +76,7 @@ HANDLERS = {
     'modal': 'adapters/hh/handlers/hh_modal.py',
     'chat': 'adapters/hh/handlers/chat.py',
     'cover_only': 'adapters/hh/handlers/cover_only.py',
+    'questionnaire': 'adapters/hh/handlers/questions.py',
 }
 check("every route in COVER_ROUTES has a handler that claims it",
       set(HANDLERS) == set(COVER_ROUTES))
@@ -85,13 +86,38 @@ for route, rel in HANDLERS.items():
     check(f"{rel} declares route {route!r}", f"'cover_delivered': '{route}'" in src)
     check(f"{rel} records the length beside the claim", "'cover_length': len(cover_letter)" in src)
 
-# Nothing else may claim a delivery. questions.py answers cover-shaped fields
-# through the generic fill_form path — that is not hh's own cover mechanism, and
-# session 56 already removed the status that used to pretend otherwise.
-for rel in ('adapters/hh/handlers/questions.py', 'adapters/hh/handlers/test_form.py',
-            'adapters/hh/handlers/salary.py'):
+# Nothing else may claim a delivery. A cover-shaped ANSWER to an employer's own
+# question goes through the generic fill_form path — that is not hh's own cover
+# mechanism, and session 56 removed the status that used to pretend otherwise.
+for rel in ('adapters/hh/handlers/test_form.py', 'adapters/hh/handlers/salary.py'):
     src = (_ENGINE / rel).read_text(encoding="utf-8")
     check(f"{rel} claims no delivery", "'cover_delivered'" not in src)
+
+# questions.py may claim one — since 2026-09-12 — for exactly one field: hh's
+# own letter input, rendered by hh on the questionnaire page under the same
+# address the response modal uses. By address, never by the field's label.
+q = (_ENGINE / 'adapters/hh/handlers/questions.py').read_text(encoding="utf-8")
+check("questions.py recognises hh's letter field by its address",
+      "SELECTORS['popup_letter_input']" in q and "closest(sel)" in q)
+_code = "\n".join(l for l in q.splitlines() if not l.strip().startswith("#"))
+check("and not by its label", "Сопроводительное письмо" not in _code)
+check("the claim rides on the submit that sent it, not on the typing",
+      "def _submit" in q and q.index("'cover_delivered': 'questionnaire'") > q.index("def _submit"))
+
+# The chat layer finishes on the route that delivered, and does not jam on a
+# control hh had no reason to show. 2026-09-12 vacancy #4: the letter went out
+# through the questionnaire, chatik offered no add-cover control, the claw
+# jammed and the navigator was asked about it.
+c = (_ENGINE / 'adapters/hh/handlers/chat.py').read_text(encoding="utf-8")
+check("chatik knows which route delivered upstream",
+      'kwargs.get("cover_delivered_upstream")' in c)
+check("and has a finisher for the questionnaire route",
+      '"questionnaire": ("applied_via_questionnaire", "questionnaire_cover_sent")' in c)
+check("the finisher returns before the add_cover_button jam",
+      c.index("_UPSTREAM_FINISHER.get(upstream") < c.index('jam("add_cover_button"'))
+from adapters.hh.call_envelopes import CALL_ENVELOPES
+check("the ledger has an envelope for the route",
+      "questionnaire_cover_sent|employer_questions" in CALL_ENVELOPES)
 
 # ── the loop carries it across layers, and merges it onto what it returns ────
 adapter = (_ENGINE / 'adapters/hh/adapter.py').read_text(encoding="utf-8")

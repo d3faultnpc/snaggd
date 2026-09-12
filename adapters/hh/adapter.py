@@ -1100,6 +1100,14 @@ class HHAdapter(SiteAdapter):
                                      cover_sent_via_modal=bool(
                                          cover_delivery
                                          and cover_delivery.get('cover_delivered') == 'modal'),
+                                     # The route itself, for the layer that has
+                                     # to finish on it: chatik opened after a
+                                     # delivery elsewhere is a confirmation
+                                     # visit, and which route delivered decides
+                                     # what the record says.
+                                     cover_delivered_upstream=(
+                                         cover_delivery.get('cover_delivered')
+                                         if cover_delivery else None),
                                      reporter=self._reporter,
                                      # Distinct from vacancy_id above (HH's own id,
                                      # used for cache keys) — this is the run's

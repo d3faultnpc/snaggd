@@ -175,7 +175,7 @@ def run(question, options, answer, name="task_1", refuse_after=None, textarea=No
     page = FakePage(els, textarea)
     h = QuestionsHandler.__new__(QuestionsHandler)
     h._agent = type("A", (), {"fill_form": staticmethod(lambda v, f: {"cbgroup_0": answer})})()
-    h._submit = lambda p, filled, total: ProcessResult(
+    h._submit = lambda p, filled, total, **kw: ProcessResult(
         success=True, status="applied", reason="", details={"filled_count": filled})
     h._wait_and_random_delay = lambda p, a, b: None
     return els, h.process(page, vacancy_text="v")

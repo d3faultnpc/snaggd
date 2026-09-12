@@ -70,6 +70,13 @@ CALL_ENVELOPES = {
     "skip|-": ("score:1",),
     "dry_run|-": ("score:1",),
     "error|-": ("score:1",),
+    # A letter delivered through hh's own field on the questionnaire page, then
+    # chatik opened only to confirm. Declared 2026-09-12 from one observation
+    # (that day's vacancy #4: fill_form:1|score:1, plus a navigate call that
+    # this route exists to make unnecessary), and from the shape being the
+    # same chain chat_no_cover|employer_questions produces — which is where
+    # these vacancies were being filed before the route had a name.
+    "questionnaire_cover_sent|employer_questions": ("fill_form:1|score:1",),
     # Applied, no letter — the outcome this whole sprint exists to stop being
     # silent about. The shape is the same as a successful chain minus the cover
     # call, which is exactly what makes it visible here. n=12.

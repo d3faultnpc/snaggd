@@ -39,6 +39,15 @@ def _is_timeout(exc: Exception) -> bool:
     return "Timeout" in type(exc).__name__ or "Timeout" in str(exc)
 
 
+# How a chatik visit ends when the letter already went out one layer earlier,
+# by the route that sent it. The status is what History files the vacancy
+# under; the scenario is what the call ledger keys its shape by.
+_UPSTREAM_FINISHER = {
+    "modal": ("applied_via_modal", "hh_modal_with_cover"),
+    "questionnaire": ("applied_via_questionnaire", "questionnaire_cover_sent"),
+}
+
+
 class ChatHandler(BaseHandler):
     """
     Handler for auto-read employers (Sber, PERX, etc.) — applies via chatik.
@@ -195,26 +204,34 @@ class ChatHandler(BaseHandler):
         hr_bot_rounds, hr_bot_debug_reason = 0, None
 
         # 4. Click "Добавить сопроводительное" to open the cover letter field
-        cover_sent_via_modal = kwargs.get("cover_sent_via_modal", False)
+        # Which route, if any, already delivered the letter before chatik
+        # opened. The older boolean is kept for callers that still pass it.
+        upstream = kwargs.get("cover_delivered_upstream") or (
+            "modal" if kwargs.get("cover_sent_via_modal") else None)
         # Already delivered upstream? Then this is a confirmation visit, not a
         # send, and the button may legitimately never appear (hh hides the whole
-        # composer once an employer closes the chat — captured live 2026-08-12).
+        # composer once an employer closes the chat — captured live 2026-08-12;
+        # and it offers no second letter when its own field on the questionnaire
+        # page already took one — captured live 2026-09-12, where that absence
+        # was reported as a jam and the navigator was asked about a control that
+        # had no reason to exist).
         # Waiting the full 12s for it there bought nothing and looked like a hang.
         add_cover = self._find_add_cover_btn(
-            chatik_scope, timeout_ms=2000 if cover_sent_via_modal else 12000)
+            chatik_scope, timeout_ms=2000 if upstream else 12000)
         # Plain print — dev diagnostic (session 56, dup-message investigation),
         # not user narration.
-        print(f"   🔬 diag: cover_sent_via_modal={cover_sent_via_modal}, add_cover_found={add_cover is not None}")
+        print(f"   🔬 diag: cover_delivered_upstream={upstream}, add_cover_found={add_cover is not None}")
         if not add_cover:
-            if cover_sent_via_modal:
+            if upstream:
+                status, scenario = _UPSTREAM_FINISHER.get(upstream, _UPSTREAM_FINISHER["modal"])
                 self._narrate(reporter, "   ✅ Cover was sent in a prior form layer — chatik confirms goal reached",
                               gui_message="Cover letter was already sent — confirming here",
                               vacancy_id=vid)
                 return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                     success=True,
-                    status="applied_via_modal",
+                    status=status,
                     reason="Cover letter sent in prior form layer; chatik opened, goal verified",
-                    scenario="hh_modal_with_cover",
+                    scenario=scenario,
                     is_terminal=True,
                     goal_reached=True
                 ))

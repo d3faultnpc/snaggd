@@ -92,7 +92,15 @@ def is_free_text_option(option_text: str) -> bool:
 # "was a letter delivered" was being answered from the status string, which is
 # produced by whichever layer ended the loop rather than by whichever layer
 # delivered. See adapters/hh/adapter.py's cover_delivery for the carry.
-COVER_ROUTES = ("modal", "chat", "cover_only")
+# `questionnaire` (2026-09-12): hh sometimes renders its OWN letter field —
+# the same [data-qa="vacancy-response-popup-form-letter-input"] the response
+# modal uses — inside an employer's questionnaire page. The letter typed there
+# is delivered by hh's own mechanism, and hh then offers no "add a cover"
+# control in chatik because it already has one. Until this route existed the
+# record for such a vacancy said no cover was sent, which History repeated.
+# Claimed by ADDRESS only: an employer's own free-text question answered with a
+# pitch is still not a delivery (session 56), and stays unclaimed.
+COVER_ROUTES = ("modal", "chat", "cover_only", "questionnaire")
 
 _DELIVERY_KEYS = ("cover_delivered", "cover_length", "cover_text")
 

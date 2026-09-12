@@ -43,6 +43,8 @@ class QuestionsHandler(BaseHandler):
 
         # ── Step 1: collect text fields, radio groups, checkboxes ────────────
         text_fields = []     # (i, element, label)
+        hh_letter_idx = None # index of hh's own letter field, if the page has one
+        cover_letter = ""    # what was typed into it, once it has been
         radio_groups = {}    # name → {question, options, elements, has_free_text}
         checkbox_groups = {} # question_text → {idx, question, elements: [(i, inp, opt_text)], has_free_text}
 
@@ -92,6 +94,17 @@ class QuestionsHandler(BaseHandler):
                 label = self._extract_label(inp)
                 if label:
                     text_fields.append((i, inp, label))
+                    # hh's own letter field, when hh renders it inside the
+                    # questionnaire page. Known by address, never by label: the
+                    # label is "Сопроводительное письмо" today and hh's to
+                    # change, and an employer's own question with the same
+                    # wording is the case this must NOT match.
+                    try:
+                        if inp.evaluate(
+                                "(el, sel) => !!el.closest(sel)", SELECTORS['popup_letter_input']):
+                            hh_letter_idx = i
+                    except Exception:
+                        pass
 
         # ── Step 2: build LLM field specs ─────────────────────────────────────
         fields = []
@@ -168,6 +181,8 @@ class QuestionsHandler(BaseHandler):
             try:
                 inp.type(answer, delay=10)
                 filled_count += 1
+                if i == hh_letter_idx:
+                    cover_letter = answer
                 print(f"   ✅ Field {i+1}: {label[:50]}")
                 page.wait_for_timeout(800)
             except Exception as e:
@@ -350,13 +365,15 @@ class QuestionsHandler(BaseHandler):
         self._narrate(reporter, f"   ✅ Filled {filled_count}/{total} questions",
                       gui_message=f"[OK] answered {filled_count}/{total} questions", vacancy_id=vid)
         self._wait_and_random_delay(page, 2000, 4000)
-        result = self._submit(page, filled_count, total)
-        # No questions_cover_sent signal anymore (session 56): a cover-shaped
-        # field answered here goes through the generic fill_form() path, not
-        # HH's native cover mechanism — it was never real grounds for telling
-        # a later ChatHandler layer "goal already reached, skip the real
-        # cover". Only hh_modal.py's own selector-recognized cover step still
-        # sets that flag (hh_modal_cover_sent, in adapter.py).
+        result = self._submit(page, filled_count, total, cover_letter=cover_letter)
+        # A cover-shaped ANSWER is still not a delivery (session 56): an
+        # employer's own free-text question filled with a pitch goes through
+        # the generic fill_form() path, not hh's cover mechanism, and never
+        # tells a later chatik layer "goal already reached". What IS a delivery
+        # is hh's own letter field rendered on this page — recognised by
+        # address in the collection loop above, claimed by _submit only when
+        # the form actually went out, carried across layers by adapter.py's
+        # cover_delivery like the modal's own step is.
         if ambiguous_reasons:
             return self._flag_for_debug_review(
                 result, "; ".join(ambiguous_reasons), ambiguous_count=len(ambiguous_reasons)
@@ -448,7 +465,8 @@ class QuestionsHandler(BaseHandler):
         except Exception:
             return inp.get_attribute("value") or ""
 
-    def _submit(self, page, filled_count: int, total: int) -> ProcessResult:
+    def _submit(self, page, filled_count: int, total: int,
+                cover_letter: str = "") -> ProcessResult:
         # One finder for both tiers — see BaseHandler._find_action_button. The
         # wording tier used to scan every button on the page with no notion of
         # which form it belonged to; it is scoped to the open dialog now and
@@ -481,13 +499,19 @@ class QuestionsHandler(BaseHandler):
                         is_terminal=True, goal_reached=False
                     )
                 self._wait_and_random_delay(page, 1000, 1500)
+                # The letter, if hh's own field took one, goes out with this
+                # submit — so the claim is made here and only here, never on a
+                # form that was rejected or never sent. See COVER_ROUTES.
+                delivery = ({'cover_delivered': 'questionnaire',
+                             'cover_length': len(cover_letter),
+                             'cover_text': cover_letter} if cover_letter else {})
                 return ProcessResult(
                     success=True, status="applied",
                     reason=f"Questionnaire submitted ({filled_count} questions), "
                            f"button: '{label}' (found by {how})",
                     scenario="questions_submitted" if how == "address" else "questions_submitted_fallback",
                     details={"filled_count": filled_count, "total_fields": total,
-                             "button_found_by": how},
+                             "button_found_by": how, **delivery},
                     is_terminal=False, goal_reached=True
                 )
             except Exception as e:
