@@ -368,8 +368,9 @@ class QuestionsHandler(BaseHandler):
         if not ok:
             # Not the same as "it failed": the page never showed a marker this
             # code knows. The caller already downgrades to applied_unverified —
-            # 41 records on the live profile carry that status and none of them
-            # says which of the two it was.
+            # 31 records on the live profile carried that status on 2026-09-09
+            # (41 in the older flat log), and none of them says which of the
+            # two it was.
             jam("submission_verified", "no success marker appeared within 5s", scope=page)
         return ok
 
