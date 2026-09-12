@@ -198,6 +198,12 @@ def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional
         # outcome the call site is written for.
         print(f"   navigator failed at {node} ({e}) — leaving the jam as it is")
         return None
+    if picked is None:
+        # Said, because it is the answer this call exists to allow: "none of
+        # these" is a motivated refusal, and a log that shows the question and
+        # no answer reads the same as a navigator that fell over.
+        print(f"   navigator: none of the {len(candidates)} offered at {node} is the one")
+        return None
     if (not isinstance(picked, int) or isinstance(picked, bool)
             or not (0 <= picked < len(candidates))):
         if picked is not None:
