@@ -688,7 +688,10 @@ class LLMAgent:
             )
             result = self._parse_json((content or "{}").strip(), fallback={})
             idx = result.get("index")
-            return idx if isinstance(idx, int) else None
+            # bool is an int in Python: {"index": true} would come back as 1 and
+            # pass every range check downstream as "the second control". The one
+            # answer this call may give is a position in the list it was shown.
+            return idx if isinstance(idx, int) and not isinstance(idx, bool) else None
         except Exception:
             return None
 

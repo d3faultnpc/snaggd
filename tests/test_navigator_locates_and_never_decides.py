@@ -136,6 +136,7 @@ check("a valid index comes back", ask(1) == 1)
 check("an index outside what was offered is discarded", ask(7) is None)
 check("a negative index is discarded", ask(-1) is None)
 check("a non-integer answer is discarded", ask("popup-close") is None)
+check("a boolean is not an index, even though Python says True == 1", ask(True) is None)
 check("no answer is no answer", ask(None) is None)
 check("with no candidates the navigator is not asked at all", ask(1, []) is None)
 

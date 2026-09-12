@@ -198,7 +198,8 @@ def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional
         # outcome the call site is written for.
         print(f"   navigator failed at {node} ({e}) — leaving the jam as it is")
         return None
-    if not isinstance(picked, int) or not (0 <= picked < len(candidates)):
+    if (not isinstance(picked, int) or isinstance(picked, bool)
+            or not (0 <= picked < len(candidates))):
         if picked is not None:
             print(f"   navigator answered {picked!r} at {node}, which is not one of "
                   f"the {len(candidates)} offered — ignored")
