@@ -112,6 +112,48 @@ def cover_delivery_of(details: Optional[dict]) -> Optional[dict]:
     return {k: details[k] for k in _DELIVERY_KEYS if k in details}
 
 
+def record_answers(session_dir, form: str, fields: list, answers: dict) -> None:
+    """What the model answered to an employer's questions, beside the snapshots.
+
+    Debug only — silent without a session directory — and appended, because a
+    vacancy can show more than one questionnaire layer. The cover letter has
+    been kept on the record since it is what went out under the person's name;
+    the answers to an employer's own questions are the same kind of thing and
+    until 2026-09-12 left no trace at all: the console printed the labels, the
+    page snapshot does not carry React-controlled values, and the journal has
+    no field for them. On 2026-09-11 five answers went to an employer and the
+    only way to read one back was the employer's own page — where the person
+    found "remote only" written about them, which the profile never says.
+
+    Not in applied_log.json, deliberately. The record is for what happened to
+    the application; this is for reading what was said when something looks
+    wrong, which is the debug run's job.
+
+    Never raises: a diagnostic must not cost an application.
+    """
+    if not session_dir:
+        return
+    try:
+        import json
+        from datetime import datetime
+        from pathlib import Path
+        path = Path(session_dir) / "answers.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        existing = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
+        existing.append({
+            "at": datetime.now().isoformat(timespec="seconds"),
+            "form": form,
+            "questions": [
+                {**f, "answer": answers.get(str(f.get("idx")), "")} for f in fields
+            ],
+        })
+        path.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"   📸 [answers] {len(fields)} question(s) and their answers → "
+              f"{path.parent.name}/{path.name}")
+    except Exception as exc:  # noqa: BLE001 — reported, never fatal
+        print(f"   ⚠️ answers record failed: {exc}")
+
+
 def coerce_answers(answers: dict) -> dict:
     """fill_form() promises one string per field. checkbox_group is the one
     exception — its answer is a list — and a model that returns a list for

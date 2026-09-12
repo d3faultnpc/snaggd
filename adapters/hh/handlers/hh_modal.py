@@ -1,5 +1,5 @@
 from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
-                   coerce_answers, is_free_text_option, norm_option)
+                   coerce_answers, is_free_text_option, norm_option, record_answers)
 from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 from utils.navigation import jam
@@ -90,7 +90,8 @@ class HHModalHandler(BaseHandler):
             self._narrate(reporter, "   🔎 Unrecognized step — collecting fields for the model",
                           gui_message="Unfamiliar screening step — asking the model how to answer",
                           vacancy_id=vid)
-            filled_count, ambiguous_reasons = self._fill_generic_fields(page, vacancy_text)
+            filled_count, ambiguous_reasons = self._fill_generic_fields(
+                page, vacancy_text, session_dir=kwargs.get("session_dir"))
             if filled_count:
                 self._narrate(reporter, f"   ✅ Filled {filled_count} field(s) on this step via LLM",
                               gui_message=f"[OK] answered {filled_count} question(s) on this step",
@@ -204,7 +205,7 @@ class HHModalHandler(BaseHandler):
         except Exception:
             return False
 
-    def _fill_generic_fields(self, page, vacancy_text: str) -> tuple[int, list]:
+    def _fill_generic_fields(self, page, vacancy_text: str, session_dir=None) -> tuple[int, list]:
         """Blind field collection for a modal step that has no recognized
         cover-letter field — HH's own variable screening steps (location,
         salary expectation, English level, relocation, and whatever else
@@ -295,6 +296,7 @@ class HHModalHandler(BaseHandler):
         except Exception as e:
             print(f"   ⚠️ LLM fill_form error: {e}")
             return 0, []
+        record_answers(session_dir, "hh_modal", fields, answers)
 
         filled_count = 0
 

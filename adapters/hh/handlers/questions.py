@@ -2,7 +2,7 @@ from pathlib import Path
 
 from ..dom import find_visible
 from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
-                   coerce_answers, is_free_text_option, norm_option)
+                   coerce_answers, is_free_text_option, norm_option, record_answers)
 from config import CONFIG, SELECTORS
 from utils.navigation import jam
 
@@ -138,6 +138,7 @@ class QuestionsHandler(BaseHandler):
         if fields and self._agent is not None:
             try:
                 answers = coerce_answers(self._agent.fill_form(vacancy_text, fields))
+                record_answers(kwargs.get("session_dir"), "employer_questions", fields, answers)
             except Exception as e:
                 print(f"   ⚠️ LLM fill_form error: {e}")
         elif fields and self._agent is None:
