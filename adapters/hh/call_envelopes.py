@@ -3,8 +3,15 @@
 Taken from 240 real vacancies across twelve run-days, 2026-08-18 → 2026-09-09,
 by reading the run logs: the per-call console line carries the prompt's opening,
 which names the call type, and the vacancy and scenario markers bracket it.
-The reconstruction script and the full distributions are in the app repo's
-working notes (measure-2026-09-09-call-envelopes).
+
+The script that did that reading was not kept — it lived in a session
+scratchpad and was gone by 2026-09-12, and the logs of that window have since
+rotated out — so the counts below are a dated measurement, not a reproducible
+one. That is acceptable for the same reason the table is declared rather than
+learned: it only has to be right enough to be wrong loudly, and since
+2026-09-10 every run writes its own shapes to public.runs in the app's
+Supabase, which is the measurement going forward. Re-derive from there, never
+from this docstring.
 
 WHY DECLARED AND NOT LEARNED
 ----------------------------
