@@ -249,14 +249,43 @@ class HHAdapter(SiteAdapter):
 
             def _observe_jam(node, detail, scope):
                 self._jam_seq += 1
-                page = scope if hasattr(scope, "query_selector_all") else None
+                label = f"jam{self._jam_seq:02d}_{node}"
+                out_dir = self._jam_dir or session_dir_base
+                written = []
+                # Three kinds of surface reach here, and only one of them is a
+                # Page. chat.py hands over the chatik Frame; base.py, questions.py
+                # and hh_modal.py hand over the dialog they were searching — an
+                # ElementHandle. Neither can take a page screenshot (a Frame has
+                # no screenshot() at all, an ElementHandle's takes no full_page),
+                # and until 2026-09-12 "has query_selector_all" was taken to mean
+                # "is a Page": the snapshot failed on its first line, wrote
+                # nothing, and the line below still announced a capture. Live on
+                # 2026-09-11, vacancy #2, jam01_action_button — no files.
+                #
+                # The surface's own markup first, under its own name. For the
+                # chatik frame that is the only record there can be — the page
+                # snapshot stops at `chatik-root` — and for a dialog it is the
+                # part of the page the decision was actually about.
+                page = None
+                if scope is not None and hasattr(scope, "frames"):
+                    page = scope
+                elif scope is not None:
+                    try:
+                        # Frame.content() / ElementHandle.inner_html(): the
+                        # whole document of a frame, the subtree of an element.
+                        markup = (scope.content() if hasattr(scope, "content")
+                                  else scope.inner_html())
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        (out_dir / f"{label}_scope.html").write_text(markup, encoding="utf-8")
+                        written.append(f"{label}_scope.html")
+                    except Exception as e:
+                        print(f"   ⚠️ jam scope capture [{label}] failed: {e}")
                 if page is None:
                     page = self.browser.get_current_page()
-                if page is None:
-                    return
-                label = f"jam{self._jam_seq:02d}_{node}"
-                self._debug_snapshot(page, self._jam_dir or session_dir_base, label)
-                print(f"   jam capture: {label}_layers.html")
+                if page is not None:
+                    written += self._debug_snapshot(page, out_dir, label)
+                # Said with what was written, not with what was hoped for.
+                print(f"   jam capture: {', '.join(written) if written else 'nothing could be written'}")
 
             set_jam_observer(_observe_jam)
         else:
@@ -1528,8 +1557,13 @@ class HHAdapter(SiteAdapter):
     # ── Debug helper ──────────────────────────────────────────────────────────
 
     @staticmethod
-    def _debug_snapshot(page, session_dir: Path, label: str) -> None:
+    def _debug_snapshot(page, session_dir: Path, label: str) -> list:
         """Save screenshot + HTML + data-qa list + dialog layers for a debug session.
+
+        Returns the names of the files it actually wrote. A caller that reports
+        a capture reports this list, not the name it hoped for: on 2026-09-10
+        and 2026-09-11 "jam capture: …_layers.html" was printed for captures
+        that had written nothing at all.
 
         `{label}.html` is ALWAYS the full page body. When a modal is on screen
         its own markup is additionally written to `{label}_modal.html` — the
@@ -1547,12 +1581,15 @@ class HHAdapter(SiteAdapter):
         these modals at all. Keeping both costs a few hundred KB per snapshot in
         a debug-only path.
         """
+        written = []
         try:
             session_dir.mkdir(parents=True, exist_ok=True)
             page.screenshot(path=str(session_dir / f"{label}.png"), full_page=False)
+            written.append(f"{label}.png")
 
             (session_dir / f"{label}.html").write_text(
                 page.inner_html('body'), encoding="utf-8")
+            written.append(f"{label}.html")
 
             modal = None
             for sel in [
@@ -1573,6 +1610,7 @@ class HHAdapter(SiteAdapter):
                 # _dismiss_blocking_modal only looks for role/magritte-alert.
                 (session_dir / f"{label}_modal.html").write_text(
                     f"<!-- matched by: {sel} -->\n" + modal.inner_html(), encoding="utf-8")
+                written.append(f"{label}_modal.html")
 
             # Written only when something is actually stacked or a dialog is on
             # screen at all — an empty file per snapshot would bury the captures
@@ -1603,6 +1641,7 @@ class HHAdapter(SiteAdapter):
                     lines.append(layer["html"])
                 (session_dir / f"{label}_layers.html").write_text(
                     "\n".join(lines), encoding="utf-8")
+                written.append(f"{label}_layers.html")
 
             data_qa = page.evaluate("""() => {
                 const els = document.querySelectorAll('[data-qa]');
@@ -1611,10 +1650,12 @@ class HHAdapter(SiteAdapter):
                 return Array.from(vals).sort();
             }""")
             (session_dir / f"{label}_data_qa.txt").write_text("\n".join(data_qa), encoding="utf-8")
+            written.append(f"{label}_data_qa.txt")
 
             print(f"   📸 [{label}] screenshot + HTML + {len(data_qa)} data-qa → {session_dir.name}/")
         except Exception as e:
             print(f"   ⚠️ debug_snapshot [{label}] error: {e}")
+        return written
 
 
 # ── Module-level helpers ──────────────────────────────────────────────────────
