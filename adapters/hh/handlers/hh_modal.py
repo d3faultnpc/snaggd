@@ -1,5 +1,6 @@
 from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
-                   coerce_answers, is_free_text_option, norm_option, record_answers)
+                   coerce_answers, is_free_text_option, norm_option, open_answer,
+                   record_answers)
 from ..dom import find_chat_link, find_visible, iter_visible
 from config import SELECTORS, FORM_KEYWORDS
 from utils.navigation import jam
@@ -319,12 +320,8 @@ class HHModalHandler(BaseHandler):
             # (the actual "Свой вариант" input), not its display text — a
             # freeform answer will essentially never equal an option's own
             # label verbatim. Mirrors questions.py's real, working logic.
-            free_text = None
-            if answer.lower().startswith("open:"):
-                free_text = answer[5:].strip()
-                target = "open"
-            else:
-                target = norm_option(answer)
+            free_text = open_answer(answer)
+            target = "open" if free_text is not None else norm_option(answer)
             clicked = False
             match_found = False
             for idx, el, val, opt_text in grp["elements"]:
@@ -439,9 +436,8 @@ class HHModalHandler(BaseHandler):
             # a hidden text field, same mechanism as radio_group's "Свой
             # вариант" — reuse that exact convention rather than treating
             # select as having no free-text escape at all.
-            free_text = None
-            if answer.lower().startswith("open:"):
-                free_text = answer[5:].strip()
+            free_text = open_answer(answer)
+            if free_text is not None:
                 custom_option = next(
                     (o for o in options if o.strip().lower() in ("свой ответ", "свой вариант", "другое", "other")),
                     None

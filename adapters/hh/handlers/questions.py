@@ -2,7 +2,8 @@ from pathlib import Path
 
 from ..dom import find_visible
 from .base import (BaseHandler, FormType, ProcessResult, choose_checkbox_options,
-                   coerce_answers, is_free_text_option, norm_option, record_answers)
+                   coerce_answers, is_free_text_option, norm_option, open_answer,
+                   record_answers)
 from config import CONFIG, SELECTORS
 from utils.navigation import jam
 
@@ -197,13 +198,10 @@ class QuestionsHandler(BaseHandler):
                 print(f"   ⏭ Radio group '{name}': no answer")
                 continue
 
-            # Detect "open: <free text>" pattern
-            free_text = None
-            if answer.lower().startswith("open:"):
-                free_text = answer[5:].strip()
-                target = "open"
-            else:
-                target = _norm(answer)
+            # Detect "open: <free text>" pattern — in any spelling of the prefix
+            # a model has used; see OPEN_PREFIXES.
+            free_text = open_answer(answer)
+            target = "open" if free_text is not None else _norm(answer)
 
             clicked = False
             match_found = False

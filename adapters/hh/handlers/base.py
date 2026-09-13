@@ -68,17 +68,52 @@ class ProcessResult:
 
 FREE_TEXT_OPTIONS = ("свой вариант", "другое", "other")
 
+# Cyrillic letters that look like Latin ones, folded to Latin for comparison.
+# An employer wrote a language-level scale as "А1 А2 В1 В2" in Cyrillic and the
+# model answered "B2" in Latin (2026-09-10, vacancy #8): the two are the same
+# option to every human reader and different strings to ==. Comparison only —
+# what gets clicked or typed is never touched by this.
+# Applied after lowercasing, so the table is lowercase: the letters whose
+# capitals are look-alikes (В/B, Н/H, К/K, М/M, Т/T) are folded too, because
+# "В2" and "B2" have to meet after both became "в2" and "b2". Both sides of
+# every comparison go through this, which is what makes that safe.
+_HOMOGLYPHS = str.maketrans("аевнкморстух", "aebhkmopctyx")
+
+# The ways a model has said "open:" — the free-text form the prompt asks for —
+# in its own words. "открыто:" was the answer on 2026-09-08 and matched nothing,
+# because the intent was plain and the spelling was not the one the code knew.
+OPEN_PREFIXES = ("open:", "открыто:", "открытый:", "свой вариант:", "другое:", "other:")
+
 
 def norm_option(s: str) -> str:
-    """Normalize option text for comparison: nbsp, multi-space, space-before-punct."""
+    """Normalize option text for comparison: nbsp, multi-space, space-before-punct,
+    and Cyrillic/Latin look-alikes. Never used for what is typed or clicked."""
     s = (s or "").replace('\u00a0', ' ')
     s = re.sub(r'\s+', ' ', s)
     s = re.sub(r'\s+([.,!?;:])', r'\1', s)
-    return s.strip().lower()
+    return s.strip().lower().translate(_HOMOGLYPHS)
+
+
+def open_answer(answer: str):
+    """The free text behind an "open:" answer, in any spelling a model has used
+    for that prefix — or None when the answer is not one."""
+    low = (answer or "").strip().lower()
+    for prefix in OPEN_PREFIXES:
+        if low.startswith(prefix):
+            return answer.strip()[len(prefix):].strip()
+    return None
+
+
+# Compared normalised on both sides: norm_option folds Cyrillic look-alikes to
+# Latin, so a raw Cyrillic literal would never equal its own normalised form.
+_FREE_TEXT_NORMALISED = None
 
 
 def is_free_text_option(option_text: str) -> bool:
-    return norm_option(option_text) in FREE_TEXT_OPTIONS
+    global _FREE_TEXT_NORMALISED
+    if _FREE_TEXT_NORMALISED is None:
+        _FREE_TEXT_NORMALISED = {norm_option(o) for o in FREE_TEXT_OPTIONS}
+    return norm_option(option_text) in _FREE_TEXT_NORMALISED
 
 
 # ── Cover delivery, shared by the three routes that can perform one ──────────
@@ -224,9 +259,8 @@ def choose_checkbox_options(answer, options: list[str]) -> tuple[list[int], Opti
     if not text:
         return [], None
 
-    free_text = None
-    if text.lower().startswith("open:"):
-        free_text = text[5:].strip()
+    free_text = open_answer(text)
+    if free_text is not None:
         text = free_text
 
     if text.startswith("[") and text.endswith("]"):
