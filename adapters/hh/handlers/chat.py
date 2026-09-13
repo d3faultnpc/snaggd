@@ -175,8 +175,27 @@ class ChatHandler(BaseHandler):
         # 2. Wait for chatik iframe — all content lives in a cross-origin frame
         chatik_scope = self._wait_for_chatik_frame(page)
         if chatik_scope is None:
-            print("   ⚠️ Chatik iframe not accessible — falling back to main page scope")
-            chatik_scope = page  # fallback for possible future HH redesign
+            # No fallback to the page. The page used to stand in for the chat
+            # here "for a possible future redesign", and what that bought on
+            # 2026-09-09 (Сбер2B, 137103713) was twelve more seconds hunting a
+            # chat control on a vacancy page, a record blaming a missing button,
+            # and — with a navigator plugged in — a question about that control
+            # over every link on the page, with none of the locks the survey
+            # node has. The decision that failed is "where is the chat"; it is
+            # named as such, and the hunt for the button does not start.
+            jam("chatik_frame", "the chat never opened: no chatik frame on any tab within 12s",
+                scope=page)
+            self._narrate(reporter, "   ⚠️ Chat did not open — application submitted, cover letter could not be delivered",
+                          gui_message="[OK] applied — the chat never opened, so no cover letter",
+                          vacancy_id=vid)
+            return ProcessResult(
+                success=True,
+                status="applied_via_chat_no_cover",
+                reason="Chat application submitted; the chat frame never appeared",
+                scenario="chat_no_cover",
+                is_terminal=True,
+                goal_reached=True
+            )
 
         # 3. HR-bot Q&A loop — DISABLED AGAIN (session 56), root cause now
         # CONFIRMED live (Ozon "Младший менеджер по продукту ML-моделей...",
@@ -416,36 +435,46 @@ class ChatHandler(BaseHandler):
             return result
         return self._flag_for_debug_review(result, debug_reason, hr_bot_rounds=rounds)
 
-    def _wait_for_chatik_frame(self, page):
+    def _wait_for_chatik_frame(self, page, timeout_s: float = 12.0):
         """Waits for the chatik iframe to load and returns its Playwright Frame object.
 
         Chatik renders all its content inside a cross-origin iframe served from chatik.hh.ru.
-        The iframe element appears in the main page DOM after clicking 'Go to chat', but
-        the frame object becomes accessible in page.frames once the iframe navigates.
+        The iframe element appears in the main page DOM after clicking 'Go to chat', and
+        the frame object becomes accessible in page.frames once the iframe navigates —
+        which is the moment worth waiting for, and the only one this waits for.
 
         Returns the Frame if found within 12s, or None on timeout.
         """
-        # Step 1: wait for iframe element to appear in main page DOM
-        try:
-            page.wait_for_selector(
-                'iframe.chatik-integration-iframe',
-                timeout=12000,
-                state='attached'
-            )
-        except Exception:
-            print("   ⚠️ Chatik iframe element not found in DOM within 12s")
-            return None
-
-        # Step 2: wait for the frame to become accessible (frame URL set after navigation)
-        deadline = time.time() + 5
+        # What is needed is a Frame whose document is chatik's, and that is what
+        # is waited for — directly, by the frame's own URL, rather than through
+        # the iframe element's class name. The class used to be the gate: a
+        # 12-second wait on `iframe.chatik-integration-iframe` and only then a
+        # look at page.frames, so the one address that survives a renamed class
+        # (the URL) could never be reached when the class did not match. The
+        # class is not consulted any more: it named the element, never the
+        # frame, and the frame is the thing every caller uses.
+        #
+        # Every tab of the context, not only this page: a chat link with a
+        # target opens the chat next to the page that clicked it, and a frame
+        # that lives on another tab is still the frame.
+        deadline = time.time() + timeout_s
         while time.time() < deadline:
-            for frame in page.frames:
-                if 'chatik.hh.ru' in frame.url:
-                    print(f"   ✅ Chatik iframe frame acquired: {frame.url[:60]}")
-                    return frame
+            try:
+                pages = list(page.context.pages)
+            except Exception:
+                pages = [page]
+            for candidate in pages:
+                try:
+                    for frame in candidate.frames:
+                        if 'chatik.hh.ru' in frame.url:
+                            where = "" if candidate is page else " (on another tab)"
+                            print(f"   ✅ Chatik iframe frame acquired{where}: {frame.url[:60]}")
+                            return frame
+                except Exception:
+                    continue
             page.wait_for_timeout(300)
 
-        print("   ⚠️ Chatik iframe element loaded but frame not accessible within 5s")
+        print(f"   ⚠️ Chatik frame did not appear on any tab within {timeout_s:g}s")
         return None
 
     def _find_add_cover_btn(self, scope, timeout_ms: int = 12000):

@@ -58,6 +58,12 @@ NODES = {
     "nav_button": "the control that advances hh's own response modal",
     "submit_button": "the control that submits an answered questionnaire",
     # ── where does the letter go ────────────────────────────────────────────
+    # The chat itself, before anything inside it. Until 2026-09-13 a chat that
+    # never opened fell through to the page as if it were the chat, spent
+    # another twelve seconds hunting the cover control there, and was recorded
+    # as "cover letter button not available" — the wrong decision named. One
+    # letter lost that way on record (2026-09-09), cause never captured.
+    "chatik_frame": "the chat frame hh opens after an application, on any tab",
     "cover_field": "the field a cover letter is typed into",
     "add_cover_button": "the control that reveals the cover-letter field in chat",
     "cover_input": "the cover-letter field inside the chat frame",
