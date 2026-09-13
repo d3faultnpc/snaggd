@@ -410,7 +410,11 @@ def ensure_selected(scope, roster: list, want_hash: Optional[str], page=None) ->
     page = page or scope
     shown = selected_resume_title(scope)
     if shown is None:
-        return {"status": "unknown"}
+        # With a reason, because the reason is the only diagnostic this
+        # refusal carries: on 2026-09-11 (vacancy #4) the log read "Resume
+        # chooser refused: None" and an afternoon could have gone on it.
+        return {"status": "unknown",
+                "reason": "the chooser shows no resume title to read"}
 
     current = match_selected(roster, shown)
     already_showing = bool(want_hash and current and current["hash"] == want_hash)
