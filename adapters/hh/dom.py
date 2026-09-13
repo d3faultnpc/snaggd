@@ -166,6 +166,25 @@ def is_data_collector(dialog) -> bool:
         return False
 
 
+# hh's own response popup — the modal the Apply click opens, with the resume
+# card, the collapsed "Добавить сопроводительное", and "Откликнуться". It is the
+# application itself, and it has never been a blocker; but in its collapsed
+# state it has no visible textarea, so the detector could not name it, and the
+# dismisser then asked the model which of ITS buttons to press (2026-09-11,
+# vacancy #2: the model refused, detection fell through to the page beneath
+# the overlay, and the run filled a questionnaire nobody could click). Known by
+# its submit's address, which is the one thing every state of this modal has.
+RESPONSE_POPUP_MARKER = '[data-qa="vacancy-response-submit-popup"]'
+
+
+def is_response_popup(dialog) -> bool:
+    """True if this dialog is hh's own response popup, in any of its states."""
+    try:
+        return dialog.query_selector(RESPONSE_POPUP_MARKER) is not None
+    except Exception:
+        return False
+
+
 def is_in_data_collector(element) -> bool:
     """True if this element belongs to one of hh's profile surveys.
 

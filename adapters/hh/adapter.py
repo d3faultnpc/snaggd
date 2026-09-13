@@ -13,7 +13,8 @@ from adapters.hh.detector import FormDetector
 from adapters.hh.dom import (DATA_COLLECTOR_CLOSE, DATA_COLLECTOR_MARKER, MODAL_SELECTORS, SAVE_SHAPED,
                              addressable_controls,
                              find_chat_link, find_topmost_dialog, find_visible,
-                             is_data_collector, is_in_data_collector, iter_visible)
+                             is_data_collector, is_in_data_collector, is_response_popup,
+                             iter_visible)
 from adapters.hh.handlers import FormHandlers
 from adapters.hh.handlers.base import FormType, ProcessResult, cover_delivery_of
 from adapters.hh.call_envelopes import CALL_ENVELOPES, NOT_A_VACANCY_CALL
@@ -1446,6 +1447,35 @@ class HHAdapter(SiteAdapter):
         page.wait_for_timeout(1500)
         return "submitted"
 
+    def _expand_response_letter(self, page, dialog, vid) -> bool:
+        """Reveals the letter field of hh's response popup when it is collapsed.
+
+        hh ships the popup with the letter behind a "Добавить сопроводительное"
+        control — [data-qa="add-cover-letter"], in config since 2026-05 and read
+        by nothing until 2026-09-13. Collapsed, the modal has no visible
+        textarea, so the detector cannot see hh_modal_step1 in it; expanded, it
+        is exactly that form, and hh_modal.py already knows what to do.
+
+        Returns True when a textarea is visible afterwards (whether this click
+        revealed it or it was there already). A click that reveals nothing is
+        said and left: detection runs as it would have, and hh_modal's own
+        cover_field node is where the missing field gets counted.
+        """
+        try:
+            if find_visible(dialog, 'textarea') is not None:
+                return True
+            toggle = find_visible(dialog, SELECTORS['popup_add_cover'])
+            if toggle is None:
+                return False
+            toggle.click(timeout=2000)
+            dialog.wait_for_selector('textarea', timeout=3000, state='visible')
+            self._say("   hh's response form — letter field revealed",
+                      gui_message="Opening the cover letter field", vacancy_id=vid)
+            return True
+        except Exception as e:
+            print(f"   ⚠️ response popup: letter control found but no field appeared ({e})")
+            return False
+
     def _dismiss_blocking_modal(self, page, index: int = None, *,
                                 debug: bool = False, session_dir=None) -> bool:
         """LLM-guided dismissal of unexpected blocking modals before form detection.
@@ -1486,6 +1516,15 @@ class HHAdapter(SiteAdapter):
             # It is checked on EVERY such modal rather than once, because hh's
             # preselection is not stable — the same profile has been seen
             # getting a different resume between openings.
+            if is_response_popup(dialog):
+                # The application's own modal. Never a blocker, never a question
+                # for the model: on 2026-09-11 (vacancy #2) it was asked which of
+                # "Отмена / Добавить сопроводительное / Откликнуться" to press,
+                # refused, and detection then fell through to the page under
+                # the overlay. What this modal may need is its letter field
+                # revealed, which is a click at a known address, not a decision.
+                self._expand_response_letter(page, dialog, vid)
+                return False
             # Modal with a fillable textarea is a form layer — let the loop handle it
             if find_visible(dialog, 'textarea') is not None:
                 return False
