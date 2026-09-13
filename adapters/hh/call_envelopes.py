@@ -39,6 +39,14 @@ here, 225 of those match an accepted shape (97.4%), and all 6 that do not are
 that same score:2 fallback. No other deviation was seen in the window.
 """
 
+# `navigate` — a question to the navigator — is deliberately in no envelope and
+# not on the ignore list below. It fires only where canon ran out, so a shape
+# that carries one IS the chain having changed, and the breach it produces is
+# the row this table exists to write. Decided 2026-09-13 after the first live
+# navigate call (2026-09-12, vacancy #4) turned out to be a pseudo-jam and was
+# canonised: with the pseudo-jams named, a navigate call is rare, and rare is
+# what a breach should be.
+#
 # Not part of any vacancy chain. The CV parse is served on its own request from
 # the onboarding flow, and the ledger is process-global, so it lands in whatever
 # vacancy happens to be open — it did in 3 of the 240, turning a healthy shape
