@@ -478,6 +478,13 @@ class HHAdapter(SiteAdapter):
             # count toward the per-session application budget — only genuine attempts do.
             if result.get('scenario') != 'skip':
                 processed_count += 1
+                # A skip STREAK, as the stop message has always claimed. Until
+                # 2026-09-15 this counter only ever grew, so max_skips was a
+                # cap on skips per run: the 2026-09-14 run stopped "10 in a
+                # row" after ten skips spread among ten applications, at 10 of
+                # the 15 the person asked for. At a 50% miss rate every run
+                # died at the twentieth vacancy.
+                skip_count = 0
                 # vacancy_limit, not CONFIG.max_vacancies_per_session — API runs
                 # pass max_vacancies= (quota-capped), and the old denominator
                 # printed the global config value instead of this run's real one.
