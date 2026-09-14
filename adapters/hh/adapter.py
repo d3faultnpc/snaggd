@@ -561,7 +561,13 @@ class HHAdapter(SiteAdapter):
         """
         try:
             if not self.browser.open_vacancy(url, index=index):
-                return {'status': 'skipped_open_error', 'reason': 'Failed to open vacancy'}
+                # scenario 'skip', like every other vacancy that was not
+                # attempted: without it these counted toward the applications
+                # the person asked for (a network timeout ate one of 15 on
+                # 2026-09-11) and reached the ledger as `unknown|-`, a key no
+                # envelope judges.
+                return {'status': 'skipped_open_error', 'reason': 'Failed to open vacancy',
+                        'scenario': 'skip'}
 
             # Canonical dedup check: tracking URL resolves to hh.ru/vacancy/ID after redirect.
             # Catches vacancies already logged under canonical URL even when scraped as adsrv tracking URL.
@@ -643,7 +649,8 @@ class HHAdapter(SiteAdapter):
                 # different moment.
                 if debug and session_dir:
                     self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_no_text")
-                return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text'}
+                return {'status': 'skipped_no_text', 'reason': 'Could not extract vacancy text',
+                        'scenario': 'skip'}
 
             # ── Duplicate detection (same company + description, different vacancy_id) ──
             # Marks in applied_log with duplicate_of: <first_vacancy_id>. Does NOT skip —
@@ -825,7 +832,8 @@ class HHAdapter(SiteAdapter):
                     # by reading the predicate rather than by looking at it.
                     if debug and session_dir:
                         self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_apply_failed")
-                    return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found'}
+                    return {'status': 'skipped_no_apply_button', 'reason': 'Apply button not found',
+                            'scenario': 'skip'}
 
             if debug and session_dir:
                 self._debug_snapshot(self.browser.get_current_page(), session_dir, "02_after_apply_click")
