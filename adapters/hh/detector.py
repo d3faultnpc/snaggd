@@ -199,6 +199,20 @@ class FormDetector:
         if info.has_response_submit:
             return FormType.COVER_ONLY
 
+        # 0e. The post-apply page, by address. hh's "Написать" link exists only
+        #     once a response has gone out, so a page that carries it is past
+        #     every form — whatever else is on it. And there is more on it than
+        #     there used to be: since 2026-09 hh draws a progress bar there ("для
+        #     одного приглашения требуется около десяти откликов", 8 of 10), which
+        #     the wording-based rule below read as "a multi-step modal, step 8".
+        #     On 2026-09-14 (vacancy #17) that sent hh_modal.py onto a page with
+        #     no modal: three jams, three captures, and an application that had
+        #     gone out — letter included — filed as skipped_hh_modal. An address
+        #     the page can only have after applying outranks a word a progress
+        #     bar can carry anywhere.
+        if info.has_chat_link and not info.has_modal_form:
+            return FormType.CHAT_INTERFACE
+
         # 1. HH modal (multi-step)
         if (info.has_progress or
             self._has_keywords(combined_text, FORM_KEYWORDS['hh_modal']) or

@@ -168,6 +168,10 @@ for _py in _ENGINE.rglob("*.py"):
 used = set()
 for shapes in CALL_ENVELOPES.values():
     for shape in shapes:
+        if shape == "none":
+            # shape_of() renders a segment with no calls as the literal "none";
+            # it is a shape, not a call type.
+            continue
         for part in shape.split("|"):
             used.add(part.split(":")[0])
 check(f"every call type in the envelope table is one the agent actually makes "

@@ -75,7 +75,10 @@ CALL_ENVELOPES = {
     # Scored and not applied to — below the bar, blocked, or filtered. n=71,
     # every single one a single score call. The cheapest scenario there is, and
     # the one where an extra call would be most obviously wrong.
-    "skip|-": ("score:1",),
+    # `none`: a skip decided BEFORE any call — the employer's rating or name
+    # tripped a filter on the page itself. Two of twenty on 2026-09-14 (both
+    # rating_blocked), each flagged as a breach for costing nothing.
+    "skip|-": ("score:1", "none"),
     "dry_run|-": ("score:1",),
     "error|-": ("score:1",),
     # A letter delivered through hh's own field on the questionnaire page, then
