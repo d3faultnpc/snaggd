@@ -28,15 +28,15 @@ with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
     lg = Logger(applied_log_path=root / "applied_log.json", logs_dir=root / "logs")
     log = [
-        {"url": "https://odintsovo.hh.ru/vacancy/137198079?hhtmFrom=vacancy_search_list",
+        {"url": "https://odintsovo.hh.ru/vacancy/100000001?hhtmFrom=vacancy_search_list",
          "status": "skipped_open_error", "reason": "Failed to open vacancy"},
-        {"url": "https://odintsovo.hh.ru/vacancy/137184616", "vacancy_id": "137184616",
+        {"url": "https://odintsovo.hh.ru/vacancy/100000002", "vacancy_id": "100000002",
          "status": "applied_via_chat"},
     ]
     check("a page that never loaded is offered again next run",
-          lg.is_processed("https://hh.ru/vacancy/137198079", log) is None)
+          lg.is_processed("https://hh.ru/vacancy/100000001", log) is None)
     check("while an application that went out stays processed",
-          lg.is_processed("https://hh.ru/vacancy/137184616", log) == "applied_via_chat")
+          lg.is_processed("https://hh.ru/vacancy/100000002", log) == "applied_via_chat")
 
 print()
 print(f"{sum(results)}/{len(results)} passed")

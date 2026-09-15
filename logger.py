@@ -105,7 +105,7 @@ class Logger:
                 # earlier: the page never loaded — Page.goto timed out, both
                 # times on record because a VPN dropped — so nothing about the
                 # vacancy was ever seen, let alone judged. Two vacancies were
-                # retired that way in two days (137184615, 137198079).
+                # retired that way in two days (two vacancies, 2026-09-10 and -11).
                 continue
             if entry.get("url") == url:
                 return status

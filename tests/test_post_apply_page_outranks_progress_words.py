@@ -1,6 +1,6 @@
 """A page that carries hh's chat link has already applied, whatever else it shows.
 
-2026-09-14, vacancy #17 (134205563): the questionnaire went out, letter
+2026-09-14, vacancy #17: the questionnaire went out, letter
 included, and the next page was the ordinary "Отклик отправлен / Резюме
 доставлено" with the "Написать" link. It also carried a progress bar hh now
 draws there — "для одного приглашения требуется около десяти откликов", 8 of

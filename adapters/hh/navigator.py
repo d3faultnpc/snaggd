@@ -9,7 +9,7 @@ asking the second is how one of hh's profile surveys got its Save button pressed
 on 2026-08-11, writing work format, city and desired salary into a real profile.
 
 Registered by whoever decides the claw may ask — which in this project is the
-commercial app, behind its own feature register, never this module and never the
+host that embeds the engine, behind its own switch, never this module and never the
 adapter. An engine with nothing plugged in behaves exactly as it did before this
 file existed, and a fork can plug in its own.
 

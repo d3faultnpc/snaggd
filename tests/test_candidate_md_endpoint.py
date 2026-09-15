@@ -14,7 +14,7 @@ from app_paths.get_data_root() at import, NOT from DATA_DIR, so it must be
 pointed elsewhere explicitly or this test writes into the developer's own live
 profile. The assertion below that it is a temp path is not decoration.
 
-The app's sidecar fork (snaggd-app/sidecar-ext/api.py) carries the same handler
+A host that embeds this API and overrides the handler carries the same one
 verbatim; this is the copy that gets the test.
 """
 import os

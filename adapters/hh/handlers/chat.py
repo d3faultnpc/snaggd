@@ -177,7 +177,7 @@ class ChatHandler(BaseHandler):
         if chatik_scope is None:
             # No fallback to the page. The page used to stand in for the chat
             # here "for a possible future redesign", and what that bought on
-            # 2026-09-09 (Сбер2B, 137103713) was twelve more seconds hunting a
+            # 2026-09-09 (vacancy #23 of that run) was twelve more seconds hunting a
             # chat control on a vacancy page, a record blaming a missing button,
             # and — with a navigator plugged in — a question about that control
             # over every link on the page, with none of the locks the survey

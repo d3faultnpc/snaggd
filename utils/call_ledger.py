@@ -69,7 +69,7 @@ def shape_of(calls) -> str:
 class CallLedger:
     """One run. Records nothing that identifies a vacancy, a person or an
     employer — scenario names, call types and counts, and that is all. This is
-    deliberate: the run row leaves the machine (see the app's own uploader), and
+    deliberate: a host may ship the run row off the machine, and
     what leaves has to be defensible without a second thought."""
 
     def __init__(self, envelopes: Optional[dict] = None,
@@ -182,7 +182,7 @@ class CallLedger:
     def run_summary(self) -> dict:
         """One row for one run. Small enough to ride inside a call that already
         happens once per run, which is why it is an aggregate and not a row per
-        vacancy: per-vacancy telemetry would raise this app's Edge Function
+        vacancy: per-vacancy telemetry would raise a host's relay
         traffic by about half for nothing the aggregate does not answer."""
         breaches = Counter((b["scenario"], b["got"], b["want"]) for b in self._breaches)
         return {

@@ -113,7 +113,7 @@ def set_jam_observer(fn) -> None:
 #
 # It matters which side registers this one. The ledger is registered by the
 # adapter, because observation is harmless and should always run. The navigator
-# is registered by the commercial app, because it changes what the claw does and
+# is registered by the host that embeds the engine, because it changes what the claw does and
 # therefore needs a switch — and the switch is that app's business, not the
 # engine's. A fork gets a working navigator and decides for itself.
 _NAVIGATOR = None
@@ -184,7 +184,7 @@ def jam(node: str, detail: str = "", *, scope=None, candidates=None) -> Optional
         except Exception as e:
             # An observer is a diagnostic. It may cost an observation, never a
             # run — the same stance call_meta_of() takes on a missing usage
-            # block, and the same one billing takes on an unreachable quota.
+            # block: a diagnostic may cost an observation, never a run.
             print(f"   ⚠️  jam observer failed ({e}) — the jam itself is unaffected")
 
     if _NAVIGATOR is None or not candidates:

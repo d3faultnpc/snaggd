@@ -144,9 +144,9 @@ check("but never reported as a deviation — there is nothing to deviate from",
 led = ledger()
 one(led, "chat_cover_sent", "chat_interface", "score", "cover")
 flat = repr(led.run_summary())
-# Pinned deliberately: this set IS the shape of a row in public.runs, and a
+# Pinned deliberately: this set IS the shape of a run row wherever a host stores it, and a
 # field added here without a migration is a field that silently never lands.
-# `jams` joined on 2026-09-10 with migration 20260910030000.
+# `jams` joined on 2026-09-10.
 check("the run row is counts, scenario names and node names, nothing else",
       set(led.run_summary()) == {"vacancies", "calls", "shapes", "outcomes",
                                  "breaches", "jams"})

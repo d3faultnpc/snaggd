@@ -1,6 +1,6 @@
 """hh's own response popup is the application, not a pop-up to be dismissed.
 
-2026-09-11, vacancy #2 (137207876): the Apply click opened hh's response
+2026-09-11, vacancy #2: the Apply click opened hh's response
 modal in its collapsed state — resume card, "Добавить сопроводительное",
 "Откликнуться", no visible textarea. The detector cannot name that state
 (hh_modal_step1 is "a dialog with a textarea"), so the dismisser took it for

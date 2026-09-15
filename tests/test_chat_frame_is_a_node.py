@@ -1,6 +1,6 @@
 """The chat that never opened is named, not impersonated by the page.
 
-2026-09-09, Сбер2B (137103713): after the questionnaire the claw clicked into
+2026-09-09, vacancy #23: after the questionnaire the claw clicked into
 the chat, no chatik frame appeared within 12s, and the page itself was taken as
 the chat "for a possible future redesign". Twelve more seconds went on hunting
 the cover control on a vacancy page, and the record said "cover letter button

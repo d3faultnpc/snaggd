@@ -9,9 +9,9 @@ scratchpad and was gone by 2026-09-12, and the logs of that window have since
 rotated out — so the counts below are a dated measurement, not a reproducible
 one. That is acceptable for the same reason the table is declared rather than
 learned: it only has to be right enough to be wrong loudly, and since
-2026-09-10 every run writes its own shapes to public.runs in the app's
-Supabase, which is the measurement going forward. Re-derive from there, never
-from this docstring.
+2026-09-10 every run reports its own shapes through set_ledger, and whatever
+store a host keeps them in is the measurement going forward. Re-derive from
+there, never from this docstring.
 
 WHY DECLARED AND NOT LEARNED
 ----------------------------

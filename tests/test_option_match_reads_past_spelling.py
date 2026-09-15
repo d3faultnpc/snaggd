@@ -6,7 +6,7 @@ Three option_match jams on record, three different shapes:
                    every reader, different strings to ==.
   2026-09-08     — the model wrote "открыто: Готов на удалённую…": the open:
                    form the prompt asks for, in its own language.
-  2026-09-09     — "Свой вариант" with nothing behind it (Каргономика, score
+  2026-09-09     — "Свой вариант" with nothing behind it (score
                    88). No content to recover; stays a jam, honestly.
 
 The first two are canon now. norm_option folds Cyrillic look-alikes to Latin

@@ -241,7 +241,7 @@ class QuestionsHandler(BaseHandler):
                     break
 
             if not clicked and not match_found:
-                # The Каргономика failure, 2026-09-09: the model answered a radio
+                # The 2026-09-09 failure: the model answered a radio
                 # group with the literal words of the free-text option instead of
                 # the `open:` form, and the only element carrying those words is
                 # excluded from comparison by design. Score 88, application lost.
