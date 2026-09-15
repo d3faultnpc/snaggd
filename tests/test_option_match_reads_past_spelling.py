@@ -55,6 +55,17 @@ check("'Свой вариант' alone is not an open answer — there is nothin
 check("and it does not match any real option either",
       not any(norm_option(o) == norm_option("Свой вариант") for o in options[:4]))
 
+# 2026-09-15 #10: a question that said "можно выбрать несколько" was drawn as a
+# radio group, and the answer followed the words instead of the control. The
+# prompt now says which of the two the form obeys — as a rule, not an example.
+_prompt = (_ENGINE / "prompts" / "form_fill.md").read_text(encoding="utf-8")
+check("the prompt says the field's type outranks the question's wording",
+      "the type wins" in _prompt and "exactly ONE option even where the question invites several" in _prompt)
+check("in both directions, so it is a rule and not a patch",
+      "takes several even where the question reads as one choice" in _prompt)
+check("and carries no example drawn from a real employer's form",
+      "аналитик" not in _prompt and "несколько вариантов" not in _prompt)
+
 print()
 print(f"{sum(results)}/{len(results)} passed")
 if sum(results) != len(results):
