@@ -97,6 +97,7 @@ class ChatHandler(BaseHandler):
             self._agent = None
             print(f"   ⚠️ ChatHandler: LLMAgent not initialized: {_e}")
         self._cover_typed = False
+        self._cover_confirmed = False
 
     def can_handle(self, form_type: FormType) -> bool:
         return form_type == FormType.CHAT_INTERFACE
@@ -124,8 +125,20 @@ class ChatHandler(BaseHandler):
             # No cover typed (applied_via_chat_no_cover path).
             # Application was already submitted when the chat link was clicked.
             return True
+        if self._cover_confirmed:
+            # process() saw the letter's own text in a bubble of this chat —
+            # positive evidence, nothing left to infer from an empty field.
+            return True
 
-        # Cover was typed — verify by checking whether React cleared the input after send.
+        # Cover was typed and NOT seen in the chat: process() has already
+        # downgraded the record to applied_via_chat_no_cover, so there is
+        # nothing to verify here either. The empty-input reading below is
+        # kept only as the last word for a path that never sets the flag.
+        # It is a predicate by absence — "the field is empty, so it must
+        # have been sent" — and on 2026-09-19 (vacancy #33) the field was
+        # empty because the text never landed in it: the record said
+        # "sent", the screenshot showed the untouched "no cover letter"
+        # bubble.
         chatik_frame = None
         for frame in page.frames:
             if 'chatik.hh.ru' in frame.url:
@@ -149,6 +162,7 @@ class ChatHandler(BaseHandler):
 
     def process(self, page, **kwargs) -> ProcessResult:
         self._cover_typed = False
+        self._cover_confirmed = False
         reporter = kwargs.get("reporter")
         llm_cover = kwargs.get("llm_cover")
         vacancy_id = kwargs.get("vacancy_id")
@@ -347,24 +361,7 @@ class ChatHandler(BaseHandler):
             # as a standalone message, element re-renders, paragraph 2 is lost.
             # Fix: flatten all newlines to a space before typing.
             chatik_safe_cover = cover_letter.replace('\n', ' ').strip()
-            cover_input.click()
-            self._wait_and_random_delay(page, 500, 1000)
-            try:
-                cover_input.type(chatik_safe_cover, delay=10)
-            except Exception:
-                # HH's overlay can block the normal actionability-gated type()
-                # the same way it blocks clicks (found live 2026-08-02,
-                # ElementHandle.type: Timeout 30000ms exceeded) — force-focus
-                # past whatever's intercepting, then type via the page's own
-                # keyboard (no per-element actionability gate on the target),
-                # so this still fires real keystroke events, not a
-                # React-ignored .fill().
-                cover_input.click(force=True)
-                page.keyboard.type(chatik_safe_cover, delay=10)
-            self._cover_typed = True
-            # Plain print — folded into "Typing your message…" above for the GUI.
-            print("   ✅ Cover letter typed")
-            self._wait_and_random_delay(page, 1500, 2500)
+            self._type_cover(cover_input, page, chatik_safe_cover)
         except Exception as e:
             return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
                 success=False,
@@ -375,9 +372,40 @@ class ChatHandler(BaseHandler):
                 goal_reached=False
             ))
 
-        # 7. Send cover letter
+        # 7. Send cover letter — and see it land. "Sent" used to be the send
+        # gesture itself (_send_cover cannot return anything but True), read
+        # back later as "the input is empty now". On 2026-09-19 (vacancy #33)
+        # the input was empty because the text had never stayed in it: the
+        # record said sent, the chat still showed "no cover letter". So the
+        # letter counts as delivered only once its own opening words are in a
+        # bubble of this chat. If they are not, and the field is there and
+        # empty, it is typed and sent once more — the first attempt provably
+        # delivered nothing, so this cannot double up. Still nothing: the
+        # record says so, with the letter's LLM call left in the ledger where
+        # the envelope will flag it.
         try:
             sent = self._send_cover(chatik_scope, cover_input, page)
+            confirmed = sent and self._letter_appeared(chatik_scope, chatik_safe_cover, page)
+            if not confirmed and self._cover_field_is_empty(chatik_scope, cover_input):
+                print("   ⚠️ the letter did not appear in the chat — typing and sending it once more")
+                field = self._find_cover_input(chatik_scope) or cover_input
+                self._type_cover(field, page, chatik_safe_cover)
+                sent = self._send_cover(chatik_scope, field, page)
+                confirmed = sent and self._letter_appeared(chatik_scope, chatik_safe_cover, page)
+            self._cover_confirmed = bool(confirmed)
+            if not confirmed:
+                self._narrate(reporter, "   ⚠️ Cover letter typed and sent, but it never appeared in the chat",
+                              gui_message="[OK] applied via chat — the cover letter did not go through",
+                              vacancy_id=vid)
+                return self._apply_hr_bot_override(hr_bot_debug_reason, hr_bot_rounds, ProcessResult(
+                    success=True,
+                    status="applied_via_chat_no_cover",
+                    reason="Chat application submitted; the cover letter was typed and sent but never appeared in the chat",
+                    scenario="chat_no_cover",
+                    details={'cover_delivered': None, 'cover_unconfirmed': True},
+                    is_terminal=True,
+                    goal_reached=True
+                ))
             if sent:
                 self._narrate(reporter, "   ✅ Cover letter sent via chatik!",
                               gui_message="[OK] message sent", vacancy_id=vid)
@@ -557,6 +585,66 @@ class ChatHandler(BaseHandler):
                 return el
 
         return None
+
+    def _type_cover(self, cover_input, page, text: str) -> None:
+        """Types the flattened letter into the cover field with real keystrokes."""
+        cover_input.click()
+        self._wait_and_random_delay(page, 500, 1000)
+        try:
+            cover_input.type(text, delay=10)
+        except Exception:
+            # HH's overlay can block the normal actionability-gated type()
+            # the same way it blocks clicks (found live 2026-08-02,
+            # ElementHandle.type: Timeout 30000ms exceeded) — force-focus
+            # past whatever's intercepting, then type via the page's own
+            # keyboard (no per-element actionability gate on the target),
+            # so this still fires real keystroke events, not a
+            # React-ignored .fill().
+            cover_input.click(force=True)
+            page.keyboard.type(text, delay=10)
+        self._cover_typed = True
+        # Plain print — folded into "Typing your message…" above for the GUI.
+        print("   ✅ Cover letter typed")
+        self._wait_and_random_delay(page, 1500, 2500)
+
+    @staticmethod
+    def _norm_text(s: str) -> str:
+        return " ".join((s or "").replace("\u00a0", " ").split())
+
+    def _letter_appeared(self, scope, text: str, page, timeout_ms: int = 8000) -> bool:
+        """True once a bubble of this chat carries the letter's opening words.
+
+        The bubble is read at the address hh gives every message body
+        (`chat-bubble-text`, measured 2026-09-20 in a captured chat with a
+        delivered letter); the comparison is on whitespace-normalised text,
+        because the field flattened the newlines and hh may re-wrap them.
+        Forty characters is enough to be this letter and short enough to
+        survive hh trimming a long one for display.
+        """
+        needle = self._norm_text(text)[:40]
+        if not needle:
+            return False
+        deadline = time.time() + timeout_ms / 1000
+        while True:
+            try:
+                for el in scope.query_selector_all(SELECTORS['chatik_bubble_text']):
+                    if needle in self._norm_text(el.inner_text()):
+                        print("   ✅ the letter is in the chat")
+                        return True
+            except Exception:
+                pass
+            if time.time() >= deadline:
+                return False
+            page.wait_for_timeout(500)
+
+    def _cover_field_is_empty(self, scope, cover_input) -> bool:
+        """The cover field is still on screen and holds nothing — the shape of
+        2026-09-19 #33, and the one state a second attempt is safe in."""
+        field = self._find_cover_input(scope) or cover_input
+        try:
+            return field.is_visible() and field.input_value().strip() == ""
+        except Exception:
+            return False
 
     def _send_cover(self, scope, cover_input, page) -> bool:
         """Sends the cover letter form inside chatik iframe.
