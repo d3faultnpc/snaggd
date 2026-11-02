@@ -50,7 +50,7 @@ _UPSTREAM_FINISHER = {
 
 class ChatHandler(BaseHandler):
     """
-    Handler for auto-read employers (Sber, PERX, etc.) — applies via chatik.
+    Handler for auto-read employers (an HR bot reads the response) — applies via chatik.
 
     Entry condition: FormDetector returns CHAT_INTERFACE
       (form-helper-error + vacancy-response-link-view-topic visible after Apply click).
@@ -212,8 +212,8 @@ class ChatHandler(BaseHandler):
             )
 
         # 3. HR-bot Q&A loop — DISABLED AGAIN (session 56), root cause now
-        # CONFIRMED live (Ozon "Младший менеджер по продукту ML-моделей...",
-        # 2026-07-26, log + user's own HH.ru screenshot cross-verified). Not
+        # CONFIRMED live (2026-07-26, log + the user's own hh.ru screenshot
+        # cross-verified). Not
         # the suggestion-chip theory (disproven session 55 via DevTools — chips
         # are plain <button>, no data-qa overlap with chatik_message). The real
         # culprit: the "Добавить сопроводительное" prompt itself, still sitting

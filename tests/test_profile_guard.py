@@ -32,8 +32,8 @@ BLANK = {"cases": [], "skills": [], "tools": [], "languages": [], "identity": {}
 
 REAL_MD = """# Fintech PM
 ## Work Experience
-### CIFRA | Product Manager | 2020 — 2026
-Shipped the B2C storefront MVP and the AML contour.
+### NORTHWIND | Product Manager | 2020 — 2026
+Shipped a storefront MVP and a payments risk contour.
 ## Skills
 product discovery, SQL
 """

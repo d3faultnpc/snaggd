@@ -216,7 +216,7 @@ SELECTORS = {
         'button:has-text("Отправить сопроводительное")',
         'button:has-text("Сохранить")',
     ],
-    # HR-bot message bubble (PERX and similar auto-interview bots)
+    # HR-bot message bubble (employers' auto-interview bots)
     # Used in _handle_hr_bot_loop() to detect and read bot questions.
     # From the TZ live investigation (2026-06-12, "Восточная горнорудная") — the
     # previous 3 guesses here never matched anything real, so the loop never
