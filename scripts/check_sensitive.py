@@ -78,6 +78,80 @@ def should_skip(path: Path) -> bool:
     return False
 
 
+# Names the patterns above cannot know: the owner's own employers and name, and the
+# employers of the vacancies the engine has met. They are read at scan time from
+# this machine's private, gitignored data — never written here, because a list of
+# them in a published script would be the leak itself. In CI there is no such
+# data, so this adds nothing there; locally, before a push, it is what catches a
+# real letter copied into a fixture (2026-11-02: a sentence naming the owner's
+# employer reached a test, and nothing above could see it).
+_TERM_MIN_LEN = 4
+
+
+def _local_terms() -> dict:
+    """{lowercased term: where it came from} from data/profiles/* on this machine."""
+    import json
+    terms = {}
+    # SNAGGD_PRIVATE_DATA_DIR: a checkout without its own data (a worktree, a
+    # fresh clone) can still be checked against the machine's real profiles.
+    import os
+    profiles = Path(os.environ.get("SNAGGD_PRIVATE_DATA_DIR") or (ROOT / "data")) / "profiles"
+    if not profiles.is_dir():
+        return terms
+
+    def add(term, source):
+        term = (term or "").strip()
+        if len(term) >= _TERM_MIN_LEN:
+            terms.setdefault(term.lower(), source)
+
+    for cand in profiles.glob("*/candidate.md"):
+        try:
+            text = cand.read_text(encoding="utf-8", errors="ignore")
+        except Exception:
+            continue
+        for line in text.splitlines():
+            if line.startswith("name:"):
+                for part in line[5:].split():
+                    add(part, "the profile owner's name")
+            # "### Employer | Role | dates" — the profile frame's work header
+            if line.startswith("### ") and "|" in line:
+                add(line[4:].split("|")[0], "an employer from a profile")
+    for log in profiles.glob("*/applied_log.json"):
+        try:
+            entries = json.loads(log.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        for e in entries if isinstance(entries, list) else []:
+            add(e.get("company"), "an employer from the apply log")
+    # Names that are also ordinary words or the project's own name ("Свой",
+    # "Visible", "цифра" as in a number, "snaggd") are listed one per line in a
+    # private allow file next to the data, so the list of exceptions is as
+    # unpublished as the names themselves.
+    allow = profiles.parent / "private_names_allow.txt"
+    if allow.is_file():
+        for line in allow.read_text(encoding="utf-8").splitlines():
+            if line.strip() and not line.lstrip().startswith("#"):
+                terms.pop(line.strip().lower(), None)
+    return terms
+
+
+_TERMS = None
+
+
+def _term_issues(line: str) -> List[Tuple[str, str]]:
+    global _TERMS
+    if _TERMS is None:
+        _TERMS = {t: s for t, s in _local_terms().items()}
+        _TERMS = {t: (re.compile(r"(?<![\w])" + re.escape(t) + r"(?![\w])", re.IGNORECASE), s)
+                  for t, s in _TERMS.items()}
+    low = line.lower()
+    found = []
+    for t, (rx, source) in _TERMS.items():
+        if t in low and rx.search(line):
+            found.append((t, source))
+    return found
+
+
 def check_file(path: Path) -> List[Tuple[int, str, str]]:
     issues = []
     try:
@@ -99,6 +173,10 @@ def check_file(path: Path) -> List[Tuple[int, str, str]]:
             if all(_is_placeholder(m) for m in real):
                 continue
             issues.append((lineno, label, line.strip()[:120]))
+        if any(re.search(ap, str(path)) for ap in ALLOWED_PATTERNS):
+            continue
+        for _term, source in _term_issues(line):
+            issues.append((lineno, f"private name: {source}", line.strip()[:120]))
     return issues
 
 
@@ -125,7 +203,10 @@ def main():
     # exists to catch — the first real hit would be a leak performed by the guard.
     # Locally there is no such audience, so the default still shows the line.
     quiet = "--ci" in sys.argv
-    print("Scanning for sensitive data (git-tracked files only)...\n")
+    print("Scanning for sensitive data (git-tracked files only)...")
+    n = len(_local_terms())
+    print(f"Private names from this machine's data: {n}"
+          + ("" if n else " (none on this machine — patterns only)") + "\n")
     total_issues = 0
     files_checked = 0
 
