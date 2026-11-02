@@ -24,7 +24,10 @@ on:
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    # Pinned, not latest: ubuntu-latest moved to 26.04 on 2026-11-02, and
+    # Playwright 1.58 does not install Chromium there. Unpin with the Playwright
+    # upgrade.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
